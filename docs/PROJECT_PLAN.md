@@ -44,6 +44,15 @@ Design Rules:
     - /toolbox/yarn/issuing
     - /toolbox/yarn/stock
 
+Design System (Toolbox usage):
+- Text: #0F172A
+- Page background: #F1F5F9
+- Card background: #FFFFFF
+- Primary buttons: #0F766E (hover #115E59)
+- Secondary accent: #6366F1
+- Borders: #E2E8F0
+- No dark-on-dark layouts
+
 ### Auth & Access
 
 - Supabase Auth using email + password

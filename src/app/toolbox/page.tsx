@@ -10,12 +10,12 @@ const controlCards = [
   },
   {
     title: "Base Fabric Control",
-    items: ["Receiving", "Issuing", "Stock"],
+    items: ["Production", "Issuing to Coating", "Stock"],
     href: "/toolbox/base-fabric",
   },
   {
     title: "Finished Fabric Control",
-    items: ["Receiving", "Issuing", "Stock"],
+    items: ["Production", "Rolling & Inspection", "Stock"],
     href: "/toolbox/finished-fabric",
   },
   {
@@ -30,7 +30,7 @@ const controlCards = [
   },
   {
     title: "Orders & Dispatch",
-    items: ["New Orders", "Order Tracking", "Dispatch"],
+    items: ["Customer Orders", "Planning", "Shipments"],
     href: "/toolbox/orders",
   },
 ];
