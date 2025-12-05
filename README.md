@@ -2,6 +2,8 @@
 
 Production-ready starter using Next.js 14 App Router, TypeScript, Tailwind CSS, framer-motion, and Supabase.
 
+Unica Textile Mills SA Toolbox for managing Operations in the Organisation.
+
 ## Quickstart
 
 1) Install dependencies  
