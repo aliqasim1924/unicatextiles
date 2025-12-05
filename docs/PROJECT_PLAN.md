@@ -30,6 +30,15 @@ Design Rules:
 
 - Toolbox (protected)
   - /toolbox
+    - Main entry point after login
+    - Shows 6 control cards:
+      - Yarn Control
+      - Base Fabric Control
+      - Finished Fabric Control
+      - Dyes & Chemicals
+      - Stock Control
+      - Orders & Dispatch
+    - Includes quick shortcuts: Record Yarn Receiving, New Order, Scan QR Code
   - /toolbox/yarn
     - /toolbox/yarn/receiving
     - /toolbox/yarn/issuing

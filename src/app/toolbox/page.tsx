@@ -1,33 +1,87 @@
+import Link from "next/link";
+import { ToolboxCard } from "@/components/toolbox/ToolboxCard";
+import { Button } from "@/components/ui/Button";
+
+const controlCards = [
+  {
+    title: "Yarn Control",
+    items: ["Receiving", "Issuing", "Stock"],
+    href: "/toolbox/yarn",
+  },
+  {
+    title: "Base Fabric Control",
+    items: ["Receiving", "Issuing", "Stock"],
+    href: "/toolbox/base-fabric",
+  },
+  {
+    title: "Finished Fabric Control",
+    items: ["Receiving", "Issuing", "Stock"],
+    href: "/toolbox/finished-fabric",
+  },
+  {
+    title: "Dyes & Chemicals",
+    items: ["Receiving", "Issuing", "Stock"],
+    href: "/toolbox/dyes",
+  },
+  {
+    title: "Stock Control",
+    items: ["Raw Materials", "Base Fabric", "Finished Fabric"],
+    href: "/toolbox/stock",
+  },
+  {
+    title: "Orders & Dispatch",
+    items: ["New Orders", "Order Tracking", "Dispatch"],
+    href: "/toolbox/orders",
+  },
+];
+
 export default function ToolboxPage() {
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-8">
+      {/* Header Section */}
       <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-900">Toolbox</h1>
-        <p className="mt-2 text-slate-600">
-          Welcome to the toolbox. Select a module to get started.
+        <h1 className="text-3xl font-semibold text-slate-900">Toolbox</h1>
+        <p className="mt-2 text-lg text-slate-600">
+          Choose a control area to begin.
         </p>
       </section>
 
+      {/* Control Cards Grid */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <a
-          href="/toolbox/yarn"
-          className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
-        >
-          <div className="space-y-2">
-            <div className="inline-flex items-center rounded-full bg-teal-50 px-3 py-1 text-xs font-medium text-teal-700">
-              Stock
-            </div>
-            <h3 className="text-lg font-semibold text-slate-900">Yarn</h3>
-            <p className="text-sm text-slate-600">
-              Manage yarn inventory, receiving, issuing, and stock overview.
-            </p>
-          </div>
-          <span className="mt-4 text-sm font-semibold text-teal-700">
-            View module →
-          </span>
-        </a>
+        {controlCards.map((card, index) => (
+          <ToolboxCard
+            key={card.title}
+            title={card.title}
+            items={card.items}
+            href={card.href}
+            index={index}
+          />
+        ))}
+      </section>
+
+      {/* Quick Shortcuts */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">
+          Quick Actions
+        </h2>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Link href="/toolbox/yarn/receiving" className="flex-1">
+            <Button variant="primary" className="w-full">
+              Record Yarn Receiving
+            </Button>
+          </Link>
+          <Link href="/toolbox/orders/new" className="flex-1">
+            <Button variant="primary" className="w-full">
+              New Order
+            </Button>
+          </Link>
+          <Link href="/toolbox/qr" className="flex-1">
+            <Button variant="primary" className="w-full">
+              Scan QR Code
+            </Button>
+          </Link>
+        </div>
       </section>
     </div>
   );
 }
-

@@ -34,6 +34,8 @@ export default function LoginPage() {
       }
 
       if (data.session) {
+        // Small delay to ensure cookies are set
+        await new Promise((resolve) => setTimeout(resolve, 100));
         router.push("/toolbox");
         router.refresh();
       }
