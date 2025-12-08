@@ -48,3 +48,72 @@ a {
 button {
   font-family: inherit;
 }
+
+@page {
+  size: A4;
+  margin: 10mm;
+}
+
+@media print {
+  html,
+  body {
+    padding: 0;
+    margin: 0;
+    background: #ffffff;
+  }
+
+  #__next {
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Hide elements explicitly marked for print removal */
+  .print-hidden {
+    display: none !important;
+  }
+
+  /* Extra guard to hide toolbox header */
+  .toolbox-header {
+    display: none !important;
+  }
+
+  /* Slip container to constrain to a single A4 page */
+  .print-slip-container {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 0;
+    margin: 0;
+  }
+
+  .print-slip-card {
+    width: 100%;
+    max-width: 190mm;
+    max-height: 245mm;
+    box-sizing: border-box;
+    page-break-before: avoid;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+    overflow: hidden;
+    transform-origin: top left;
+    transform: scale(0.9);
+  }
+
+  .print-slip {
+    width: 100%;
+    max-width: 190mm;
+    margin: 0 auto;
+    box-sizing: border-box;
+    page-break-before: avoid;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-page-shell {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+}

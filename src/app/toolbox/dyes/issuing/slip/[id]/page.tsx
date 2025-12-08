@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
@@ -16,17 +16,17 @@ interface IssueSlipData {
   destination: string | null;
   batch_no: string | null;
   notes: string | null;
-  yarn_items: {
+  dye_items: {
     name: string;
-    denier: number | null;
-    material: string | null;
+    type: string | null;
+    code: string | null;
   };
   suppliers: {
     name: string;
   } | null;
 }
 
-export default function YarnIssueSlipPage() {
+export default function DyesIssueSlipPage() {
   const params = useParams();
   const issueId = params.id as string;
   const [slipData, setSlipData] = useState<IssueSlipData | null>(null);
@@ -42,7 +42,7 @@ export default function YarnIssueSlipPage() {
   async function fetchSlipData() {
     try {
       const { data, error: fetchError } = await supabaseBrowserClient
-        .from("yarn_transactions")
+        .from("dye_transactions")
         .select(
           `
           id,
@@ -54,10 +54,10 @@ export default function YarnIssueSlipPage() {
           destination,
           batch_no,
           notes,
-          yarn_items:yarn_item_id (
+          dye_items:dye_item_id (
             name,
-            denier,
-            material
+            type,
+            code
           ),
           suppliers:supplier_id (
             name
@@ -72,7 +72,7 @@ export default function YarnIssueSlipPage() {
 
       const processed = {
         ...data,
-        yarn_items: Array.isArray(data.yarn_items) ? data.yarn_items[0] : data.yarn_items,
+        dye_items: Array.isArray(data.dye_items) ? data.dye_items[0] : data.dye_items,
         suppliers: Array.isArray(data.suppliers) ? data.suppliers[0] : data.suppliers,
       } as IssueSlipData;
 
@@ -101,8 +101,8 @@ export default function YarnIssueSlipPage() {
       <div className="flex min-h-screen items-center justify-center bg-slate-100">
         <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
           <p className="mb-4 text-red-600">{error || "Issue slip not found."}</p>
-          <Link href="/toolbox/yarn/issuing">
-            <Button variant="primary">Back to Yarn Issuing</Button>
+          <Link href="/toolbox/dyes/issuing">
+            <Button variant="primary">Back to Dyes Issuing</Button>
           </Link>
         </div>
       </div>
@@ -111,21 +111,20 @@ export default function YarnIssueSlipPage() {
 
   return (
     <>
-      <style dangerouslySetInnerHTML={{
-        __html: `
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
           @media print {
             @page {
               size: A4 portrait;
               margin: 12mm;
             }
-            
             body {
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
               margin: 0;
               padding: 0;
             }
-            
             .print-slip-wrapper {
               width: 100% !important;
               max-width: none !important;
@@ -137,7 +136,6 @@ export default function YarnIssueSlipPage() {
               transform-origin: top left;
               transform: scale(0.95);
             }
-            
             .print-slip-content {
               width: 100%;
               max-width: none;
@@ -145,18 +143,19 @@ export default function YarnIssueSlipPage() {
               margin: 0;
             }
           }
-        `
-      }} />
-      
+        `,
+        }}
+      />
+
       <div className="print-page-shell min-h-screen bg-slate-100 print:bg-white print:min-h-0">
         {/* Print Button - Hidden in print */}
         <div className="mx-auto max-w-[800px] px-4 py-6 print:hidden">
           <div className="mb-4 flex items-center justify-between">
             <Link
-              href="/toolbox/yarn/issuing"
+              href="/toolbox/dyes/issuing"
               className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
             >
-              ← Back to Yarn Issuing
+              ← Back to Dyes Issuing
             </Link>
             <Button variant="primary" onClick={handlePrint}>
               Print Slip
@@ -172,7 +171,7 @@ export default function YarnIssueSlipPage() {
             <div className="mb-6 flex items-start justify-between border-b border-slate-200 pb-4 print:mb-4 print:pb-3">
               <div>
                 <h1 className="text-2xl font-bold text-slate-900 print:text-xl">UNICA TEXTILE MILLS</h1>
-                <p className="mt-1 text-sm text-slate-600 print:text-xs">Yarn Issue Slip</p>
+                <p className="mt-1 text-sm text-slate-600 print:text-xs">Dyes &amp; Chemicals Issue Slip</p>
               </div>
               <div className="flex h-20 w-20 items-center justify-center border-2 border-dashed border-slate-300 text-xs text-slate-400 print:border-slate-400 print:text-slate-500 print:h-16 print:w-16">
                 LOGO
@@ -182,7 +181,7 @@ export default function YarnIssueSlipPage() {
             {/* Title and Slip Number */}
             <div className="mb-4 text-center print:mb-3">
               <h2 className="mb-1 text-xl font-semibold text-slate-900 print:text-lg">
-                Yarn Issue Slip
+                Dyes &amp; Chemicals Issue Slip
               </h2>
               {slipData.slip_no && (
                 <p className="text-base font-bold text-slate-900 print:text-sm">
@@ -212,7 +211,7 @@ export default function YarnIssueSlipPage() {
                 </p>
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900 print:text-xs">Department / Destination</p>
+                <p className="text-sm font-semibold text-slate-900 print:text-xs">Destination</p>
                 <p className="text-sm text-slate-600 print:text-xs">{slipData.destination || "-"}</p>
               </div>
             </div>
@@ -222,26 +221,42 @@ export default function YarnIssueSlipPage() {
               <table className="w-full border-collapse text-sm print:text-xs">
                 <thead>
                   <tr className="border-b-2 border-slate-300">
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">Yarn Item</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">Lot / Batch No</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-900 print:px-2 print:py-1.5">Quantity</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">UoM</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">Source</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">Destination</th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Item
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Type
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Code
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Batch No
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Quantity
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      UoM
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Source
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-900 print:px-2 print:py-1.5">
+                      Destination
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr className="border-b border-slate-200">
                     <td className="px-3 py-2 text-slate-900 print:px-2 print:py-1.5">
-                      <div>
-                        <p className="font-medium">{slipData.yarn_items?.name || "N/A"}</p>
-                        {slipData.yarn_items?.denier && (
-                          <p className="text-xs text-slate-600 print:text-[10px]">
-                            {slipData.yarn_items.denier}D
-                            {slipData.yarn_items.material && ` - ${slipData.yarn_items.material}`}
-                          </p>
-                        )}
-                      </div>
+                      {slipData.dye_items?.name || "N/A"}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">
+                      {slipData.dye_items?.type || "-"}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">
+                      {slipData.dye_items?.code || "-"}
                     </td>
                     <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">
                       {slipData.batch_no || "-"}
@@ -249,9 +264,15 @@ export default function YarnIssueSlipPage() {
                     <td className="px-3 py-2 text-right font-medium text-slate-900 print:px-2 print:py-1.5">
                       {slipData.quantity.toFixed(3)}
                     </td>
-                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">{slipData.uom}</td>
-                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">{slipData.source || "-"}</td>
-                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">{slipData.destination || "-"}</td>
+                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">
+                      {slipData.uom}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">
+                      {slipData.source || "-"}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 print:px-2 print:py-1.5">
+                      {slipData.destination || "-"}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -279,11 +300,12 @@ export default function YarnIssueSlipPage() {
 
             {/* Footer */}
             <div className="flex items-center justify-between text-xs text-slate-600 print:text-[10px]">
-              <p>Document Number: UTM-WEAV-FT-001</p>
+              <p>Document Number: UTM-DYES-FT-001</p>
               <p>Page 1 of 1</p>
             </div>
           </div>
         </div>
+      </div>
       </div>
     </>
   );

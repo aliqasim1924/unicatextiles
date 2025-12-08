@@ -16,7 +16,7 @@ export default async function ToolboxLayout({
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white">
+      <header className="toolbox-header sticky top-0 z-10 border-b border-slate-200 bg-white print:hidden">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
             <h1 className="text-lg font-semibold tracking-tight text-slate-900">

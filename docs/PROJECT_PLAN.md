@@ -117,3 +117,67 @@ Design system colors and layout rules apply to all pages in this module:
 - Primary buttons: #0F766E, hover #115E59
 - Borders: #E2E8F0
 
+### Dyes & Chemicals Module
+
+- DB:
+  - dye_items
+  - dye_transactions
+  - dye_stock (view)
+- Screens:
+  - /toolbox/dyes
+  - /toolbox/dyes/receiving
+  - /toolbox/dyes/issuing
+  - /toolbox/dyes/stock
+- Master Data:
+  - /toolbox/dyes/items – manage dyes & chemicals items.
+- Issue Slips:
+  - Each ISSUE transaction gets a slip number (e.g. DIS-000001).
+  - Printable Dyes & Chemicals Issue Slip:
+    - Can be re-opened and reprinted.
+    - Has company footer (doc number, page number) and logo placeholder.
+  - Same visual style as Yarn Issue Slip.
+- Ledger:
+  - /toolbox/dyes/ledger/[dyeItemId]
+  - /toolbox/dyes/transaction/[transactionId]
+  - Ledger shows all dye_transactions for an item.
+  - Transaction detail is read-only and allows reprint of ISSUE slip.
+- Uses shared suppliers:
+  - Supplier is selected from suppliers table for receipts.
+- Later: issue slips similar to Yarn Issuing.
+
+### Base Fabric Module
+
+- DB:
+  - base_fabric_items
+  - base_fabric_orders
+  - base_fabric_rolls
+- Concepts:
+  - base_fabric_items: fabric specs (GSM, construction, width, etc.)
+  - base_fabric_orders: weaving production orders (planned meters, loom, ETA, status)
+  - base_fabric_rolls: actual rolls cut from the machine (length per roll)
+  - Planned quantity (m) vs actual (sum of rolls)
+  - Status: PLANNED, RUNNING, COMPLETED, CANCELLED
+  - Over/under allowed, but completion requires a note if variance is significant
+- Screens:
+  - /toolbox/base-fabric
+    - Dashboard with main actions
+  - /toolbox/base-fabric/orders
+    - Orders list (status, progress)
+  - /toolbox/base-fabric/orders/new
+    - Create new production order
+  - /toolbox/base-fabric/orders/[id]
+    - Order detail:
+      - Show planned vs actual meters and variance
+      - Capture rolls as they are cut
+      - Start/Complete order with notes on variance
+- Master Data:
+  - /toolbox/base-fabric/items
+    - Manage base_fabric_items (name, construction, GSM, width, active).
+- Rolls:
+  - Each roll gets an auto-generated roll number (e.g. BFR-000001).
+  - Each roll stores a cut time.
+- Production Report:
+  - The order detail page can be printed as a one-page production report
+    showing planned vs actual and all rolls.
+- Follows existing design system (light backgrounds, dark text, teal buttons).
+
