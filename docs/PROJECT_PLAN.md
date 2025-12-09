@@ -22,6 +22,12 @@ Design Rules:
 - Pages should feel clean, minimal, and modern.
 - Must work perfectly on mobile, tablet, laptop, desktop.
 
+### Toolbox Navigation
+- Desktop: left sidebar with quick links (Home, Yarn Control, Dyes & Chemicals, Base Fabric)
+- Mobile: hamburger button opening a slide-out menu with the same links
+- Consistent Back button with arrow icon across Toolbox pages
+- Navigation chrome is excluded from printed pages (print:hidden)
+
 ## Navigation & Modules
 
 - Auth
@@ -88,6 +94,7 @@ Design System (Toolbox usage):
     - Generates a printable "Yarn Issue Slip" per transaction
     - Slip can be re-opened later via a URL and printed as a source document
     - Pattern will be reused later for Dyes & Chemicals Issue Slips
+  - Yarn issues can optionally be linked to a Base Fabric Order
   - /toolbox/yarn/stock
   - /toolbox/yarn/items (new)
   - /toolbox/yarn/ledger/[yarnItemId]
@@ -170,6 +177,16 @@ Design system colors and layout rules apply to all pages in this module:
       - Show planned vs actual meters and variance
       - Capture rolls as they are cut
       - Start/Complete order with notes on variance
+      - Show linked yarn consumption (if yarn issues are linked to this order):
+        - Total yarn kg used
+        - Total yarn cost (ZAR)
+        - Yarn kg per meter
+        - Yarn cost per meter
+      - Yarn cost per order is calculated as:
+        - For each yarn item, take weighted average unit price ZAR from RECEIPT/RETURN transactions (quantity-weighted)
+        - Multiply that average by total ISSUE quantity linked to the order
+        - Sum across yarn items for total yarn cost
+      - Base Fabric cost (yarn only) per meter = total yarn cost / total produced meters
 - Master Data:
   - /toolbox/base-fabric/items
     - Manage base_fabric_items (name, construction, GSM, width, active).
@@ -180,4 +197,11 @@ Design system colors and layout rules apply to all pages in this module:
   - The order detail page can be printed as a one-page production report
     showing planned vs actual and all rolls.
 - Follows existing design system (light backgrounds, dark text, teal buttons).
+- Movement:
+  - Base Fabric rolls can be issued from Weaving to Coating using an Issue Slip.
+  - Each roll carries a stable QR code value that identifies it; location/status and other properties can change in the DB without changing the QR.
+- Screens:
+  - /toolbox/base-fabric/issuing
+    - Create Issue Slip to Coating.
+    - Select rolls (later: scan via QR).
 

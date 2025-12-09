@@ -25,7 +25,7 @@ export default function BaseFabricPage() {
         transition={{ duration: 0.3, delay: 0.05 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Link href="/toolbox/base-fabric/orders/new" className="w-full">
             <Button variant="primary" className="w-full">
               New Production Order
@@ -34,6 +34,11 @@ export default function BaseFabricPage() {
           <Link href="/toolbox/base-fabric/orders" className="w-full">
             <Button variant="secondary" className="w-full">
               View Orders
+            </Button>
+          </Link>
+          <Link href="/toolbox/base-fabric/issuing" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Issue Base Fabric to Coating
             </Button>
           </Link>
         </div>

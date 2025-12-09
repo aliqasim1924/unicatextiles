@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
+import { BackButton } from "@/components/navigation/BackButton";
 
 interface IssueSlipData {
   id: string;
@@ -152,12 +153,7 @@ export default function YarnIssueSlipPage() {
         {/* Print Button - Hidden in print */}
         <div className="mx-auto max-w-[800px] px-4 py-6 print:hidden">
           <div className="mb-4 flex items-center justify-between">
-            <Link
-              href="/toolbox/yarn/issuing"
-              className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-            >
-              ← Back to Yarn Issuing
-            </Link>
+            <BackButton href="/toolbox/yarn/issuing" label="Back to Yarn Issuing" />
             <Button variant="primary" onClick={handlePrint}>
               Print Slip
             </Button>
@@ -284,6 +280,7 @@ export default function YarnIssueSlipPage() {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 
@@ -36,6 +36,7 @@ interface LedgerData {
 export default function DyesLedgerPage() {
   const params = useParams();
   const dyeItemId = params.id as string;
+  const router = useRouter();
   const [ledgerData, setLedgerData] = useState<LedgerData>({
     dyeItem: null,
     currentStock: 0,
@@ -151,7 +152,7 @@ export default function DyesLedgerPage() {
   }
 
   return (
-    <div className="grid gap-8">
+    <div className="grid gap-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -231,7 +232,7 @@ export default function DyesLedgerPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.2 }}
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm overflow-x-auto"
       >
         <h2 className="mb-4 text-xl font-semibold text-slate-900">Transaction History</h2>
 
@@ -242,8 +243,8 @@ export default function DyesLedgerPage() {
               : `No ${typeFilter} transactions found.`}
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="min-w-full">
+            <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Date/Time</th>
@@ -254,15 +255,14 @@ export default function DyesLedgerPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Balance</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Notes</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTransactions.map((txn) => (
                   <tr
                     key={txn.id}
-                    className="border-b border-slate-100 hover:bg-slate-50"
+                    onClick={() => router.push(`/toolbox/dyes/transaction/${txn.id}`)}
+                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
                   >
                     <td className="px-4 py-3 text-slate-600">
                       {new Date(txn.txn_time).toLocaleString("en-ZA", {
@@ -303,23 +303,6 @@ export default function DyesLedgerPage() {
                     <td className="px-4 py-3 text-slate-600">{txn.slip_no || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">
                       {txn.runningBalance.toFixed(3)} {ledgerData.dyeItem.uom}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {txn.notes ? (
-                        <span className="text-xs" title={txn.notes}>
-                          {txn.notes.length > 30 ? `${txn.notes.substring(0, 30)}...` : txn.notes}
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/toolbox/dyes/transaction/${txn.id}`}
-                        className="inline-block rounded-md bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-teal-800"
-                      >
-                        View
-                      </Link>
                     </td>
                   </tr>
                 ))}

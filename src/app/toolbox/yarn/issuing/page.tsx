@@ -1,13 +1,19 @@
 "use client";
 
 import { useState, FormEvent, useEffect } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { YarnItemSelect } from "@/components/yarn/YarnItemSelect";
 import { motion } from "framer-motion";
+import Link from "next/link";
+import { BackButton } from "@/components/navigation/BackButton";
+
+interface BaseFabricOrderOption {
+  id: string;
+  label: string;
+}
 
 interface IssueTransaction {
   id: string;
@@ -35,6 +41,9 @@ export default function YarnIssuingPage() {
   const [createdSlipNo, setCreatedSlipNo] = useState<string | null>(null);
   const [recentIssues, setRecentIssues] = useState<IssueTransaction[]>([]);
   const [isLoadingIssues, setIsLoadingIssues] = useState(true);
+  const [baseFabricOrders, setBaseFabricOrders] = useState<BaseFabricOrderOption[]>([]);
+  const [selectedBaseFabricOrderId, setSelectedBaseFabricOrderId] = useState<string>("");
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   
   // Stock tracking
   const [stockMap, setStockMap] = useState<Map<string, number>>(new Map());
@@ -43,6 +52,7 @@ export default function YarnIssuingPage() {
   useEffect(() => {
     fetchRecentIssues();
     fetchStockData();
+    fetchRunningBaseFabricOrders();
   }, []);
 
   async function fetchStockData() {
@@ -62,6 +72,52 @@ export default function YarnIssuingPage() {
       console.error("Error fetching stock data:", err);
     } finally {
       setIsLoadingStock(false);
+    }
+  }
+
+  async function fetchRunningBaseFabricOrders() {
+    try {
+      setIsLoadingOrders(true);
+      const { data, error } = await supabaseBrowserClient
+        .from("base_fabric_orders")
+        .select(
+          `
+          id,
+          order_no,
+          loom_no,
+          status,
+          base_fabric_items:base_fabric_item_id ( name )
+        `
+        )
+        .in("status", ["PLANNED", "RUNNING"])
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      const options =
+        (data || []).map((row: any) => {
+          const item = Array.isArray(row.base_fabric_items)
+            ? row.base_fabric_items[0]
+            : row.base_fabric_items;
+          const labelParts = [
+            row.order_no || "BFO-N/A",
+            item?.name ? `– ${item.name}` : "",
+            row.loom_no ? `– Loom ${row.loom_no}` : "",
+            row.status ? `– ${row.status}` : "",
+          ].filter(Boolean);
+
+          return {
+            id: row.id as string,
+            label: labelParts.join(" "),
+          };
+        }) as BaseFabricOrderOption[];
+
+      setBaseFabricOrders(options);
+      console.log("Base fabric orders (active):", options);
+    } catch (err) {
+      console.error("Error fetching base fabric orders:", err);
+    } finally {
+      setIsLoadingOrders(false);
     }
   }
 
@@ -145,6 +201,7 @@ export default function YarnIssuingPage() {
           destination: destination || null,
           batch_no: batchNo || null,
           notes: notes || null,
+          base_fabric_order_id: selectedBaseFabricOrderId || null,
         })
         .select("id, slip_no")
         .single();
@@ -163,9 +220,10 @@ export default function YarnIssuingPage() {
       setSource("STORE");
       setDestination("");
       setNotes("");
+      setSelectedBaseFabricOrderId("");
 
       // Refresh recent issues and stock
-      await Promise.all([fetchRecentIssues(), fetchStockData()]);
+      await Promise.all([fetchRecentIssues(), fetchStockData(), fetchRunningBaseFabricOrders()]);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to record yarn issue. Please try again.");
     } finally {
@@ -183,12 +241,7 @@ export default function YarnIssuingPage() {
             Issue yarn to production or other departments
           </p>
         </div>
-        <Link
-          href="/toolbox/yarn"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-        >
-          ← Back to Yarn Control
-        </Link>
+        <BackButton href="/toolbox/yarn" label="Back to Yarn Control" />
       </div>
 
       {/* Form Card */}
@@ -304,6 +357,33 @@ export default function YarnIssuingPage() {
               <option value="g">g</option>
               <option value="lb">lb</option>
             </select>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">
+              Base Fabric Order (optional)
+            </label>
+            <select
+              value={selectedBaseFabricOrderId}
+              onChange={(e) => setSelectedBaseFabricOrderId(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent disabled:bg-slate-50"
+              disabled={isSubmitting || isLoadingOrders || baseFabricOrders.length === 0}
+            >
+              <option value="">Not linked</option>
+              {baseFabricOrders.map((order) => (
+                <option key={order.id} value={order.id}>
+                  {order.label}
+                </option>
+              ))}
+            </select>
+            {isLoadingOrders && (
+              <p className="mt-1 text-xs text-slate-500">Loading running orders...</p>
+            )}
+            {!isLoadingOrders && baseFabricOrders.length === 0 && (
+              <p className="mt-1 text-xs text-slate-500">
+                No planned or running base fabric orders available.
+              </p>
+            )}
           </div>
 
           <Input

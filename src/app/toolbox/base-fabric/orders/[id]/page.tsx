@@ -6,6 +6,7 @@ import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
+import { BackButton } from "@/components/navigation/BackButton";
 
 interface OrderDetail {
   id: string;
@@ -27,9 +28,27 @@ interface OrderDetail {
 interface Roll {
   id: string;
   roll_no: string | null;
+  qr_code: string | null;
   length_m: number;
   cut_at: string;
   notes: string | null;
+}
+
+interface YarnIssue {
+  id: string;
+  txn_time: string;
+  quantity: number;
+  yarn_item_id: string;
+  unit_price_zar: number | null;
+  yarn_items: {
+    name: string;
+  };
+}
+
+interface YarnPriceSample {
+  yarn_item_id: string;
+  quantity: number;
+  unit_price_zar: number;
 }
 
 export default function BaseFabricOrderDetailPage() {
@@ -38,6 +57,8 @@ export default function BaseFabricOrderDetailPage() {
   const orderId = params.id as string;
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [rolls, setRolls] = useState<Roll[]>([]);
+  const [yarnIssues, setYarnIssues] = useState<YarnIssue[]>([]);
+  const [yarnReceiptPrices, setYarnReceiptPrices] = useState<YarnPriceSample[]>([]);
   const [rollForm, setRollForm] = useState({
     length_m: "",
     notes: "",
@@ -94,12 +115,54 @@ export default function BaseFabricOrderDetailPage() {
       // Fetch rolls
       const { data: rollsData, error: rollsError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
-        .select("id, roll_no, length_m, cut_at, notes")
+        .select("id, roll_no, qr_code, length_m, cut_at, notes")
         .eq("base_fabric_order_id", orderId)
         .order("cut_at", { ascending: true });
 
       if (rollsError) throw rollsError;
       setRolls((rollsData as Roll[]) || []);
+
+      // Fetch yarn issues linked to this order
+      const { data: issuesData, error: issuesError } = await supabaseBrowserClient
+        .from("yarn_transactions")
+        .select(
+          `
+          id,
+          yarn_item_id,
+          txn_time,
+          quantity,
+          unit_price_zar,
+          yarn_items:yarn_item_id ( name )
+        `
+        )
+        .eq("base_fabric_order_id", orderId)
+        .eq("transaction_type", "ISSUE")
+        .order("txn_time", { ascending: true });
+
+      if (issuesError) throw issuesError;
+
+      setYarnIssues(
+        (issuesData as any[]).map((row) => ({
+          ...row,
+          yarn_items: Array.isArray(row.yarn_items) ? row.yarn_items[0] : row.yarn_items,
+        })) as YarnIssue[]
+      );
+
+      // Fetch receipt/return pricing samples for weighted average per yarn item
+      const { data: receiptData, error: receiptError } = await supabaseBrowserClient
+        .from("yarn_transactions")
+        .select("yarn_item_id, quantity, unit_price_zar, transaction_type")
+        .in("transaction_type", ["RECEIPT", "RETURN"])
+        .not("unit_price_zar", "is", null);
+
+      if (receiptError) throw receiptError;
+      setYarnReceiptPrices(
+        (receiptData as any[]).map((row) => ({
+          yarn_item_id: row.yarn_item_id,
+          quantity: row.quantity,
+          unit_price_zar: row.unit_price_zar,
+        })) as YarnPriceSample[]
+      );
     } catch (err: any) {
       setError(err.message || "Failed to load order.");
     } finally {
@@ -246,6 +309,39 @@ export default function BaseFabricOrderDetailPage() {
   const totalProduced = rolls.reduce((sum, r) => sum + r.length_m, 0);
   const variance = totalProduced - order.planned_qty_m;
   const progress = order.planned_qty_m > 0 ? (totalProduced / order.planned_qty_m) * 100 : 0;
+  const totalFabricM = totalProduced;
+
+  // Weighted average price map from RECEIPT/RETURN
+  const avgPriceMap = yarnReceiptPrices.reduce((map, sample) => {
+    const existing = map.get(sample.yarn_item_id) || { qty: 0, cost: 0 };
+    map.set(sample.yarn_item_id, {
+      qty: existing.qty + sample.quantity,
+      cost: existing.cost + sample.quantity * sample.unit_price_zar,
+    });
+    return map;
+  }, new Map<string, { qty: number; cost: number }>());
+
+  const avgUnitPriceByYarn = new Map<string, number>();
+  avgPriceMap.forEach((val, key) => {
+    if (val.qty > 0) {
+      avgUnitPriceByYarn.set(key, val.cost / val.qty);
+    }
+  });
+
+  const issueCosts = yarnIssues.map((issue) => {
+    const avgPrice = avgUnitPriceByYarn.get(issue.yarn_item_id) || 0;
+    const lineCost = issue.quantity * avgPrice;
+    return {
+      ...issue,
+      avg_price_zar: avgPrice,
+      line_cost_zar: lineCost,
+    };
+  });
+
+  const totalYarnKg = issueCosts.reduce((sum, issue) => sum + issue.quantity, 0);
+  const totalYarnCostZar = issueCosts.reduce((sum, issue) => sum + issue.line_cost_zar, 0);
+  const yarnKgPerM = totalFabricM > 0 ? totalYarnKg / totalFabricM : null;
+  const yarnCostPerM = totalFabricM > 0 ? totalYarnCostZar / totalFabricM : null;
 
   return (
     <div className="grid gap-8">
@@ -262,19 +358,14 @@ export default function BaseFabricOrderDetailPage() {
           >
             Print Production Report
           </button>
-          <Link
-            href="/toolbox/base-fabric/orders"
-            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-          >
-            ← Back to Orders
-          </Link>
+          <BackButton href="/toolbox/base-fabric/orders" label="Back to Orders" />
         </div>
       </div>
 
       {/* Production Report (Print Layout) */}
       <div className="print-page-shell print:min-h-0 hidden print:block">
         <div className="print-slip-container">
-          <div className="print-slip-card">
+          <div className="print-slip-card flex flex-col min-h-[100vh]">
             {/* Print Header */}
             <div className="print:flex print:justify-between print:items-start print:mb-6 print:pb-4 print:border-b print:border-slate-300">
               <div>
@@ -350,6 +441,36 @@ export default function BaseFabricOrderDetailPage() {
                   </span>
                 </div>
               )}
+            </div>
+
+            {/* Print Cost Summary */}
+            <div className="print:mb-4 print:text-sm print:text-slate-900 print:space-y-2">
+              <div className="print:font-semibold print:text-slate-900">
+                Production Cost (Yarn Only)
+              </div>
+              <div className="print:grid print:grid-cols-2 print:gap-3">
+                <div className="print:space-y-1">
+                  <div className="print:text-slate-700">
+                    Total Yarn Used: {totalYarnKg.toFixed(3)} kg
+                  </div>
+                  <div className="print:text-slate-700">
+                    Total Yarn Cost: {totalYarnCostZar.toFixed(2)} ZAR
+                  </div>
+                  <div className="print:text-slate-700">
+                    Fabric Produced: {totalFabricM.toFixed(2)} m
+                  </div>
+                </div>
+                <div className="print:space-y-1">
+                  <div className="print:font-semibold print:text-slate-900">Cost per Meter</div>
+                  <div className="print:text-slate-700">
+                    Yarn kg per meter: {yarnKgPerM !== null ? `${yarnKgPerM.toFixed(4)} kg/m` : "-"}
+                  </div>
+                  <div className="print:text-slate-700">
+                    Base Fabric Cost (Yarn):{" "}
+                    {yarnCostPerM !== null ? `${yarnCostPerM.toFixed(2)} ZAR/m` : "-"}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Print Rolls Table */}
@@ -499,6 +620,91 @@ export default function BaseFabricOrderDetailPage() {
               {new Date(order.actual_completion_at).toLocaleString("en-ZA")}
             </p>
           </div>
+        )}
+      </motion.section>
+
+      {/* Yarn Consumption & Cost */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.05 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 className="text-xl font-semibold text-slate-900">Yarn Consumption &amp; Cost</h2>
+          <p className="text-sm text-slate-600">
+            Linked yarn issues recorded against this order
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-600">Total yarn used</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {totalYarnKg.toFixed(3)} kg
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-600">Total yarn cost (ZAR)</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {totalYarnCostZar.toFixed(2)} ZAR
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-600">Fabric produced</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {totalFabricM.toFixed(2)} m
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-600">Yarn kg per meter</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {yarnKgPerM !== null ? `${yarnKgPerM.toFixed(4)} kg/m` : "N/A"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 sm:col-span-2 lg:col-span-4">
+            <p className="text-sm font-semibold text-slate-600">Base Fabric Cost (Yarn Only)</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {yarnCostPerM !== null ? `${yarnCostPerM.toFixed(2)} ZAR/m` : "N/A"}
+            </p>
+          </div>
+        </div>
+
+        {issueCosts.length > 0 ? (
+          <div className="mt-6 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Yarn</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Issue Qty (kg)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Avg Unit Price (ZAR/kg)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Line Cost (ZAR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issueCosts.map((issue) => (
+                  <tr key={issue.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {issue.yarn_items?.name || "N/A"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-900">
+                      {issue.quantity.toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-900">
+                      {issue.avg_price_zar ? issue.avg_price_zar.toFixed(2) : "0.00"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-900">
+                      {issue.line_cost_zar.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-slate-600">
+            No yarn issues linked to this order yet.
+          </p>
         )}
       </motion.section>
 
@@ -668,6 +874,7 @@ export default function BaseFabricOrderDetailPage() {
               <thead>
                 <tr className="border-b border-slate-200">
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">QR Code</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Cut Time</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Notes</th>
@@ -679,6 +886,7 @@ export default function BaseFabricOrderDetailPage() {
                     <td className="px-4 py-3 font-medium text-slate-900">
                       {roll.roll_no || "-"}
                     </td>
+                    <td className="px-4 py-3 text-slate-600">{roll.qr_code || "-"}</td>
                     <td className="px-4 py-3 text-right font-medium text-slate-900">
                       {roll.length_m.toFixed(2)}
                     </td>
