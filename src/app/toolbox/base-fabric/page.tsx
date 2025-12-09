@@ -41,6 +41,11 @@ export default function BaseFabricPage() {
               Issue Base Fabric to Coating
             </Button>
           </Link>
+          <Link href="/toolbox/finished-fabric" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Go to Finished Fabric Control
+            </Button>
+          </Link>
         </div>
       </motion.section>
 

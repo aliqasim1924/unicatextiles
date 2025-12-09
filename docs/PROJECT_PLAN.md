@@ -197,6 +197,11 @@ Design system colors and layout rules apply to all pages in this module:
   - The order detail page can be printed as a one-page production report
     showing planned vs actual and all rolls.
 - Follows existing design system (light backgrounds, dark text, teal buttons).
+- Coating Intake:
+  - Coating Receiving:
+    - Rolls issued from Weaving (status: IN_TRANSIT, location: COATING) are received into Coating.
+    - Receiving creates a Coating Receiving Slip with its own sequence.
+    - On receiving, rolls move to status: READY_FOR_COATING at location: COATING.
 - Movement:
   - Base Fabric rolls can be issued from Weaving to Coating using an Issue Slip.
   - Each roll carries a stable QR code value that identifies it; location/status and other properties can change in the DB without changing the QR.
