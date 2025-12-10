@@ -202,6 +202,28 @@ Design system colors and layout rules apply to all pages in this module:
     - Rolls issued from Weaving (status: IN_TRANSIT, location: COATING) are received into Coating.
     - Receiving creates a Coating Receiving Slip with its own sequence.
     - On receiving, rolls move to status: READY_FOR_COATING at location: COATING.
+- Finished Fabric Module (Coating & Rolling)
+  - Coating Batches:
+    - Represents one coating run with:
+      - Coating type (PVC / Acrylic Canvas)
+      - Width
+      - Planned quantity (m)
+      - Colour
+      - GSM
+      - Base fabric rolls used
+      - Actual coated meters (big coated roll)
+    - Status: PLANNED, RUNNING, COATED, ROLLED
+  - Batch Chemicals (Optional):
+    - Per batch, optional list of chemicals:
+      - Chemical code/name
+      - Quantity used and UOM
+    - Used for cost estimation and WIP visibility.
+    - Does not directly change stock; stock is affected when chemicals are issued from the Dyes & Chemicals module.
+  - Finished Fabric Rolls (Rolling & Inspection):
+    - From each batch:
+      - Multiple finished rolls (usually 50 m; sometimes short).
+      - Each roll has: Length (m), Grade (A/B/C/Scrap), Notes
+    - System can compute: Yield %, Total B/C grade % and meters.
 - Movement:
   - Base Fabric rolls can be issued from Weaving to Coating using an Issue Slip.
   - Each roll carries a stable QR code value that identifies it; location/status and other properties can change in the DB without changing the QR.

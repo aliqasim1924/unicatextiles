@@ -31,9 +31,16 @@ export default function FinishedFabricPage() {
               Receive Base Fabric into Coating
             </Button>
           </Link>
-          <Button variant="secondary" className="w-full" disabled>
-            Coating Jobs (coming soon)
-          </Button>
+          <Link href="/toolbox/finished-fabric/coating-batches" className="w-full">
+            <Button variant="primary" className="w-full">
+              Coating Batches
+            </Button>
+          </Link>
+          <Link href="/toolbox/finished-fabric/coating-batches/new" className="w-full">
+            <Button variant="primary" className="w-full">
+              New Coating Batch
+            </Button>
+          </Link>
           <Button variant="secondary" className="w-full" disabled>
             Finished Fabric Stock (coming soon)
           </Button>
