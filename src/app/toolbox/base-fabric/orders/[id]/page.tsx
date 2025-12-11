@@ -36,9 +36,11 @@ interface Roll {
 
 interface YarnIssue {
   id: string;
+  slip_no: string | null;
   txn_time: string;
   quantity: number;
   yarn_item_id: string;
+  uom: string;
   unit_price_zar: number | null;
   yarn_items: {
     name: string;
@@ -129,8 +131,10 @@ export default function BaseFabricOrderDetailPage() {
           `
           id,
           yarn_item_id,
+          slip_no,
           txn_time,
           quantity,
+          uom,
           unit_price_zar,
           yarn_items:yarn_item_id ( name )
         `
@@ -705,6 +709,81 @@ export default function BaseFabricOrderDetailPage() {
           <p className="mt-4 text-sm text-slate-600">
             No yarn issues linked to this order yet.
           </p>
+        )}
+      </motion.section>
+
+      {/* Linked Yarn Issuings */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.07 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Linked Yarn Issuings</h2>
+            <p className="text-sm text-slate-600">
+              Yarn issuing slips linked to this production order.
+            </p>
+          </div>
+        </div>
+
+        {yarnIssues.length === 0 ? (
+          <p className="text-sm text-slate-600">No yarn issuings linked to this order.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Yarn</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Quantity</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Issued At</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {yarnIssues.map((issue) => (
+                  <tr
+                    key={issue.id}
+                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
+                    onClick={() => router.push(`/toolbox/yarn/issuing/slip/${issue.id}`)}
+                  >
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {issue.slip_no || "—"}
+                    </td>
+                    <td className="px-4 py-3 text-slate-900">
+                      {issue.yarn_items?.name || "N/A"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-900">
+                      {issue.quantity.toFixed(3)} {issue.uom?.toLowerCase() === "kg" ? "kg" : issue.uom}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {new Date(issue.txn_time).toLocaleString("en-ZA", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-4 py-3 text-right text-teal-700">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/toolbox/yarn/issuing/slip/${issue.id}`);
+                        }}
+                        className="text-sm font-semibold hover:underline"
+                      >
+                        View slip
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </motion.section>
 

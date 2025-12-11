@@ -27,13 +27,18 @@ interface IssueRow {
   };
 }
 
+const DESTINATION_OPTIONS = [
+  { value: "COATING", label: "Coating Department" },
+  { value: "GENERAL", label: "General" },
+];
+
 const defaultForm = {
   dye_item_id: "",
   batch_no: "",
   quantity: "",
   uom: "kg",
   source: "CHEMICAL STORE",
-  destination: "DYE KITCHEN",
+  destination: "GENERAL",
   notes: "",
 };
 
@@ -129,7 +134,7 @@ export default function DyesIssuingPage() {
           quantity: Number(form.quantity),
           uom: form.uom,
           source: form.source || null,
-          destination: form.destination || null,
+          destination: form.destination || "GENERAL",
           batch_no: form.batch_no || null,
           notes: form.notes || null,
         })
@@ -264,13 +269,18 @@ export default function DyesIssuingPage() {
 
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-2">Destination</label>
-            <input
+            <select
               name="destination"
               value={form.destination}
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-              placeholder="e.g. COATING, DYE KITCHEN"
-            />
+            >
+              {DESTINATION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="sm:col-span-2">
@@ -331,7 +341,15 @@ export default function DyesIssuingPage() {
                     <td className="px-4 py-3 font-medium text-slate-900">
                       {row.dye_items?.name || "N/A"}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{row.destination || "-"}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {row.destination === "COATING"
+                        ? "Coating Department"
+                        : row.destination === "WEAVING"
+                        ? "Weaving Department"
+                        : row.destination === "GENERAL"
+                        ? "General"
+                        : row.destination || "-"}
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">
                       {row.quantity.toFixed(3)} {row.uom}
                     </td>
