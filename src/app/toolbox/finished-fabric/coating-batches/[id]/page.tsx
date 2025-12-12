@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
@@ -23,8 +24,6 @@ interface CoatingBatch {
 
 interface BaseRoll {
   id: string;
-  base_fabric_roll_id: string;
-  input_length_m: number;
   base_fabric_rolls: {
     roll_no: string | null;
     qr_code: string | null;
@@ -32,25 +31,11 @@ interface BaseRoll {
     base_fabric_orders: {
       order_no: string | null;
       base_fabric_items: {
-        name: string;
-      };
+        name: string | null;
+      } | null;
     } | null;
   };
-}
-
-interface ChemicalRow {
-  id?: string;
-  chemical_item_id?: string;
-  chemical_name: string;
-  quantity: number | null;
-  uom: string;
-  query?: string;
-}
-
-interface AvailableChemical {
-  chemical_item_id: string;
-  item_name: string | null;
-  remaining_for_batches: number;
+  input_length_m: number;
 }
 
 interface FinishedRoll {
@@ -59,37 +44,67 @@ interface FinishedRoll {
   length_m: number;
   grade: string | null;
   notes: string | null;
-  produced_at: string | null;
-  created_at: string | null;
+  created_at: string;
+}
+
+interface BatchChemical {
+  id: string;
+  chemical_name: string | null;
+  quantity: number | null;
+  uom: string | null;
+  chemical_item_id: string | null;
+}
+
+interface AvailableChemical {
+  chemical_item_id: string;
+  item_name: string;
+  uom: string;
+  total_issued_to_coating: number;
+  total_allocated_to_batches: number;
+  remaining_for_batches: number;
 }
 
 export default function CoatingBatchDetailPage() {
-  const router = useRouter();
   const params = useParams();
+  const router = useRouter();
   const batchId = params.id as string;
+
   const [batch, setBatch] = useState<CoatingBatch | null>(null);
   const [baseRolls, setBaseRolls] = useState<BaseRoll[]>([]);
-  const [chemicals, setChemicals] = useState<ChemicalRow[]>([]);
-  const [availableChemicals, setAvailableChemicals] = useState<AvailableChemical[]>([]);
-  const [openChemDropdown, setOpenChemDropdown] = useState<number | null>(null);
   const [finishedRolls, setFinishedRolls] = useState<FinishedRoll[]>([]);
-  const [newRollLength, setNewRollLength] = useState<string>("50");
-  const [newRollGrade, setNewRollGrade] = useState<string>("A");
-  const [newRollNotes, setNewRollNotes] = useState<string>("");
-  const [coatedMetersInput, setCoatedMetersInput] = useState<string>("");
+  const [batchChemicals, setBatchChemicals] = useState<BatchChemical[]>([]);
+  const [availableChemicals, setAvailableChemicals] = useState<AvailableChemical[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isCompleting, setIsCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // Add finished roll form state
+  const [newRollLength, setNewRollLength] = useState("50");
+  const [newRollGrade, setNewRollGrade] = useState("");
+  const [newRollNotes, setNewRollNotes] = useState("");
+  const [isAddingRoll, setIsAddingRoll] = useState(false);
+
+  // Add chemical form state
+  const [newChemicalName, setNewChemicalName] = useState("");
+  const [newChemicalQuantity, setNewChemicalQuantity] = useState("");
+  const [newChemicalUom, setNewChemicalUom] = useState("kg");
+  const [isAddingChemical, setIsAddingChemical] = useState(false);
+  const [chemicalSearchQuery, setChemicalSearchQuery] = useState("");
+  const [showChemicalSuggestions, setShowChemicalSuggestions] = useState(false);
+  const [selectedChemicalItemId, setSelectedChemicalItemId] = useState<string | null>(null);
+  const [actualCoatedMeters, setActualCoatedMeters] = useState("");
+  const [isUpdatingCoatedMeters, setIsUpdatingCoatedMeters] = useState(false);
+  const [shortageReason, setShortageReason] = useState("");
+  const [showShortageModal, setShowShortageModal] = useState(false);
+  const [pendingCoatedMeters, setPendingCoatedMeters] = useState<number | null>(null);
+
   useEffect(() => {
     if (batchId) {
-      fetchBatchData();
+      fetchData();
     }
   }, [batchId]);
 
-  async function fetchBatchData() {
+  async function fetchData() {
     try {
       setIsLoading(true);
       setError(null);
@@ -97,45 +112,29 @@ export default function CoatingBatchDetailPage() {
       // Fetch batch
       const { data: batchData, error: batchError } = await supabaseBrowserClient
         .from("coating_batches")
-        .select("*")
+        .select(
+          "id, batch_no, batch_date, coating_type, width_mm, planned_meters, color, gsm, actual_coated_meters, status, notes"
+        )
         .eq("id", batchId)
         .single();
-
       if (batchError) throw batchError;
-      setBatch(batchData);
-      setCoatedMetersInput(batchData.actual_coated_meters ? String(batchData.actual_coated_meters) : "");
-
-      // Fetch available chemicals issued to Coating with remaining quantity
-      const { data: availableChemData, error: availableChemError } = await supabaseBrowserClient
-        .from("chemicals_available_for_coating")
-        .select("chemical_item_id, item_name, remaining_for_batches");
-
-      if (availableChemError) throw availableChemError;
-      const availableList: AvailableChemical[] =
-        (availableChemData || [])
-          .map((row: any) => ({
-            chemical_item_id: row.chemical_item_id,
-            item_name: row.item_name ?? null,
-            remaining_for_batches: Number(row.remaining_for_batches ?? 0),
-          }))
-          .filter((row) => row.remaining_for_batches > 0) || [];
-      setAvailableChemicals(availableList);
+      setBatch(batchData as CoatingBatch);
+      setActualCoatedMeters(batchData.actual_coated_meters?.toString() || "");
 
       // Fetch base rolls
-      const { data: rollsData, error: rollsError } = await supabaseBrowserClient
+      const { data: baseRollsData, error: baseRollsError } = await supabaseBrowserClient
         .from("coating_batch_base_rolls")
         .select(
           `
           id,
-          base_fabric_roll_id,
           input_length_m,
-          base_fabric_rolls:base_fabric_roll_id (
+          base_fabric_rolls (
             roll_no,
             qr_code,
             length_m,
-            base_fabric_orders:base_fabric_order_id (
+            base_fabric_orders (
               order_no,
-              base_fabric_items:base_fabric_item_id (
+              base_fabric_items (
                 name
               )
             )
@@ -144,91 +143,452 @@ export default function CoatingBatchDetailPage() {
         )
         .eq("batch_id", batchId);
 
-      if (rollsError) throw rollsError;
-
-      const mapped =
-        (rollsData || []).map((row: any) => {
-          const roll = Array.isArray(row.base_fabric_rolls)
-            ? row.base_fabric_rolls[0]
-            : row.base_fabric_rolls;
-          const order = roll?.base_fabric_orders
-            ? Array.isArray(roll.base_fabric_orders)
-              ? roll.base_fabric_orders[0]
-              : roll.base_fabric_orders
-            : null;
-          const item = order?.base_fabric_items
-            ? Array.isArray(order.base_fabric_items)
-              ? order.base_fabric_items[0]
-              : order.base_fabric_items
-            : null;
-
-          return {
-            id: row.id,
-            base_fabric_roll_id: row.base_fabric_roll_id,
-            input_length_m: row.input_length_m,
-            base_fabric_rolls: {
-              roll_no: roll?.roll_no ?? null,
-              qr_code: roll?.qr_code ?? null,
-              length_m: roll?.length_m ?? 0,
-              base_fabric_orders: order
-                ? {
-                    order_no: order.order_no ?? null,
-                    base_fabric_items: item ? { name: item.name } : null,
-                  }
-                : null,
-            },
-          };
-        }) || [];
-
-      setBaseRolls(mapped);
-
-      // Fetch chemicals
-      const { data: chemData, error: chemError } = await supabaseBrowserClient
-        .from("coating_batch_chemicals")
-        .select("id, chemical_item_id, chemical_name, quantity, uom")
-        .eq("batch_id", batchId);
-
-      if (chemError) throw chemError;
-
-      const chemRows: ChemicalRow[] =
-        (chemData || []).map((row: any) => {
-          return {
-            id: row.id,
-            chemical_item_id: row.chemical_item_id ?? undefined,
-            chemical_name: row.chemical_name || "",
-            quantity: row.quantity !== null ? Number(row.quantity) : null,
-            uom: row.uom || "kg",
-            query: row.chemical_name || "",
-          };
-        }) || [];
-
-      setChemicals(chemRows.length > 0 ? chemRows : []);
+      if (baseRollsError) throw baseRollsError;
+      
+      // Map the data to handle Supabase's array returns for relations
+      const mappedBaseRolls: BaseRoll[] = (baseRollsData || []).map((row: any) => {
+        const roll = Array.isArray(row.base_fabric_rolls) 
+          ? row.base_fabric_rolls[0] 
+          : row.base_fabric_rolls;
+        const order = roll?.base_fabric_orders 
+          ? (Array.isArray(roll.base_fabric_orders) ? roll.base_fabric_orders[0] : roll.base_fabric_orders)
+          : null;
+        const item = order?.base_fabric_items
+          ? (Array.isArray(order.base_fabric_items) ? order.base_fabric_items[0] : order.base_fabric_items)
+          : null;
+        
+        return {
+          id: row.id,
+          input_length_m: Number(row.input_length_m || 0),
+          base_fabric_rolls: {
+            roll_no: roll?.roll_no ?? null,
+            qr_code: roll?.qr_code ?? null,
+            length_m: Number(roll?.length_m || 0),
+            base_fabric_orders: order ? {
+              order_no: order.order_no ?? null,
+              base_fabric_items: item ? {
+                name: item.name ?? null,
+              } : null,
+            } : null,
+          },
+        };
+      });
+      
+      setBaseRolls(mappedBaseRolls);
 
       // Fetch finished rolls
-      const { data: finishedData, error: finishedError } = await supabaseBrowserClient
+      const { data: rollsData, error: rollsError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
-        .select("id, roll_no, length_m, grade, notes, produced_at, created_at")
+        .select("id, roll_no, length_m, grade, notes, created_at")
         .eq("batch_id", batchId)
-        .order("produced_at", { ascending: true });
+        .order("created_at", { ascending: false });
 
-      if (finishedError) throw finishedError;
-
-      const finishedRows: FinishedRoll[] =
-        (finishedData || []).map((row: any) => ({
+      if (rollsError) throw rollsError;
+      setFinishedRolls(
+        (rollsData || []).map((row: any) => ({
           id: row.id,
           roll_no: row.roll_no ?? null,
           length_m: Number(row.length_m || 0),
           grade: row.grade ?? null,
           notes: row.notes ?? null,
-          produced_at: row.produced_at ?? null,
-          created_at: row.created_at ?? null,
-        })) || [];
-      setFinishedRolls(finishedRows);
+          created_at: row.created_at,
+        })) as FinishedRoll[]
+      );
+
+      // Fetch batch chemicals
+      const { data: chemData, error: chemError } = await supabaseBrowserClient
+        .from("coating_batch_chemicals")
+        .select("id, chemical_name, quantity, uom, chemical_item_id")
+        .eq("batch_id", batchId);
+
+      if (chemError) throw chemError;
+      setBatchChemicals(
+        (chemData || []).map((row: any) => ({
+          id: row.id,
+          chemical_name: row.chemical_name ?? null,
+          quantity: row.quantity !== null ? Number(row.quantity) : null,
+          uom: row.uom ?? null,
+          chemical_item_id: row.chemical_item_id ?? null,
+        })) as BatchChemical[]
+      );
+
+      // Fetch available chemicals (issued to coating) with UOM from dye_items
+      const { data: availChemData, error: availChemError } = await supabaseBrowserClient
+        .from("chemicals_available_for_coating")
+        .select("chemical_item_id, item_name, total_issued_to_coating, total_allocated_to_batches, remaining_for_batches")
+        .gt("remaining_for_batches", 0)
+        .order("item_name", { ascending: true });
+
+      if (availChemError) throw availChemError;
+
+      // Fetch UOM for each chemical from dye_items
+      const chemicalIds = (availChemData || []).map((row: any) => row.chemical_item_id).filter(Boolean);
+      let uomMap: Record<string, string> = {};
+      
+      if (chemicalIds.length > 0) {
+        const { data: dyeItemsData, error: dyeItemsError } = await supabaseBrowserClient
+          .from("dye_items")
+          .select("id, uom")
+          .in("id", chemicalIds);
+
+        if (!dyeItemsError && dyeItemsData) {
+          dyeItemsData.forEach((item: any) => {
+            uomMap[item.id] = item.uom || "kg";
+          });
+        }
+      }
+
+      setAvailableChemicals(
+        (availChemData || []).map((row: any) => ({
+          chemical_item_id: row.chemical_item_id,
+          item_name: row.item_name ?? "",
+          uom: uomMap[row.chemical_item_id] || "kg",
+          total_issued_to_coating: Number(row.total_issued_to_coating || 0),
+          total_allocated_to_batches: Number(row.total_allocated_to_batches || 0),
+          remaining_for_batches: Number(row.remaining_for_batches || 0),
+        })) as AvailableChemical[]
+      );
     } catch (err: any) {
-      setError(err.message || "Failed to load batch details");
-      console.error("Error fetching batch:", err);
+      console.error("Failed to load batch", err);
+      setError(err.message || "Failed to load batch.");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleAddFinishedRoll(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    const lengthVal = parseFloat(newRollLength);
+    if (!newRollLength || isNaN(lengthVal) || lengthVal <= 0) {
+      setError("Please enter a valid length (m)");
+      return;
+    }
+
+    // Check if rolling is complete
+    if (isRollingComplete) {
+      setError("Rolling is complete. Total rolled quantity matches coated quantity. Please complete production.");
+      return;
+    }
+
+    // Check if adding this roll would exceed coated quantity
+    const actualCoated = batch?.actual_coated_meters ?? null;
+    if (actualCoated !== null && totalFinishedLength + lengthVal > actualCoated) {
+      const remaining = actualCoated - totalFinishedLength;
+      setError(
+        `Cannot add roll. Total rolled would exceed coated quantity. Remaining: ${remaining.toFixed(2)} m`
+      );
+      return;
+    }
+
+    setIsAddingRoll(true);
+    try {
+      const { data: inserted, error: insertError } = await supabaseBrowserClient
+        .from("finished_fabric_rolls")
+        .insert({
+          batch_id: batchId,
+          length_m: lengthVal,
+          grade: newRollGrade || null,
+          notes: newRollNotes || null,
+          color: batch?.color || null,
+          gsm: batch?.gsm || null,
+          coating_type: batch?.coating_type || null,
+          status: "AWAITING_RECEIPT",
+          current_location: "COATING",
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      // Add to local state without refreshing
+      const newRoll: FinishedRoll = {
+        id: inserted.id,
+        roll_no: inserted.roll_no ?? null,
+        length_m: Number(inserted.length_m || 0),
+        grade: inserted.grade ?? null,
+        notes: inserted.notes ?? null,
+        created_at: inserted.created_at || new Date().toISOString(),
+      };
+      setFinishedRolls([newRoll, ...finishedRolls]);
+
+      setSuccess("Finished roll added successfully.");
+      setNewRollLength("50");
+      setNewRollGrade("");
+      setNewRollNotes("");
+    } catch (err: any) {
+      console.error("Failed to add finished roll", err);
+      setError(err.message || "Failed to add finished roll.");
+    } finally {
+      setIsAddingRoll(false);
+    }
+  }
+
+  async function handleUpdateStatus(newStatus: string) {
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const { error: updateError } = await supabaseBrowserClient
+        .from("coating_batches")
+        .update({ status: newStatus })
+        .eq("id", batchId);
+
+      if (updateError) throw updateError;
+
+      setSuccess(`Batch status updated to ${newStatus}.`);
+      await fetchData();
+    } catch (err: any) {
+      console.error("Failed to update status", err);
+      setError(err.message || "Failed to update status.");
+    }
+  }
+
+  async function handleCompleteProduction() {
+    if (!isRollingComplete) {
+      setError("Cannot complete production. Rolling quantity must match coated quantity.");
+      return;
+    }
+
+    if (!confirm("Are you sure you want to complete production? This will close the batch and make it read-only.")) {
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const { error: updateError } = await supabaseBrowserClient
+        .from("coating_batches")
+        .update({ status: "COMPLETED" })
+        .eq("id", batchId);
+
+      if (updateError) throw updateError;
+
+      setSuccess("Production completed successfully. Batch is now read-only.");
+      await fetchData();
+    } catch (err: any) {
+      console.error("Failed to complete production", err);
+      setError(err.message || "Failed to complete production.");
+    }
+  }
+
+  async function handleAddChemical(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (!newChemicalName.trim()) {
+      setError("Please enter a chemical name");
+      return;
+    }
+
+    const quantityVal = parseFloat(newChemicalQuantity);
+    if (!newChemicalQuantity || isNaN(quantityVal) || quantityVal <= 0) {
+      setError("Please enter a valid quantity");
+      return;
+    }
+
+    setIsAddingChemical(true);
+    try {
+      const { data: inserted, error: insertError } = await supabaseBrowserClient
+        .from("coating_batch_chemicals")
+        .insert({
+          batch_id: batchId,
+          chemical_name: newChemicalName.trim(),
+          quantity: quantityVal,
+          uom: newChemicalUom || "kg",
+          chemical_item_id: selectedChemicalItemId || null,
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      // Add to local state without refreshing
+      const newChemical: BatchChemical = {
+        id: inserted.id,
+        chemical_name: inserted.chemical_name,
+        quantity: inserted.quantity !== null ? Number(inserted.quantity) : null,
+        uom: inserted.uom,
+        chemical_item_id: inserted.chemical_item_id,
+      };
+      setBatchChemicals([...batchChemicals, newChemical]);
+
+      // Update available chemicals - reduce remaining quantity
+      if (selectedChemicalItemId) {
+        setAvailableChemicals((prev) =>
+          prev.map((chem) => {
+            if (chem.chemical_item_id === selectedChemicalItemId) {
+              return {
+                ...chem,
+                total_allocated_to_batches: chem.total_allocated_to_batches + quantityVal,
+                remaining_for_batches: chem.remaining_for_batches - quantityVal,
+              };
+            }
+            return chem;
+          })
+        );
+      }
+
+      setSuccess("Chemical added successfully.");
+      setNewChemicalName("");
+      setNewChemicalQuantity("");
+      setNewChemicalUom("kg");
+      setSelectedChemicalItemId(null);
+      setChemicalSearchQuery("");
+      setShowChemicalSuggestions(false);
+    } catch (err: any) {
+      console.error("Failed to add chemical", err);
+      setError(err.message || "Failed to add chemical.");
+    } finally {
+      setIsAddingChemical(false);
+    }
+  }
+
+  function handlePullFromIssued(chemical: AvailableChemical) {
+    setNewChemicalName(chemical.item_name);
+    setNewChemicalQuantity(chemical.remaining_for_batches.toString());
+    setNewChemicalUom(chemical.uom);
+    setSelectedChemicalItemId(chemical.chemical_item_id);
+    setChemicalSearchQuery("");
+    setShowChemicalSuggestions(false);
+  }
+
+  // Filter available chemicals based on search query
+  const filteredChemicals = availableChemicals.filter((chem) =>
+    chem.item_name.toLowerCase().includes(chemicalSearchQuery.toLowerCase())
+  );
+
+  function handleChemicalNameChange(value: string) {
+    setNewChemicalName(value);
+    setChemicalSearchQuery(value);
+    setShowChemicalSuggestions(value.length > 0 && filteredChemicals.length > 0);
+    // Clear selected item ID if user is typing manually
+    if (!filteredChemicals.some((c) => c.item_name === value)) {
+      setSelectedChemicalItemId(null);
+    }
+  }
+
+  function handleChemicalNameFocus() {
+    if (chemicalSearchQuery.length > 0 && filteredChemicals.length > 0) {
+      setShowChemicalSuggestions(true);
+    }
+  }
+
+  function handleChemicalNameBlur() {
+    // Delay hiding suggestions to allow click events
+    setTimeout(() => setShowChemicalSuggestions(false), 200);
+  }
+
+  async function handleUpdateActualCoatedMeters() {
+    const metersVal = parseFloat(actualCoatedMeters);
+    if (isNaN(metersVal) || metersVal < 0) {
+      setError("Please enter a valid meters value");
+      return;
+    }
+
+    // Check for shortage
+    if (metersVal < totalInputLength) {
+      const shortage = totalInputLength - metersVal;
+      setPendingCoatedMeters(metersVal);
+      setShowShortageModal(true);
+      return;
+    }
+
+    await saveActualCoatedMeters(metersVal, null);
+  }
+
+  async function saveActualCoatedMeters(metersVal: number, shortageReasonText: string | null) {
+    setIsUpdatingCoatedMeters(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const updateData: any = { actual_coated_meters: metersVal };
+      if (shortageReasonText) {
+        updateData.notes = batch?.notes
+          ? `${batch.notes}\n\nShortage Reason: ${shortageReasonText}`
+          : `Shortage Reason: ${shortageReasonText}`;
+      }
+
+      const { error: updateError } = await supabaseBrowserClient
+        .from("coating_batches")
+        .update(updateData)
+        .eq("id", batchId);
+
+      if (updateError) throw updateError;
+
+      setSuccess("Actual coated meters updated successfully.");
+      setShowShortageModal(false);
+      setShortageReason("");
+      setPendingCoatedMeters(null);
+      await fetchData();
+    } catch (err: any) {
+      console.error("Failed to update actual coated meters", err);
+      setError(err.message || "Failed to update actual coated meters.");
+    } finally {
+      setIsUpdatingCoatedMeters(false);
+    }
+  }
+
+  async function handleConfirmShortage() {
+    if (!shortageReason.trim()) {
+      setError("Please enter a reason for the shortage");
+      return;
+    }
+
+    if (pendingCoatedMeters !== null) {
+      await saveActualCoatedMeters(pendingCoatedMeters, shortageReason.trim());
+    }
+  }
+
+  async function handleDeleteChemical(chemicalId: string) {
+    if (!confirm("Are you sure you want to remove this chemical from the batch?")) {
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+
+    // Find the chemical to get its details for restoring available quantity
+    const chemicalToDelete = batchChemicals.find((c) => c.id === chemicalId);
+    const chemicalItemId = chemicalToDelete?.chemical_item_id;
+    const quantityToRestore = chemicalToDelete?.quantity || 0;
+
+    try {
+      const { error: deleteError } = await supabaseBrowserClient
+        .from("coating_batch_chemicals")
+        .delete()
+        .eq("id", chemicalId);
+
+      if (deleteError) throw deleteError;
+
+      // Remove from local state
+      setBatchChemicals(batchChemicals.filter((c) => c.id !== chemicalId));
+
+      // Restore available quantity if it was linked to a chemical item
+      if (chemicalItemId) {
+        setAvailableChemicals((prev) =>
+          prev.map((chem) => {
+            if (chem.chemical_item_id === chemicalItemId) {
+              return {
+                ...chem,
+                total_allocated_to_batches: chem.total_allocated_to_batches - quantityToRestore,
+                remaining_for_batches: chem.remaining_for_batches + quantityToRestore,
+              };
+            }
+            return chem;
+          })
+        );
+      }
+
+      setSuccess("Chemical removed successfully.");
+    } catch (err: any) {
+      console.error("Failed to delete chemical", err);
+      setError(err.message || "Failed to delete chemical.");
     }
   }
 
@@ -238,8 +598,6 @@ export default function CoatingBatchDetailPage() {
         year: "numeric",
         month: "short",
         day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
       });
     } catch {
       return dateString;
@@ -256,513 +614,545 @@ export default function CoatingBatchDetailPage() {
         return "bg-green-100 text-green-800";
       case "ROLLED":
         return "bg-purple-100 text-purple-800";
+      case "COMPLETED":
+        return "bg-teal-100 text-teal-800";
       default:
         return "bg-slate-100 text-slate-800";
-    }
-  }
-
-  const totalInputLength = baseRolls.reduce((sum, r) => sum + r.input_length_m, 0);
-  const actualCoatedMeters =
-    batch?.actual_coated_meters !== null && batch?.actual_coated_meters !== undefined
-      ? batch.actual_coated_meters
-      : null;
-  const difference =
-    actualCoatedMeters !== null ? totalInputLength - actualCoatedMeters : null;
-  const yieldPct =
-    actualCoatedMeters !== null && totalInputLength > 0
-      ? (actualCoatedMeters / totalInputLength) * 100
-      : null;
-
-  const isCompleted = batch?.status === "COMPLETED";
-  const totalFinished = finishedRolls.reduce((sum, r) => sum + (r.length_m || 0), 0);
-  const gradeSum = (grade: string) =>
-    finishedRolls
-      .filter((r) => r.grade === grade)
-      .reduce((sum, r) => sum + (r.length_m || 0), 0);
-  const aMeters = gradeSum("A");
-  const bMeters = gradeSum("B");
-  const cMeters = gradeSum("C");
-  const scrapMeters = gradeSum("SCRAP");
-
-  const percentOfCoated = (val: number) =>
-    actualCoatedMeters && actualCoatedMeters > 0 ? (val / actualCoatedMeters) * 100 : null;
-  const yieldVsCoated = percentOfCoated(totalFinished);
-  const bPercent = percentOfCoated(bMeters);
-  const cPercent = percentOfCoated(cMeters);
-  const scrapPercent = percentOfCoated(scrapMeters);
-  async function handleCompleteRolling() {
-    if (!batch) return;
-    setError(null);
-    setSuccess(null);
-    const actualCoated = batch.actual_coated_meters || 0;
-    if (actualCoated <= 0) {
-      setError("Cannot complete: coated meters not recorded.");
-      return;
-    }
-    if (finishedRolls.length === 0) {
-      setError("Cannot complete: no finished rolls recorded.");
-      return;
-    }
-    const diff = Math.abs(totalFinished - actualCoated);
-    const tolerance = Math.max(5, 0.02 * actualCoated);
-    if (diff > tolerance) {
-      const proceed = window.confirm(
-        `Total finished meters differ from coated meters by ${diff.toFixed(
-          2
-        )} m. Are you sure you want to complete this batch?`
-      );
-      if (!proceed) return;
-    }
-
-    setIsCompleting(true);
-    try {
-      const { error: updateError } = await supabaseBrowserClient
-        .from("coating_batches")
-        .update({ status: "COMPLETED" })
-        .eq("id", batchId);
-      if (updateError) throw updateError;
-      setBatch((prev) => (prev ? { ...prev, status: "COMPLETED" } : prev));
-      setSuccess("Rolling completed for this batch.");
-    } catch (err: any) {
-      setError(err.message || "Failed to complete rolling.");
-    } finally {
-      setIsCompleting(false);
-    }
-  }
-
-  function handleAddChemical() {
-    if (isCompleted) return;
-    setChemicals((prev) => [
-      ...prev,
-      { chemical_item_id: undefined, chemical_name: "", quantity: null, uom: "kg", query: "" },
-    ]);
-  }
-
-  function handleRemoveChemical(index: number) {
-    if (isCompleted) return;
-    setChemicals((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  function handleChemicalChange(index: number, field: keyof ChemicalRow, value: string) {
-    if (isCompleted) return;
-    setChemicals((prev) => {
-      const next = [...prev];
-      const row = { ...next[index] };
-      if (field === "quantity") {
-        row.quantity = value === "" ? null : Number(value);
-      } else {
-        // chemical_name or uom
-        (row as any)[field] = value;
-      }
-      next[index] = row;
-      return next;
-    });
-  }
-
-  function handleChemicalSelect(index: number, chemicalItemId: string) {
-    if (isCompleted) return;
-    const selected = availableChemicals.find((c) => c.chemical_item_id === chemicalItemId);
-    setChemicals((prev) => {
-      const next = [...prev];
-      const row = { ...next[index] };
-      row.chemical_item_id = chemicalItemId;
-      row.chemical_name = selected?.item_name || "";
-      row.uom = row.uom || "kg";
-      row.query = row.chemical_name;
-      next[index] = row;
-      return next;
-    });
-    setOpenChemDropdown(null);
-  }
-
-  async function handleAddFinishedRoll(e: React.FormEvent) {
-    if (isCompleted) {
-      setError("This batch is completed; no further changes are allowed.");
-      return;
-    }
-    e.preventDefault();
-    setError(null);
-    setSuccess(null);
-
-    const lengthVal = parseFloat(newRollLength);
-    if (Number.isNaN(lengthVal) || lengthVal <= 0) {
-      setError("Length must be greater than zero.");
-      return;
-    }
-    if (!newRollGrade) {
-      setError("Please select a grade.");
-      return;
-    }
-
-    const actualCoated = batch?.actual_coated_meters || 0;
-    const existingTotal = finishedRolls.reduce((sum, r) => sum + Number(r.length_m || 0), 0);
-    const projected = existingTotal + lengthVal;
-    if (actualCoated > 0 && projected > actualCoated + 0.001) {
-      setError("Cannot add this roll. Total rolled meters would exceed coated meters.");
-      return;
-    }
-
-    try {
-      const { data: inserted, error: insertError } = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .insert({
-          batch_id: batchId,
-          length_m: lengthVal,
-          grade: newRollGrade,
-          notes: newRollNotes || null,
-        })
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
-
-      setFinishedRolls((prev) => [
-        ...prev,
-        {
-          id: inserted.id,
-          roll_no: inserted.roll_no ?? null,
-          length_m: Number(inserted.length_m || 0),
-          grade: inserted.grade ?? null,
-          notes: inserted.notes ?? null,
-          produced_at: inserted.produced_at ?? null,
-          created_at: inserted.created_at ?? null,
-        },
-      ]);
-
-      // Update batch status to ROLLED if not already
-      if (batch && batch.status !== "ROLLED") {
-        const { error: statusError } = await supabaseBrowserClient
-          .from("coating_batches")
-          .update({ status: "ROLLED" })
-          .eq("id", batchId);
-        if (!statusError) {
-          setBatch((prev) => (prev ? { ...prev, status: "ROLLED" } : prev));
-        }
-      }
-
-      setNewRollLength("50");
-      setNewRollGrade("A");
-      setNewRollNotes("");
-      setSuccess("Finished roll added.");
-    } catch (err: any) {
-      setError(err.message || "Failed to add finished roll.");
-    }
-  }
-
-  async function handleSave(e: React.FormEvent) {
-    if (isCompleted) {
-      setError("This batch is completed; no further changes are allowed.");
-      return;
-    }
-    e.preventDefault();
-    setError(null);
-    setSuccess(null);
-    setIsSaving(true);
-
-    try {
-      const trimmed = coatedMetersInput.trim();
-      const parsed = trimmed === "" ? null : parseFloat(trimmed);
-      const coatedMeters = Number.isNaN(parsed) ? null : parsed;
-      const nextStatus =
-        coatedMeters !== null ? "COATED" : batch?.status ? batch.status : "PLANNED";
-
-      // Update coated meters
-      const { error: updateBatchError } = await supabaseBrowserClient
-        .from("coating_batches")
-        .update({ actual_coated_meters: coatedMeters, status: nextStatus })
-        .eq("id", batchId);
-
-      console.log("Saving coated meters", { batchId, coatedMeters, updateBatchError });
-
-      if (updateBatchError) {
-        throw updateBatchError;
-      }
-
-      // Insert only new chemicals (id undefined)
-      const newRows = chemicals.filter(
-        (row) => !row.id && row.chemical_item_id && row.chemical_name && row.quantity !== null
-      );
-
-      // Validate new chemical rows against remaining availability
-      const existingAllocatedByChem = new Map<string, number>();
-      chemicals.forEach((row) => {
-        if (row.id && row.chemical_item_id && row.quantity !== null) {
-          existingAllocatedByChem.set(
-            row.chemical_item_id,
-            (existingAllocatedByChem.get(row.chemical_item_id) || 0) + Number(row.quantity || 0)
-          );
-        }
-      });
-
-      const availableMap = new Map(
-        availableChemicals.map((c) => [c.chemical_item_id, c])
-      );
-      const pendingByChem = new Map<string, number>();
-      newRows.forEach((row) => {
-        const key = row.chemical_item_id as string;
-        pendingByChem.set(key, (pendingByChem.get(key) || 0) + Number(row.quantity || 0));
-      });
-
-      for (const [chemId, pendingQty] of pendingByChem.entries()) {
-        const available = availableMap.get(chemId);
-        const remaining = available?.remaining_for_batches ?? 0;
-        if (!available || remaining <= 0) {
-          setError(
-            "No remaining stock for this chemical has been issued to Coating. Please issue stock first."
-          );
-          setIsSaving(false);
-          return;
-        }
-        if (pendingQty > remaining + 0.0001) {
-          const name = available.item_name || "this chemical";
-          setError(
-            `You are trying to use more ${name} than has been issued to Coating. Remaining available: ${remaining}.`
-          );
-          setIsSaving(false);
-          return;
-        }
-      }
-
-      let insertedRows: any[] = [];
-      if (newRows.length > 0) {
-        const rowsToInsert = newRows.map((row) => ({
-          batch_id: batchId,
-          chemical_item_id: row.chemical_item_id,
-          chemical_name: row.chemical_name,
-          quantity: row.quantity,
-          uom: row.uom || "kg",
-        }));
-
-        const { data: inserted, error: insertChemError } = await supabaseBrowserClient
-          .from("coating_batch_chemicals")
-          .insert(rowsToInsert)
-          .select();
-        if (insertChemError) throw insertChemError;
-        insertedRows = inserted || [];
-      }
-
-      if (trimmed === (batch?.actual_coated_meters?.toString() ?? "") && newRows.length === 0) {
-        setSuccess("Nothing to save.");
-        setIsSaving(false);
-        return;
-      }
-
-      setSuccess("Saved coated meters and chemicals.");
-      setBatch((prev) =>
-        prev ? { ...prev, actual_coated_meters: coatedMeters, status: nextStatus } : prev
-      );
-      if (insertedRows.length > 0) {
-        setChemicals((prev) => [
-          ...prev,
-          ...insertedRows.map((row: any) => ({
-            id: row.id,
-            chemical_item_id: row.chemical_item_id ?? undefined,
-            chemical_name: row.chemical_name || "",
-            quantity: row.quantity !== null ? Number(row.quantity) : null,
-            uom: row.uom || "kg",
-            query: row.chemical_name || "",
-          })),
-        ]);
-      }
-    } catch (err: any) {
-      setError(err.message || "Failed to save coated meters and chemicals.");
-      console.error("Save error:", err);
-    } finally {
-      setIsSaving(false);
     }
   }
 
   if (isLoading) {
     return (
       <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-600">
-          Loading batch details...
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-600 shadow-sm">
+          Loading batch...
         </div>
       </div>
     );
   }
 
-  if (error || !batch) {
+  if (error && !batch) {
     return (
       <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
         <BackButton href="/toolbox/finished-fabric/coating-batches" />
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
-          {error || "Batch not found"}
+        <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-red-700 shadow-sm">
+          {error}
         </div>
       </div>
     );
   }
+
+  if (!batch) return null;
+
+  const totalInputLength = baseRolls.reduce((sum, r) => sum + (r.input_length_m || 0), 0);
+  const totalFinishedLength = finishedRolls.reduce((sum, r) => sum + r.length_m, 0);
+  const actualCoated = batch.actual_coated_meters ?? null;
+
+  // Calculate grade quantities
+  const gradeSum = (grade: string) =>
+    finishedRolls.filter((r) => r.grade === grade).reduce((sum, r) => sum + r.length_m, 0);
+  const aMeters = gradeSum("A");
+  const bMeters = gradeSum("B");
+  const cMeters = gradeSum("C");
+  const scrapMeters = gradeSum("SCRAP");
+
+  // Calculate yield: A grade vs (B + C + Scrap)
+  const nonAGradeTotal = bMeters + cMeters + scrapMeters;
+  const yieldPercent =
+    nonAGradeTotal > 0 && aMeters > 0
+      ? (aMeters / (aMeters + nonAGradeTotal)) * 100
+      : nonAGradeTotal === 0 && aMeters > 0
+        ? 100
+        : null;
+
+  // Calculate percentages of coated
+  const percentOfCoated = (val: number) =>
+    actualCoated !== null && actualCoated > 0 ? (val / actualCoated) * 100 : null;
+  const aPercent = percentOfCoated(aMeters);
+  const bPercent = percentOfCoated(bMeters);
+  const cPercent = percentOfCoated(cMeters);
+  const scrapPercent = percentOfCoated(scrapMeters);
+
+  // Check if rolling is complete
+  const isRollingComplete = actualCoated !== null && totalFinishedLength >= actualCoated;
+  const canAddMoreRolls = !isRollingComplete && batch.status !== "COMPLETED";
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
       <div className="flex items-center justify-between">
-        <BackButton href="/toolbox/finished-fabric/coating-batches" />
-        <div className="flex gap-3 print:hidden">
-          <Button
-            variant="secondary"
-            onClick={() =>
-              router.push(`/toolbox/finished-fabric/coating-batches/${batch.id}/report`)
-            }
-          >
-            Print Coating Batch Report
-          </Button>
-          {finishedRolls.length > 0 && (
-            <Button
-              variant="secondary"
-              onClick={() =>
-                router.push(`/toolbox/finished-fabric/coating-batches/${batch.id}/rolling-report`)
-              }
-            >
-              Print Rolling Report
-            </Button>
-          )}
+        <div>
+          <BackButton href="/toolbox/finished-fabric/coating-batches" />
+          <h1 className="mt-4 text-3xl font-semibold text-slate-900">
+            Coating Batch: {batch.batch_no ?? "N/A"}
+          </h1>
+          <p className="mt-2 text-slate-600">Batch Date: {formatDate(batch.batch_date)}</p>
+        </div>
+        <div className="flex gap-2">
+          <Link href={`/toolbox/finished-fabric/coating-batches/${batchId}/report`}>
+            <Button variant="secondary">View Report</Button>
+          </Link>
+          <Link href={`/toolbox/finished-fabric/coating-batches/${batchId}/rolling-report`}>
+            <Button variant="secondary">Rolling Report</Button>
+          </Link>
         </div>
       </div>
-      <h1 className="text-3xl font-semibold text-slate-900">Coating Batch: {batch.batch_no}</h1>
-      {isCompleted && (
-        <p className="text-sm font-semibold text-green-700">
-          This batch is completed; no further changes are allowed.
-        </p>
+
+      {batch.status === "COMPLETED" && (
+        <div className="rounded-lg border border-teal-200 bg-teal-50 p-4 text-teal-800">
+          <p className="font-semibold">Production Completed</p>
+          <p className="text-sm">This batch is now read-only. Reports can be accessed via the buttons above.</p>
+        </div>
       )}
 
-      {/* Batch Header Card */}
-      <motion.div
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">{error}</div>
+      )}
+      {success && (
+        <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-800">
+          {success}
+        </div>
+      )}
+
+      {/* Batch Info */}
+      <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">Batch Information</h2>
+          <span
+            className={`inline-flex rounded-full px-3 py-1 text-sm font-medium ${getStatusBadgeColor(batch.status)}`}
+          >
+            {batch.status}
+          </span>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Batch No
-            </label>
-            <p className="mt-1 text-lg font-semibold text-slate-900">{batch.batch_no ?? "-"}</p>
+            <p className="text-sm font-semibold text-slate-700">Coating Type</p>
+            <p className="text-slate-900">{batch.coating_type}</p>
           </div>
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Date
-            </label>
-            <p className="mt-1 text-lg text-slate-900">{formatDate(batch.batch_date)}</p>
+            <p className="text-sm font-semibold text-slate-700">Colour</p>
+            <p className="text-slate-900">{batch.color ?? "-"}</p>
           </div>
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Status
-            </label>
-            <p className="mt-1">
-              <span
-                className={`inline-flex rounded-full px-3 py-1 text-sm font-medium ${getStatusBadgeColor(batch.status)}`}
+            <p className="text-sm font-semibold text-slate-700">GSM</p>
+            <p className="text-slate-900">{batch.gsm ?? "-"}</p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-700">Width (mm)</p>
+            <p className="text-slate-900">{batch.width_mm ?? "-"}</p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-700">Planned Meters</p>
+            <p className="text-slate-900">{batch.planned_meters?.toFixed(2) ?? "-"}</p>
+          </div>
+        </div>
+        
+        {/* Actual Coated Meters Input */}
+        {batch.status !== "COMPLETED" && (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-end gap-4">
+              <div className="flex-1">
+                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                  Actual Coated Meters (before rolling) <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={actualCoatedMeters}
+                  onChange={(e) => setActualCoatedMeters(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  placeholder="e.g. 500.00"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleUpdateActualCoatedMeters}
+                disabled={isUpdatingCoatedMeters}
               >
-                {batch.status}
-              </span>
-            </p>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Coating Type
-            </label>
-            <p className="mt-1 text-lg text-slate-900">{batch.coating_type}</p>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Colour
-            </label>
-            <p className="mt-1 text-lg text-slate-900">{batch.color ?? "-"}</p>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              GSM
-            </label>
-            <p className="mt-1 text-lg text-slate-900">{batch.gsm ?? "-"}</p>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Width (mm)
-            </label>
-            <p className="mt-1 text-lg text-slate-900">{batch.width_mm ?? "-"}</p>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Planned Meters
-            </label>
-            <p className="mt-1 text-lg text-slate-900">
-              {batch.planned_meters ? `${batch.planned_meters.toFixed(2)} m` : "-"}
-            </p>
-          </div>
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Actual Coated Meters
-            </label>
-            <p className="mt-1 text-lg text-slate-900">
-              {batch.actual_coated_meters
-                ? `${batch.actual_coated_meters.toFixed(2)} m`
-                : "Not recorded yet"}
-            </p>
-          </div>
-          {batch.notes && (
-            <div className="sm:col-span-2 lg:col-span-3">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Notes
-              </label>
-              <p className="mt-1 text-slate-900">{batch.notes}</p>
+                {isUpdatingCoatedMeters ? "Updating..." : "Update"}
+              </Button>
             </div>
+            {batch.actual_coated_meters !== null && (
+              <p className="mt-2 text-xs text-slate-600">
+                Current: {batch.actual_coated_meters.toFixed(2)} m
+              </p>
+            )}
+          </div>
+        )}
+        {batch.status === "COMPLETED" && batch.actual_coated_meters !== null && (
+          <div className="mt-4">
+            <p className="text-sm font-semibold text-slate-700">Actual Coated Meters</p>
+            <p className="text-slate-900">{batch.actual_coated_meters.toFixed(2)} m</p>
+          </div>
+        )}
+        {batch.notes && (
+          <div className="mt-4">
+            <p className="text-sm font-semibold text-slate-700">Notes</p>
+            <p className="text-slate-900">{batch.notes}</p>
+          </div>
+        )}
+
+        {/* Status Update Buttons */}
+        <div className="mt-6 flex flex-wrap gap-2">
+          {batch.status === "PLANNED" && (
+            <Button variant="primary" onClick={() => handleUpdateStatus("RUNNING")}>
+              Start Batch
+            </Button>
+          )}
+          {batch.status === "ROLLED" && (
+            <Button variant="primary" onClick={() => handleUpdateStatus("COMPLETED")}>
+              Mark as Completed
+            </Button>
           )}
         </div>
-      </motion.div>
+      </motion.section>
 
-      {/* Input Base Fabric Rolls */}
-      <motion.div
+      {/* Calculated Fields - Rolling Summary */}
+      <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="rounded-xl border border-slate-200 bg-white shadow-sm"
+        transition={{ duration: 0.3, delay: 0.05 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
-          <h2 className="text-lg font-semibold text-slate-900">Input Base Fabric Rolls</h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Total input length: {totalInputLength.toFixed(2)} m
-          </p>
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">Rolling Summary</h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">A Grade</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{aMeters.toFixed(2)} m</p>
+            {aPercent !== null ? (
+              <p className="mt-1 text-sm text-slate-600">{aPercent.toFixed(2)}% of coated</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">Enter actual coated meters</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">B Grade</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{bMeters.toFixed(2)} m</p>
+            {bPercent !== null ? (
+              <p className="mt-1 text-sm text-slate-600">{bPercent.toFixed(2)}% of coated</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">Enter actual coated meters</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">C Grade</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{cMeters.toFixed(2)} m</p>
+            {cPercent !== null ? (
+              <p className="mt-1 text-sm text-slate-600">{cPercent.toFixed(2)}% of coated</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">Enter actual coated meters</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">Scrap</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{scrapMeters.toFixed(2)} m</p>
+            {scrapPercent !== null ? (
+              <p className="mt-1 text-sm text-slate-600">{scrapPercent.toFixed(2)}% of coated</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">Enter actual coated meters</p>
+            )}
+          </div>
         </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-lg border border-teal-200 bg-teal-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">Total Finished</p>
+            <p className="mt-1 text-2xl font-bold text-teal-900">{totalFinishedLength.toFixed(2)} m</p>
+          </div>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <p className="text-sm font-semibold text-slate-700">Yield (A Grade)</p>
+              {yieldPercent !== null ? (
+                <>
+                  <p className="mt-1 text-2xl font-bold text-blue-900">{yieldPercent.toFixed(2)}%</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    A: {aMeters.toFixed(2)} m / Total: {(aMeters + nonAGradeTotal).toFixed(2)} m
+                  </p>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-slate-600">Add finished rolls to calculate yield</p>
+              )}
+            </div>
+        </div>
+      </motion.section>
+
+      {/* Base Rolls */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
+          Base Fabric Rolls ({baseRolls.length})
+        </h2>
         {baseRolls.length === 0 ? (
-          <div className="p-8 text-center text-slate-600">No base rolls linked to this batch.</div>
+          <p className="text-slate-600">No base rolls added to this batch.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b border-slate-200 bg-slate-50">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Roll No
                   </th>
-                  <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    QR
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    QR Code
                   </th>
-                  <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Order No
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Input Length (m)
                   </th>
-                  <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Base Fabric Name
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Order
                   </th>
-                  <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Length (m)
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Fabric
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                {baseRolls.map((roll) => (
+              <tbody className="divide-y divide-slate-200">
+                {baseRolls.map((br) => (
+                  <tr key={br.id}>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
+                      {br.base_fabric_rolls.roll_no ?? "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                      {br.base_fabric_rolls.qr_code ?? "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                      {br.input_length_m.toFixed(2)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                      {br.base_fabric_rolls.base_fabric_orders?.order_no ?? "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                      {br.base_fabric_rolls.base_fabric_orders?.base_fabric_items?.name ?? "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t-2 border-slate-300 bg-slate-50">
+                <tr>
+                  <td colSpan={2} className="px-4 py-2 text-sm font-semibold text-slate-900">
+                    Total
+                  </td>
+                  <td className="px-4 py-2 text-right text-sm font-semibold text-slate-900">
+                    {totalInputLength.toFixed(2)}
+                  </td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </motion.section>
+
+      {/* Finished Rolls */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
+          Finished Fabric Rolls ({finishedRolls.length})
+        </h2>
+        {finishedRolls.length === 0 ? (
+          <p className="text-slate-600">No finished rolls created yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Roll No
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Length (m)
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Grade
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Notes
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Created
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {finishedRolls.map((roll) => (
                   <tr key={roll.id}>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-slate-900">
-                      {roll.base_fabric_rolls.roll_no ?? "-"}
+                    <td className="whitespace-nowrap px-4 py-2 text-sm font-medium text-slate-900">
+                      {roll.roll_no ?? "-"}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                      {roll.base_fabric_rolls.qr_code ?? "-"}
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                      {roll.length_m.toFixed(2)}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                      {roll.base_fabric_rolls.base_fabric_orders?.order_no ?? "-"}
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                      {roll.grade ?? "-"}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                      {roll.base_fabric_rolls.base_fabric_orders?.base_fabric_items?.name ?? "-"}
+                    <td className="px-4 py-2 text-sm text-slate-600">{roll.notes ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                      {formatDate(roll.created_at)}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
-                      {roll.input_length_m.toFixed(2)}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t-2 border-slate-300 bg-slate-50">
+                <tr>
+                  <td className="px-4 py-2 text-sm font-semibold text-slate-900">Total</td>
+                  <td className="px-4 py-2 text-right text-sm font-semibold text-slate-900">
+                    {totalFinishedLength.toFixed(2)}
+                  </td>
+                  <td colSpan={3}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        {/* Add Finished Roll Form */}
+        {batch.status !== "COMPLETED" && (
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">Add Finished Roll</h3>
+              {isRollingComplete && (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-2">
+                  <p className="text-sm font-semibold text-green-800">
+                    Rolling Complete: {totalFinishedLength.toFixed(2)} m / {actualCoated?.toFixed(2)} m
+                  </p>
+                </div>
+              )}
+            </div>
+            {!canAddMoreRolls && !isRollingComplete && (
+              <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+                <p className="text-sm text-yellow-800">
+                  Please enter actual coated meters before adding rolls.
+                </p>
+              </div>
+            )}
+            {isRollingComplete && (
+              <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <p className="text-sm text-blue-800">
+                  Rolling is complete. Click "Complete Production" to finalize the batch.
+                </p>
+              </div>
+            )}
+            <form onSubmit={handleAddFinishedRoll} className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                  Length (m) <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={newRollLength}
+                  onChange={(e) => setNewRollLength(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  placeholder="e.g. 50.00"
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-900">Grade</label>
+                <select
+                  value={newRollGrade}
+                  onChange={(e) => setNewRollGrade(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                >
+                  <option value="">Select Grade</option>
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="SCRAP">SCRAP</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-900">Notes</label>
+                <input
+                  type="text"
+                  value={newRollNotes}
+                  onChange={(e) => setNewRollNotes(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="sm:col-span-3 flex justify-end gap-2">
+                <Button type="submit" variant="primary" disabled={isAddingRoll || !canAddMoreRolls}>
+                  {isAddingRoll ? "Adding..." : "Add Roll"}
+                </Button>
+                {isRollingComplete && batch.status !== "COMPLETED" && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={handleCompleteProduction}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    Complete Production
+                  </Button>
+                )}
+              </div>
+            </form>
+          </div>
+        )}
+      </motion.section>
+
+      {/* Chemicals */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.15 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
+          Chemicals ({batchChemicals.length})
+        </h2>
+        {batchChemicals.length === 0 ? (
+          <p className="text-slate-600">No chemicals added to this batch.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Chemical Name
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Quantity
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    UOM
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {batchChemicals.map((chem) => (
+                  <tr key={chem.id}>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
+                      {chem.chemical_name ?? "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                      {chem.quantity !== null ? chem.quantity.toFixed(3) : "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                      {chem.uom ?? "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm">
+                      <button
+                        onClick={() => handleDeleteChemical(chem.id)}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        Remove
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -770,389 +1160,148 @@ export default function CoatingBatchDetailPage() {
             </table>
           </div>
         )}
-      </motion.div>
 
-      {/* Summary & Coated meters / chemicals */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-slate-900">Coated Meters &amp; Chemicals</h3>
-            <p className="text-sm text-slate-600">
-              Record actual coated meters and note batch-level chemical usage (no stock impact).
-            </p>
+        {/* Add Chemical Form */}
+        {batch.status !== "COMPLETED" && (
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900">Add Chemical</h3>
+
+            <form onSubmit={handleAddChemical} className="grid gap-4 sm:grid-cols-3">
+              <div className="relative">
+                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                  Chemical Name <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={newChemicalName}
+                  onChange={(e) => handleChemicalNameChange(e.target.value)}
+                  onFocus={handleChemicalNameFocus}
+                  onBlur={handleChemicalNameBlur}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  placeholder="Type to search issued chemicals..."
+                  required
+                />
+                    {showChemicalSuggestions && filteredChemicals.length > 0 && (
+                  <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-300 bg-white shadow-lg">
+                    {filteredChemicals.map((chem) => (
+                      <button
+                        key={chem.chemical_item_id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault(); // Prevent input blur
+                          handlePullFromIssued(chem);
+                        }}
+                        className="w-full border-b border-slate-200 p-3 text-left text-sm hover:bg-slate-50 last:border-b-0"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-900">{chem.item_name}</span>
+                          <span className="text-slate-600">
+                            Available: {chem.remaining_for_batches.toFixed(3)} {chem.uom}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {chemicalSearchQuery.length > 0 && filteredChemicals.length === 0 && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    No matching issued chemicals found. You can still enter a custom name.
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                  Quantity <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={newChemicalQuantity}
+                  onChange={(e) => setNewChemicalQuantity(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  placeholder="e.g. 10.000"
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-900">UOM</label>
+                <select
+                  value={newChemicalUom}
+                  onChange={(e) => setNewChemicalUom(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                >
+                  <option value="kg">kg</option>
+                  <option value="L">L</option>
+                  <option value="g">g</option>
+                  <option value="ml">ml</option>
+                </select>
+              </div>
+              <div className="sm:col-span-3 flex justify-end">
+                <Button type="submit" variant="primary" disabled={isAddingChemical}>
+                  {isAddingChemical ? "Adding..." : "Add Chemical"}
+                </Button>
+              </div>
+            </form>
           </div>
-          {success && (
-            <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
-              {success}
+        )}
+      </motion.section>
+
+      {/* Shortage Modal */}
+      {showShortageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
+            <h3 className="mb-4 text-xl font-semibold text-slate-900">Coating Shortage Detected</h3>
+            <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+              <p className="text-sm font-semibold text-yellow-800">Shortage Details:</p>
+              <p className="mt-1 text-sm text-yellow-700">
+                Base Fabric Input: {totalInputLength.toFixed(2)} m
+              </p>
+              <p className="text-sm text-yellow-700">
+                Actual Coated: {pendingCoatedMeters?.toFixed(2)} m
+              </p>
+              <p className="mt-2 text-sm font-semibold text-yellow-800">
+                Shortage: {(totalInputLength - (pendingCoatedMeters || 0)).toFixed(2)} m
+              </p>
             </div>
-          )}
-          {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-        </div>
-
-        {/* Summary card */}
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Total Input (m)
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">{totalInputLength.toFixed(2)}</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Actual Coated (m)
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {actualCoatedMeters !== null ? actualCoatedMeters.toFixed(2) : "Not recorded yet"}
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Difference (Input - Coated)
-            </p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {difference !== null ? difference.toFixed(2) : "-"}
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Yield %</p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">
-              {yieldPct !== null ? `${yieldPct.toFixed(1)}%` : "-"}
-            </p>
-          </div>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleSave} className="mt-6 space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Actual Coated Meters</label>
-              <input
-                type="number"
-                step="0.01"
-                value={coatedMetersInput}
-                onChange={(e) => setCoatedMetersInput(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="Enter coated meters"
+            <div className="mb-4">
+              <label className="mb-2 block text-sm font-semibold text-slate-900">
+                Reason for Shortage <span className="text-red-600">*</span>
+              </label>
+              <textarea
+                value={shortageReason}
+                onChange={(e) => setShortageReason(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                placeholder="e.g. Fabric shrinkage during coating process..."
+                rows={4}
+                required
               />
             </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900">Chemicals Used (optional)</h4>
-                <p className="text-xs text-slate-600">
-                  Batch-level usage only; does not impact stock.
-                </p>
-              </div>
-              <Button type="button" variant="secondary" onClick={handleAddChemical} disabled={isCompleted}>
-                Add Chemical
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setShowShortageModal(false);
+                  setShortageReason("");
+                  setPendingCoatedMeters(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleConfirmShortage}
+                disabled={!shortageReason.trim() || isUpdatingCoatedMeters}
+              >
+                {isUpdatingCoatedMeters ? "Saving..." : "Confirm & Save"}
               </Button>
             </div>
-
-            {chemicals.length === 0 ? (
-              <div className="p-4 text-sm text-slate-600">No chemicals added.</div>
-            ) : (
-              <div>
-                <table className="w-full">
-                  <thead className="border-b border-slate-200 bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Chemical
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Quantity
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        UOM
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 bg-white">
-                    {chemicals.map((row, index) => (
-                      <tr key={index}>
-                        <td className="px-4 py-3">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={row.query ?? row.chemical_name}
-                            onChange={(e) => {
-                              if (row.id || isCompleted) return; // existing rows are read-only
-                              handleChemicalChange(index, "chemical_name", e.target.value);
-                              setChemicals((prev) => {
-                                const next = [...prev];
-                                const r = { ...next[index] };
-                                r.query = e.target.value;
-                                if (e.target.value.trim() === "") {
-                                  r.chemical_item_id = undefined;
-                                  r.chemical_name = "";
-                                }
-                                next[index] = r;
-                                return next;
-                              });
-                              setOpenChemDropdown(index);
-                            }}
-                            onFocus={() => !row.id && !isCompleted && setOpenChemDropdown(index)}
-                            onBlur={() =>
-                              setTimeout(
-                                () => setOpenChemDropdown((curr) => (curr === index ? null : curr)),
-                                150
-                              )
-                            }
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            placeholder="Chemical code/name"
-                            autoComplete="off"
-                            readOnly={!!row.id || isCompleted}
-                          />
-                          {openChemDropdown === index && (row.query ?? "").trim().length > 0 && !isCompleted && (
-                            <div className="absolute z-40 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg max-h-48 overflow-y-auto">
-                              <ul className="max-h-48 overflow-auto text-sm text-slate-800">
-                                {availableChemicals
-                                  .filter((c) =>
-                                    (c.item_name || "")
-                                      .toLowerCase()
-                                      .includes((row.query ?? "").toLowerCase())
-                                  )
-                                  .map((chem) => (
-                                    <li
-                                      key={chem.chemical_item_id}
-                                      onMouseDown={(e) => e.preventDefault()}
-                                      onClick={() => {
-                                        handleChemicalSelect(index, chem.chemical_item_id);
-                                      }}
-                                      className="cursor-pointer px-3 py-2 hover:bg-slate-100"
-                                    >
-                                      {chem.item_name || "Unnamed"} (Remaining: {chem.remaining_for_batches})
-                                    </li>
-                                  ))}
-                                {availableChemicals.filter((c) =>
-                                  (c.item_name || "")
-                                    .toLowerCase()
-                                    .includes((row.query ?? "").toLowerCase())
-                                ).length === 0 && (
-                                  <li className="px-3 py-2 text-slate-500">
-                                    {availableChemicals.length === 0
-                                      ? "No chemicals available for Coating"
-                                      : "No matches"}
-                                  </li>
-                                )}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <input
-                            type="number"
-                            step="0.001"
-                            value={row.quantity ?? ""}
-                            onChange={(e) => handleChemicalChange(index, "quantity", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            placeholder="Quantity"
-                            readOnly={!!row.id || isCompleted}
-                          />
-                        </td>
-                        <td className="px-4 py-3">
-                          <input
-                            type="text"
-                            value={row.uom}
-                            onChange={(e) => handleChemicalChange(index, "uom", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            placeholder="kg"
-                            readOnly={!!row.id || isCompleted}
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                  {!row.id && !isCompleted && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveChemical(index)}
-                      className="text-sm text-red-600 hover:text-red-700"
-                    >
-                      Remove
-                    </button>
-                  )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
-
-          <div className="flex justify-end gap-3">
-            <Button type="button" variant="secondary" onClick={() => router.refresh()} disabled={isSaving}>
-              Reset
-            </Button>
-            <Button type="submit" variant="primary" isLoading={isSaving} disabled={isCompleted}>
-              Save Coated Meters &amp; Chemicals
-            </Button>
-          </div>
-        </form>
-      </motion.div>
-
-      {/* Finished rolls */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900">Finished Rolls (Rolling & Inspection)</h3>
-            <p className="text-sm text-slate-600">
-              Capture all 50m and short rolls for this coated batch, with grade.
-            </p>
-          </div>
-          {batch && batch.status !== "COMPLETED" && (batch.status === "ROLLED" || batch.status === "COATED") && (
-            <Button
-              variant="primary"
-              onClick={handleCompleteRolling}
-              disabled={isCompleting || finishedRolls.length === 0 || !actualCoatedMeters}
-            >
-              {isCompleting ? "Completing..." : "Complete Rolling"}
-            </Button>
-          )}
         </div>
-
-        {/* Summary */}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <SummaryCard label="Total Finished (m)" value={totalFinished.toFixed(2)} />
-          <SummaryCard
-            label="Yield vs Coated"
-            value={yieldVsCoated !== null ? `${yieldVsCoated.toFixed(1)}%` : "-"}
-          />
-          <SummaryCard
-            label="B-Grade"
-            value={`${bMeters.toFixed(2)} m${bPercent !== null ? ` (${bPercent.toFixed(1)}%)` : ""}`}
-          />
-          <SummaryCard
-            label="C-Grade"
-            value={`${cMeters.toFixed(2)} m${cPercent !== null ? ` (${cPercent.toFixed(1)}%)` : ""}`}
-          />
-          <SummaryCard
-            label="Scrap"
-            value={`${scrapMeters.toFixed(2)} m${scrapPercent !== null ? ` (${scrapPercent.toFixed(1)}%)` : ""}`}
-          />
-        </div>
-
-        {/* Add roll form */}
-        <form onSubmit={handleAddFinishedRoll} className="mt-6 grid gap-4 sm:grid-cols-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Length (m)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={newRollLength}
-              onChange={(e) => setNewRollLength(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              disabled={isCompleted}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Grade</label>
-            <select
-              value={newRollGrade}
-              onChange={(e) => setNewRollGrade(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              disabled={isCompleted}
-            >
-              <option value="A">A</option>
-              <option value="B">B</option>
-              <option value="C">C</option>
-              <option value="SCRAP">SCRAP</option>
-            </select>
-          </div>
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-slate-700">Notes (optional)</label>
-            <input
-              type="text"
-              value={newRollNotes}
-              onChange={(e) => setNewRollNotes(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              disabled={isCompleted}
-              placeholder="Short roll, inspection notes..."
-            />
-          </div>
-          <div className="sm:col-span-4 flex justify-end">
-            <Button type="submit" variant="primary" disabled={isCompleted}>
-              Add Roll
-            </Button>
-          </div>
-        </form>
-
-        {/* Rolls table */}
-        <div className="mt-6 overflow-x-auto">
-          {finishedRolls.length === 0 ? (
-            <p className="text-sm text-slate-600">No finished rolls recorded yet.</p>
-          ) : (
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  <Th>Roll No</Th>
-                  <Th>Length (m)</Th>
-                  <Th>Grade</Th>
-                  <Th>Notes</Th>
-                  <Th>Produced At</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {finishedRolls.map((roll) => (
-                  <tr key={roll.id}>
-                    <Td>{roll.roll_no ?? "-"}</Td>
-                    <Td>{roll.length_m?.toFixed(2)}</Td>
-                    <Td>{roll.grade ?? "-"}</Td>
-                    <Td>{roll.notes ?? "-"}</Td>
-                    <Td>
-                      {roll.produced_at
-                        ? new Date(roll.produced_at).toLocaleString("en-ZA")
-                        : roll.created_at
-                        ? new Date(roll.created_at).toLocaleString("en-ZA")
-                        : "-"}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </motion.div>
+      )}
     </div>
   );
-}
-
-function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-slate-900">{value}</p>
-    </div>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">
-      {children}
-    </th>
-  );
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-3 py-2 text-sm text-slate-700">{children}</td>;
 }
 
