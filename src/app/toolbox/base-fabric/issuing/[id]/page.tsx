@@ -233,6 +233,31 @@ export default function BaseFabricIssueSlipPage() {
               </table>
             </div>
 
+            {/* Signatures (print only) */}
+            <div className="mt-6 hidden print:block print:mt-8">
+              <div className="grid grid-cols-2 gap-8 text-sm text-slate-800">
+                {/* Issued By */}
+                <div className="flex flex-col gap-2">
+                  <div className="font-semibold text-slate-900">Issued By</div>
+                  <div className="h-8 border-b border-slate-400" />
+                  <div className="flex items-center justify-between text-xs text-slate-600">
+                    <span>Name &amp; Signature</span>
+                    <span>Date: ____________</span>
+                  </div>
+                </div>
+
+                {/* Received By */}
+                <div className="flex flex-col gap-2">
+                  <div className="font-semibold text-slate-900">Received By</div>
+                  <div className="h-8 border-b border-slate-400" />
+                  <div className="flex items-center justify-between text-xs text-slate-600">
+                    <span>Name &amp; Signature</span>
+                    <span>Date: ____________</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Footer */}
             <footer className="mt-auto pt-4 text-xs text-slate-600 print:text-[10px] print:text-slate-600 print:border-t print:border-slate-200">
               <div className="flex justify-between">

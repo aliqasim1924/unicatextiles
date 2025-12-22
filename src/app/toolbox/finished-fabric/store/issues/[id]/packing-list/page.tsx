@@ -11,6 +11,14 @@ interface IssueItem {
   roll_no: string | null;
   length_m: number | null;
   grade: string | null;
+  roll?: {
+    roll_no?: string | null;
+    length_m?: number | null;
+    grade?: string | null;
+    gsm?: number | null;
+    color?: string | null;
+    coating_type?: string | null;
+  } | null;
 }
 
 interface IssueHeader {
@@ -26,7 +34,7 @@ interface IssueHeader {
   order?: any | null;
 }
 
-export default function FinishedFabricStoreIssueDetailPage() {
+export default function FinishedFabricPackingListPage() {
   const params = useParams();
   const issueId = params.id as string;
 
@@ -61,9 +69,18 @@ export default function FinishedFabricStoreIssueDetailPage() {
           customer_orders:order_id (*),
           finished_fabric_store_issue_items (
             id,
+            roll_id,
             roll_no,
             length_m,
-            grade
+            grade,
+            finished_fabric_rolls:roll_id (
+              roll_no,
+              length_m,
+              grade,
+              gsm,
+              color,
+              coating_type
+            )
           )
         `
         )
@@ -91,10 +108,14 @@ export default function FinishedFabricStoreIssueDetailPage() {
           roll_no: row.roll_no ?? null,
           length_m: row.length_m !== null ? Number(row.length_m) : null,
           grade: row.grade ?? null,
+          roll: Array.isArray(row.finished_fabric_rolls)
+            ? row.finished_fabric_rolls[0]
+            : row.finished_fabric_rolls,
         })) || [];
       setItems(mapped);
     } catch (err: any) {
-      setError(err.message || "Failed to load issue.");
+      console.error("Failed to load packing list", err);
+      setError(err.message || "Failed to load packing list.");
     } finally {
       setIsLoading(false);
     }
@@ -125,7 +146,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
       <div className="min-h-screen bg-slate-100 print:bg-white">
         <div className="mx-auto max-w-[900px] px-4 py-6">
           <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-600 shadow-sm">
-            Loading issue...
+            Loading packing list...
           </div>
         </div>
       </div>
@@ -148,22 +169,10 @@ export default function FinishedFabricStoreIssueDetailPage() {
     <div className="min-h-screen bg-slate-100 print:bg-white print:p-0">
       {/* Screen-only actions */}
       <div className="print:hidden mx-auto max-w-[900px] px-4 py-6 flex items-center justify-between">
-        <BackButton href="/toolbox/finished-fabric/store" label="Back to Store" />
-        <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (issueId) {
-                window.location.href = `/toolbox/finished-fabric/store/issues/${issueId}/packing-list`;
-              }
-            }}
-          >
-            Print Packing List
-          </Button>
-          <Button variant="primary" onClick={() => window.print()}>
-            Print Issue Slip
-          </Button>
-        </div>
+        <BackButton href={`/toolbox/finished-fabric/store/issues/${issueId}`} label="Back to Issue" />
+        <Button variant="primary" onClick={() => window.print()}>
+          Print Packing List
+        </Button>
       </div>
 
       <style jsx global>{`
@@ -212,9 +221,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
               <p className="text-sm font-semibold text-teal-700">UNICA TEXTILE MILLS</p>
-              <h1 className="text-2xl font-semibold text-slate-900">
-                Finished Fabric Store Issue
-              </h1>
+              <h1 className="text-2xl font-semibold text-slate-900">Packing List</h1>
               <p className="text-sm text-slate-600 mt-1">
                 Issue No: {formatIssueNo(header.issue_no)}
               </p>
@@ -223,70 +230,83 @@ export default function FinishedFabricStoreIssueDetailPage() {
                 Destination: {header.destination || "—"}
               </p>
               <p className="text-sm text-slate-600">
-                Reference: {header.reference && header.reference.trim() !== "" ? header.reference : "—"}
+                Order:{" "}
+                {header.order?.order_no ||
+                  header.order?.proforma_no ||
+                  header.order?.quote_no ||
+                  header.order?.id ||
+                  "—"}
               </p>
               <p className="text-sm text-slate-600">
-                Invoice: {header.invoice_no || "—"}
+                Customer: {header.order?.customer_name || "—"}
               </p>
               <p className="text-sm text-slate-600">
-                Gate Pass: {header.gate_pass_no || "—"}
+                Invoice No: {header.invoice_no || "____________"}
               </p>
-              {header.order && (
-                <p className="text-sm text-slate-600">
-                  Order:{" "}
-                  {header.order.order_no ||
-                    header.order.proforma_no ||
-                    header.order.quote_no ||
-                    header.order.id ||
-                    "—"}
-                </p>
-              )}
+              <p className="text-sm text-slate-600">
+                Gate Pass No: {header.gate_pass_no || "____________"}
+              </p>
             </div>
             <div className="w-28 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-xs text-slate-400">
               LOGO
             </div>
           </div>
 
-          <div className="mb-4 text-sm text-slate-700">
-            {header.notes ? `Notes: ${header.notes}` : "Notes: —"}
-          </div>
-
           {/* Items */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden mb-4">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Length (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">GSM</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Colour</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Coating Type</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700" colSpan={3}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
                       No items recorded.
                     </td>
                   </tr>
                 ) : (
-                  items.map((item) => (
-                    <tr key={item.id} className="border-b border-slate-100">
-                      <td className="px-4 py-3 text-slate-900 font-medium">
-                        {item.roll_no || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-900">
-                        {item.length_m !== null ? item.length_m.toFixed(3) : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-900">{item.grade || "—"}</td>
-                    </tr>
-                  ))
+                  items.map((item) => {
+                    const roll = item.roll || {};
+                    return (
+                      <tr key={item.id} className="border-b border-slate-100">
+                        <td className="px-4 py-3 text-slate-900 font-medium">
+                          {item.roll_no || roll.roll_no || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">
+                          {item.length_m !== null
+                            ? item.length_m.toFixed(3)
+                            : roll.length_m !== undefined && roll.length_m !== null
+                              ? Number(roll.length_m).toFixed(3)
+                              : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">{item.grade || roll.grade || "—"}</td>
+                        <td className="px-4 py-3 text-slate-900">
+                          {roll.gsm !== null && roll.gsm !== undefined ? roll.gsm : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">
+                          {roll.color || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">
+                          {roll.coating_type || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
 
           <footer className="mt-auto pt-4 text-xs text-slate-600">
-            Document Number: UTM-FF-STORE-ISS-FT-001
+            Document Number: UTM-PACK-LIST-FT-001
             <span className="float-right">Page 1 of 1</span>
           </footer>
         </div>
@@ -294,4 +314,5 @@ export default function FinishedFabricStoreIssueDetailPage() {
     </div>
   );
 }
+
 

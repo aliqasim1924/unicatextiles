@@ -312,6 +312,7 @@ export default function BaseFabricOrderDetailPage() {
 
   const totalProduced = rolls.reduce((sum, r) => sum + r.length_m, 0);
   const variance = totalProduced - order.planned_qty_m;
+  const shortfall = totalProduced < order.planned_qty_m ? order.planned_qty_m - totalProduced : null;
   const progress = order.planned_qty_m > 0 ? (totalProduced / order.planned_qty_m) * 100 : 0;
   const totalFabricM = totalProduced;
 
@@ -388,7 +389,7 @@ export default function BaseFabricOrderDetailPage() {
             </h1>
 
             {/* Print Order Info */}
-            <div className="print:grid print:grid-cols-2 print:gap-4 print:mb-6 print:text-sm">
+            <div className="print:grid print:grid-cols-2 print:gap-4 print:mb-4 print:text-sm">
               <div>
                 <span className="print:font-semibold print:text-slate-900">Order No:</span>{" "}
                 <span className="print:text-slate-700">{order.order_no || "N/A"}</span>
@@ -409,21 +410,6 @@ export default function BaseFabricOrderDetailPage() {
               <div>
                 <span className="print:font-semibold print:text-slate-900">Status:</span>{" "}
                 <span className="print:text-slate-700">{order.status}</span>
-              </div>
-              <div>
-                <span className="print:font-semibold print:text-slate-900">Planned Quantity:</span>{" "}
-                <span className="print:text-slate-700">{order.planned_qty_m.toFixed(2)} m</span>
-              </div>
-              <div>
-                <span className="print:font-semibold print:text-slate-900">Produced Quantity:</span>{" "}
-                <span className="print:text-slate-700">{totalProduced.toFixed(2)} m</span>
-              </div>
-              <div>
-                <span className="print:font-semibold print:text-slate-900">Variance:</span>{" "}
-                <span className="print:text-slate-700">
-                  {variance >= 0 ? "+" : ""}
-                  {variance.toFixed(2)} m
-                </span>
               </div>
               {order.estimated_completion_at && (
                 <div>
@@ -446,6 +432,48 @@ export default function BaseFabricOrderDetailPage() {
                 </div>
               )}
             </div>
+
+            {/* Production Summary */}
+            <div className="print:mb-4 print:border print:border-slate-300 print:rounded print:p-3 print:bg-slate-50">
+              <h3 className="print:text-sm print:font-bold print:text-slate-900 print:mb-2">
+                Production Summary
+              </h3>
+              <div className="print:grid print:grid-cols-2 print:gap-3 print:text-sm">
+                <div>
+                  <span className="print:font-semibold print:text-slate-900">Planned (m):</span>{" "}
+                  <span className="print:text-slate-700">{order.planned_qty_m.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="print:font-semibold print:text-slate-900">Actual (m):</span>{" "}
+                  <span className="print:text-slate-700">{totalProduced.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="print:font-semibold print:text-slate-900">Variance (m):</span>{" "}
+                  <span className="print:text-slate-700">
+                    {variance >= 0 ? "+" : ""}
+                    {variance.toFixed(2)}
+                  </span>
+                </div>
+                {shortfall !== null && (
+                  <div>
+                    <span className="print:font-semibold print:text-slate-900">Shortfall (m):</span>{" "}
+                    <span className="print:text-slate-700">{shortfall.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Reason for Shortfall/Overrun */}
+            {(variance !== 0 || order.notes) && (
+              <div className="print:mb-4 print:text-sm">
+                <h3 className="print:text-sm print:font-bold print:text-slate-900 print:mb-1">
+                  Reason for Shortfall/Overrun:
+                </h3>
+                <div className="print:border print:border-slate-300 print:rounded print:p-2 print:min-h-[2rem] print:text-slate-700">
+                  {order.notes || completionNote || "—"}
+                </div>
+              </div>
+            )}
 
             {/* Print Cost Summary */}
             <div className="print:mb-4 print:text-sm print:text-slate-900 print:space-y-2">
@@ -808,76 +836,82 @@ export default function BaseFabricOrderDetailPage() {
           transition={{ duration: 0.3, delay: 0.1 }}
           className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
         >
-          {!showCompleteDialog ? (
-            <Button variant="primary" onClick={() => setShowCompleteDialog(true)}>
-              Complete Order
-            </Button>
-          ) : (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <h3 className="mb-3 text-lg font-semibold text-slate-900">
-                  Complete Order Confirmation
-                </h3>
-                <div className="grid gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Planned:</span>
-                    <span className="font-medium text-slate-900">
-                      {order.planned_qty_m.toFixed(2)} m
-                    </span>
+          {rolls.length >= 1 ? (
+            !showCompleteDialog ? (
+              <Button variant="primary" onClick={() => setShowCompleteDialog(true)}>
+                Complete Order
+              </Button>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <h3 className="mb-3 text-lg font-semibold text-slate-900">
+                    Complete Order Confirmation
+                  </h3>
+                  <div className="grid gap-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Planned:</span>
+                      <span className="font-medium text-slate-900">
+                        {order.planned_qty_m.toFixed(2)} m
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Produced:</span>
+                      <span className="font-medium text-slate-900">
+                        {totalProduced.toFixed(2)} m
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Variance:</span>
+                      <span
+                        className={`font-medium ${
+                          variance === 0
+                            ? "text-slate-900"
+                            : variance > 0
+                              ? "text-green-700"
+                              : "text-red-700"
+                        }`}
+                      >
+                        {variance >= 0 ? "+" : ""}
+                        {variance.toFixed(2)} m
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Produced:</span>
-                    <span className="font-medium text-slate-900">
-                      {totalProduced.toFixed(2)} m
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Variance:</span>
-                    <span
-                      className={`font-medium ${
-                        variance === 0
-                          ? "text-slate-900"
-                          : variance > 0
-                            ? "text-green-700"
-                            : "text-red-700"
-                      }`}
-                    >
-                      {variance >= 0 ? "+" : ""}
-                      {variance.toFixed(2)} m
-                    </span>
-                  </div>
+                  {Math.abs(variance) > Math.max(order.planned_qty_m * 0.01, 1.0) && (
+                    <div className="mt-4">
+                      <label className="block text-sm font-semibold text-slate-900 mb-2">
+                        Variance Note <span className="text-red-600">*</span>
+                      </label>
+                      <textarea
+                        value={completionNote}
+                        onChange={(e) => setCompletionNote(e.target.value)}
+                        rows={3}
+                        className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                        placeholder="Explain the variance..."
+                        required
+                      />
+                    </div>
+                  )}
                 </div>
-                {Math.abs(variance) > Math.max(order.planned_qty_m * 0.01, 1.0) && (
-                  <div className="mt-4">
-                    <label className="block text-sm font-semibold text-slate-900 mb-2">
-                      Variance Note <span className="text-red-600">*</span>
-                    </label>
-                    <textarea
-                      value={completionNote}
-                      onChange={(e) => setCompletionNote(e.target.value)}
-                      rows={3}
-                      className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                      placeholder="Explain the variance..."
-                      required
-                    />
-                  </div>
-                )}
+                <div className="flex gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setShowCompleteDialog(false);
+                      setCompletionNote(order.notes || "");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button variant="primary" onClick={handleCompleteOrder} disabled={isSubmitting}>
+                    {isSubmitting ? "Completing..." : "Confirm Completion"}
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setShowCompleteDialog(false);
-                    setCompletionNote(order.notes || "");
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button variant="primary" onClick={handleCompleteOrder} disabled={isSubmitting}>
-                  {isSubmitting ? "Completing..." : "Confirm Completion"}
-                </Button>
-              </div>
-            </div>
+            )
+          ) : (
+            <p className="text-sm text-slate-600">
+              Add at least one roll before completing the order.
+            </p>
           )}
         </motion.section>
       )}

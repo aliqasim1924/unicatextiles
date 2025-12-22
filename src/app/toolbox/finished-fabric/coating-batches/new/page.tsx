@@ -25,11 +25,11 @@ interface AvailableRoll {
 export default function NewCoatingBatchPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
-    coating_type: "",
-    width_mm: "",
+    fabric_type_id: "",
+    gsm_option_id: "",
+    color_option_id: "",
+    width_option_id: "",
     planned_meters: "",
-    color: "",
-    gsm: "",
     notes: "",
   });
   const [availableRolls, setAvailableRolls] = useState<AvailableRoll[]>([]);
@@ -38,10 +38,76 @@ export default function NewCoatingBatchPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [fabricTypes, setFabricTypes] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [gsmOptions, setGsmOptions] = useState<Record<string, Array<{ id: string; gsm: number }>>>({});
+  const [colorOptions, setColorOptions] = useState<Record<string, Array<{ id: string; color_name: string }>>>({});
+  const [widthOptions, setWidthOptions] = useState<Record<string, Array<{ id: string; width_mm: number }>>>({});
 
   useEffect(() => {
     fetchAvailableRolls();
+    fetchCatalogData();
   }, []);
+
+  async function fetchCatalogData() {
+    try {
+      // Fetch fabric types
+      const { data: typesData, error: typesError } = await supabaseBrowserClient
+        .from("fabric_types")
+        .select("id, code, name")
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+      if (typesError) throw typesError;
+      setFabricTypes((typesData || []) as Array<{ id: string; code: string; name: string }>);
+
+      // Fetch all GSM options grouped by fabric_type_id
+      const { data: gsmData, error: gsmError } = await supabaseBrowserClient
+        .from("fabric_type_gsm_options")
+        .select("id, fabric_type_id, gsm")
+        .eq("is_active", true)
+        .order("gsm", { ascending: true });
+      if (gsmError) throw gsmError;
+
+      const gsmMap: Record<string, Array<{ id: string; gsm: number }>> = {};
+      (gsmData || []).forEach((opt: any) => {
+        if (!gsmMap[opt.fabric_type_id]) gsmMap[opt.fabric_type_id] = [];
+        gsmMap[opt.fabric_type_id].push({ id: opt.id, gsm: opt.gsm });
+      });
+      setGsmOptions(gsmMap);
+
+      // Fetch all color options grouped by fabric_type_id
+      const { data: colorData, error: colorError } = await supabaseBrowserClient
+        .from("fabric_type_color_options")
+        .select("id, fabric_type_id, color_name")
+        .eq("is_active", true)
+        .order("color_name", { ascending: true });
+      if (colorError) throw colorError;
+
+      const colorMap: Record<string, Array<{ id: string; color_name: string }>> = {};
+      (colorData || []).forEach((opt: any) => {
+        if (!colorMap[opt.fabric_type_id]) colorMap[opt.fabric_type_id] = [];
+        colorMap[opt.fabric_type_id].push({ id: opt.id, color_name: opt.color_name });
+      });
+      setColorOptions(colorMap);
+
+      // Fetch all width options grouped by fabric_type_id
+      const { data: widthData, error: widthError } = await supabaseBrowserClient
+        .from("fabric_type_width_options")
+        .select("id, fabric_type_id, width_mm")
+        .eq("is_active", true)
+        .order("width_mm", { ascending: true });
+      if (widthError) throw widthError;
+
+      const widthMap: Record<string, Array<{ id: string; width_mm: number }>> = {};
+      (widthData || []).forEach((opt: any) => {
+        if (!widthMap[opt.fabric_type_id]) widthMap[opt.fabric_type_id] = [];
+        widthMap[opt.fabric_type_id].push({ id: opt.id, width_mm: opt.width_mm });
+      });
+      setWidthOptions(widthMap);
+    } catch (err: any) {
+      console.error("Failed to fetch catalog data", err);
+      setError(err?.message || "Failed to load catalog data.");
+    }
+  }
 
   async function fetchAvailableRolls() {
     try {
@@ -129,8 +195,12 @@ export default function NewCoatingBatchPage() {
     setSuccess(null);
 
     // Validation
-    if (!formData.coating_type) {
-      setError("Please select a coating type");
+    if (!formData.fabric_type_id) {
+      setError("Please select a fabric type");
+      return;
+    }
+    if (!formData.color_option_id) {
+      setError("Please select a colour");
       return;
     }
 
@@ -147,15 +217,26 @@ export default function NewCoatingBatchPage() {
         data: { user },
       } = await supabaseBrowserClient.auth.getUser();
 
+      // Resolve text values from catalog for backward compatibility
+      const fabricType = fabricTypes.find((ft) => ft.id === formData.fabric_type_id);
+      const colorOpt = colorOptions[formData.fabric_type_id]?.find((c) => c.id === formData.color_option_id);
+      const gsmOpt = gsmOptions[formData.fabric_type_id]?.find((g) => g.id === formData.gsm_option_id);
+      const widthOpt = widthOptions[formData.fabric_type_id]?.find((w) => w.id === formData.width_option_id);
+
       // Create coating batch
       const { data: batch, error: batchError } = await supabaseBrowserClient
         .from("coating_batches")
         .insert({
-          coating_type: formData.coating_type,
-          width_mm: formData.width_mm ? parseInt(formData.width_mm) : null,
+          fabric_type_id: formData.fabric_type_id || null,
+          gsm_option_id: formData.gsm_option_id || null,
+          color_option_id: formData.color_option_id || null,
+          width_option_id: formData.width_option_id || null,
+          // Backward compatibility: still store text fields
+          coating_type: fabricType?.code || null,
+          color: colorOpt?.color_name || null,
+          gsm: gsmOpt?.gsm || null,
+          width_mm: widthOpt?.width_mm || null,
           planned_meters: formData.planned_meters ? parseFloat(formData.planned_meters) : null,
-          color: formData.color || null,
-          gsm: formData.gsm ? parseInt(formData.gsm) : null,
           notes: formData.notes || null,
           created_by: user?.id || null,
         })
@@ -237,29 +318,86 @@ export default function NewCoatingBatchPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">
-                Coating Type <span className="text-red-500">*</span>
+                Fabric Type <span className="text-red-500">*</span>
               </label>
               <select
-                value={formData.coating_type}
-                onChange={(e) => setFormData({ ...formData, coating_type: e.target.value })}
+                value={formData.fabric_type_id}
+                onChange={(e) => {
+                  setFormData({
+                    ...formData,
+                    fabric_type_id: e.target.value,
+                    gsm_option_id: "",
+                    color_option_id: "",
+                    width_option_id: "",
+                  });
+                }}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 required
               >
-                <option value="">Select coating type</option>
-                <option value="PVC">PVC</option>
-                <option value="Acrylic Canvas">Acrylic Canvas</option>
+                <option value="">Select fabric type</option>
+                {fabricTypes.map((ft) => (
+                  <option key={ft.id} value={ft.id}>
+                    {ft.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Colour <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={formData.color_option_id}
+                onChange={(e) => setFormData({ ...formData, color_option_id: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                required
+                disabled={!formData.fabric_type_id}
+              >
+                <option value="">Select colour</option>
+                {formData.fabric_type_id &&
+                  (colorOptions[formData.fabric_type_id] || []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.color_name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">GSM</label>
+              <select
+                value={formData.gsm_option_id}
+                onChange={(e) => setFormData({ ...formData, gsm_option_id: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                disabled={!formData.fabric_type_id}
+              >
+                <option value="">Select GSM</option>
+                {formData.fabric_type_id &&
+                  (gsmOptions[formData.fabric_type_id] || []).map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.gsm}
+                    </option>
+                  ))}
               </select>
             </div>
 
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Width (mm)</label>
-              <input
-                type="number"
-                value={formData.width_mm}
-                onChange={(e) => setFormData({ ...formData, width_mm: e.target.value })}
+              <select
+                value={formData.width_option_id}
+                onChange={(e) => setFormData({ ...formData, width_option_id: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="e.g. 1500"
-              />
+                disabled={!formData.fabric_type_id}
+              >
+                <option value="">Select width</option>
+                {formData.fabric_type_id &&
+                  (widthOptions[formData.fabric_type_id] || []).map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.width_mm} mm
+                    </option>
+                  ))}
+              </select>
             </div>
 
             <div>
@@ -273,28 +411,6 @@ export default function NewCoatingBatchPage() {
                 onChange={(e) => setFormData({ ...formData, planned_meters: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="e.g. 500.00"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Colour</label>
-              <input
-                type="text"
-                value={formData.color}
-                onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="e.g. White"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">GSM</label>
-              <input
-                type="number"
-                value={formData.gsm}
-                onChange={(e) => setFormData({ ...formData, gsm: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="e.g. 200"
               />
             </div>
 

@@ -113,7 +113,7 @@ export default function CoatingBatchDetailPage() {
       const { data: batchData, error: batchError } = await supabaseBrowserClient
         .from("coating_batches")
         .select(
-          "id, batch_no, batch_date, coating_type, width_mm, planned_meters, color, gsm, actual_coated_meters, status, notes"
+          "id, batch_no, batch_date, coating_type, width_mm, planned_meters, color, gsm, actual_coated_meters, status, notes, fabric_type_id, gsm_option_id, color_option_id, width_option_id"
         )
         .eq("id", batchId)
         .single();
@@ -292,6 +292,12 @@ export default function CoatingBatchDetailPage() {
           length_m: lengthVal,
           grade: newRollGrade || null,
           notes: newRollNotes || null,
+          // Use catalog IDs from batch
+          fabric_type_id: (batch as any)?.fabric_type_id || null,
+          gsm_option_id: (batch as any)?.gsm_option_id || null,
+          color_option_id: (batch as any)?.color_option_id || null,
+          width_option_id: (batch as any)?.width_option_id || null,
+          // Backward compatibility: still store text fields
           color: batch?.color || null,
           gsm: batch?.gsm || null,
           coating_type: batch?.coating_type || null,
