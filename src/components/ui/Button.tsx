@@ -1,12 +1,10 @@
 "use client";
 
-import { ButtonHTMLAttributes, forwardRef, ReactNode } from "react";
-import { motion, MotionProps } from "framer-motion";
+import { forwardRef, ReactNode } from "react";
+import { motion, HTMLMotionProps } from "framer-motion";
 
-// Omit 'onDrag' and 'children' to avoid conflicts between React's types and framer-motion's MotionProps
-interface ButtonProps
-  extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onDrag" | "children">,
-    MotionProps {
+// Use HTMLMotionProps which already combines React button attributes and framer-motion props correctly
+interface ButtonProps extends Omit<HTMLMotionProps<"button">, "children"> {
   children?: ReactNode;
   variant?: "primary" | "secondary" | "outline";
   isLoading?: boolean;
