@@ -210,8 +210,8 @@ export default function FinishedFabricStoreReceiptDetailPage() {
                 Date/Time: {formatDate(header.receipt_time)}
               </p>
             </div>
-            <div className="w-28 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-xs text-slate-400 print:w-16 print:h-16 print:border-slate-400 print:text-slate-500">
-              LOGO
+            <div className="w-28 h-14 rounded-lg flex items-center justify-center print:w-16 print:h-16 overflow-hidden">
+              <img src="/Logo.png" alt="Company Logo" className="h-full w-full object-contain" />
             </div>
           </div>
 

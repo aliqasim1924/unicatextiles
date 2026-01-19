@@ -247,8 +247,8 @@ export default function FinishedFabricPackingListPage() {
                 Gate Pass No: {header.gate_pass_no || "____________"}
               </p>
             </div>
-            <div className="w-28 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-xs text-slate-400">
-              LOGO
+            <div className="w-28 h-14 rounded-lg flex items-center justify-center overflow-hidden">
+              <img src="/Logo.png" alt="Company Logo" className="h-full w-full object-contain" />
             </div>
           </div>
 

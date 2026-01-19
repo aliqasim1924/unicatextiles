@@ -378,8 +378,8 @@ export default function BaseFabricOrderDetailPage() {
                   UNICA TEXTILE MILLS
                 </h2>
               </div>
-              <div className="print:w-24 print:h-24 print:border print:border-slate-300 print:flex print:items-center print:justify-center print:text-xs print:text-slate-500">
-                LOGO
+              <div className="print:w-24 print:h-24 print:flex print:items-center print:justify-center print:overflow-hidden">
+                <img src="/Logo.png" alt="Company Logo" className="print:h-full print:w-full print:object-contain" />
               </div>
             </div>
 

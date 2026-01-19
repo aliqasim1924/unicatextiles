@@ -202,8 +202,8 @@ export default function RollingReportPage() {
               <p className="text-sm font-semibold text-slate-700">Rolling Report (Finished Fabric)</p>
             </div>
             <div className="text-right">
-              <div className="mb-2 flex h-16 w-16 items-center justify-center rounded border border-slate-300 text-xs text-slate-500">
-                LOGO
+              <div className="mb-2 flex h-16 w-16 items-center justify-center rounded overflow-hidden">
+                <img src="/Logo.png" alt="Company Logo" className="h-full w-full object-contain" />
               </div>
               <p className="text-sm font-semibold text-slate-900">Batch No: {batch.batch_no ?? "-"}</p>
               <p className="text-xs text-slate-600">Status: {batch.status}</p>

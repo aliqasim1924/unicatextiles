@@ -170,8 +170,8 @@ export default function YarnIssueSlipPage() {
                 <h1 className="text-2xl font-bold text-slate-900 print:text-xl">UNICA TEXTILE MILLS</h1>
                 <p className="mt-1 text-sm text-slate-600 print:text-xs">Yarn Issue Slip</p>
               </div>
-              <div className="flex h-20 w-20 items-center justify-center border-2 border-dashed border-slate-300 text-xs text-slate-400 print:border-slate-400 print:text-slate-500 print:h-16 print:w-16">
-                LOGO
+              <div className="flex h-20 w-20 items-center justify-center print:h-16 print:w-16 overflow-hidden">
+                <img src="/Logo.png" alt="Company Logo" className="h-full w-full object-contain" />
               </div>
             </div>
 
