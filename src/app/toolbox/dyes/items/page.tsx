@@ -87,7 +87,8 @@ export default function DyeItemsPage() {
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) {
-    const { name, value, type, checked } = e.target;
+    const { name, value, type } = e.target;
+    const checked = type === "checkbox" ? (e.target as HTMLInputElement).checked : undefined;
     setForm((prev) => ({
       ...prev,
       [name]: type === "checkbox" ? checked : value,
