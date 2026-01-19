@@ -48,6 +48,7 @@ interface OrderRequirement {
   width_option_id: string | null;
   coating_type: string; // For display
   color: string; // For display
+  gsm: string | null; // For fallback text matching
   ordered_m: number;
   issued_m: number;
   selected_m: number;
@@ -226,6 +227,7 @@ export default function FinishedFabricStoreIssuePage() {
           ordered_m: number;
           coating_type: string;
           color: string;
+          gsm: string | null;
           fabric_type_id: string | null;
           color_option_id: string | null;
           gsm_option_id: string | null;
@@ -239,6 +241,7 @@ export default function FinishedFabricStoreIssuePage() {
             ordered_m: 0,
             coating_type: line.coating_type,
             color: line.color,
+            gsm: line.gsm,
             fabric_type_id: line.fabric_type_id,
             color_option_id: line.color_option_id,
             gsm_option_id: line.gsm_option_id,
@@ -296,6 +299,7 @@ export default function FinishedFabricStoreIssuePage() {
           width_option_id: data.width_option_id,
           coating_type: data.coating_type,
           color: data.color,
+          gsm: data.gsm,
           ordered_m: data.ordered_m,
           issued_m,
           selected_m: 0, // Will be computed from selected rolls
