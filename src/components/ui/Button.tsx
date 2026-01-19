@@ -1,9 +1,10 @@
 "use client";
 
 import { ButtonHTMLAttributes, forwardRef } from "react";
-import { motion } from "framer-motion";
+import { motion, MotionProps } from "framer-motion";
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+// Omit 'onDrag' to avoid conflict between React's DragEventHandler and framer-motion's drag handler
+interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onDrag">, MotionProps {
   variant?: "primary" | "secondary" | "outline";
   isLoading?: boolean;
 }
