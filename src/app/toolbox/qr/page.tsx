@@ -34,6 +34,8 @@ export default function QRPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scanAreaRef = useRef<HTMLDivElement>(null);
+  const lastScannedRef = useRef<Map<string, number>>(new Map()); // Track last scan time for each QR code
+  const SCAN_DEBOUNCE_MS = 2000; // 2 seconds between scans of the same QR code
 
   useEffect(() => {
     // Cleanup scanner on unmount
@@ -232,11 +234,24 @@ export default function QRPage() {
       scannerRef.current = null;
     }
     setIsScanning(false);
+    // Clear scan history when stopping
+    lastScannedRef.current.clear();
   }
 
   async function handleScannedCode(qrCode: string) {
-    // Prevent duplicate scans
-    if (scannedRolls.some((r) => r.qr_code === qrCode)) {
+    const now = Date.now();
+    const lastScanTime = lastScannedRef.current.get(qrCode);
+    
+    // Prevent rapid duplicate scans (debounce)
+    if (lastScanTime && now - lastScanTime < SCAN_DEBOUNCE_MS) {
+      return; // Ignore if scanned within the debounce window
+    }
+    
+    // Update last scan time
+    lastScannedRef.current.set(qrCode, now);
+    
+    // Prevent duplicate scans in the scanned rolls list
+    if (scannedRolls.some((r) => r.qr_code === qrCode || r.roll_no === qrCode)) {
       return;
     }
 
@@ -504,6 +519,7 @@ export default function QRPage() {
             onClick={() => {
               setSelectedAction("receive_base_at_coating");
               setScannedRolls([]);
+              lastScannedRef.current.clear();
             }}
             className={`rounded-lg border-2 p-4 text-left transition ${
               selectedAction === "receive_base_at_coating"
@@ -521,6 +537,7 @@ export default function QRPage() {
             onClick={() => {
               setSelectedAction("receive_finished_at_store");
               setScannedRolls([]);
+              lastScannedRef.current.clear();
             }}
             className={`rounded-lg border-2 p-4 text-left transition ${
               selectedAction === "receive_finished_at_store"
@@ -538,6 +555,7 @@ export default function QRPage() {
             onClick={() => {
               setSelectedAction("issue_finished_to_customer");
               setScannedRolls([]);
+              lastScannedRef.current.clear();
             }}
             className={`rounded-lg border-2 p-4 text-left transition ${
               selectedAction === "issue_finished_to_customer"
@@ -555,6 +573,7 @@ export default function QRPage() {
             onClick={() => {
               setSelectedAction("view_roll_details");
               setScannedRolls([]);
+              lastScannedRef.current.clear();
             }}
             className={`rounded-lg border-2 p-4 text-left transition ${
               selectedAction === "view_roll_details"
