@@ -330,7 +330,16 @@ export default function FinishedFabricStoreIssuePage() {
         .in("status", ["OPEN", "PARTIALLY_FULFILLED"]);
 
       if (orderError) throw orderError;
-      setCustomerOrders((orderError ? [] : (data as CustomerOrder[])) || []);
+      
+      // Normalize customers from array to single object (Supabase may return array for foreign keys)
+      const normalized = (data || []).map((item: any) => ({
+        ...item,
+        customers: Array.isArray(item.customers) 
+          ? (item.customers[0] || null)
+          : item.customers
+      }));
+      
+      setCustomerOrders(normalized as CustomerOrder[]);
     } catch (err: any) {
       console.error("Failed to load customer orders", err);
       setError(err?.message || "Failed to load customer orders.");
