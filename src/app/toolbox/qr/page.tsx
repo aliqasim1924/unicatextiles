@@ -241,7 +241,7 @@ export default function QRPage() {
     }
 
     try {
-      // Try to find base fabric roll first
+      // Try to find base fabric roll first - check qr_code, then roll_no as fallback
       let { data: baseRoll, error: baseError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
         .select(
@@ -261,7 +261,36 @@ export default function QRPage() {
         `
         )
         .eq("qr_code", qrCode)
-        .single();
+        .maybeSingle();
+
+      // If not found by qr_code, try roll_no
+      if (!baseRoll || baseError) {
+        const { data: baseRollByRollNo, error: baseErrorByRollNo } = await supabaseBrowserClient
+          .from("base_fabric_rolls")
+          .select(
+            `
+            id,
+            qr_code,
+            roll_no,
+            length_m,
+            status,
+            current_location,
+            base_fabric_orders:base_fabric_order_id (
+              order_no,
+              base_fabric_items:base_fabric_item_id (
+                name
+              )
+            )
+          `
+          )
+          .eq("roll_no", qrCode)
+          .maybeSingle();
+        
+        if (baseRollByRollNo && !baseErrorByRollNo) {
+          baseRoll = baseRollByRollNo;
+          baseError = null;
+        }
+      }
 
       if (baseRoll && !baseError) {
         const order = Array.isArray(baseRoll.base_fabric_orders)
@@ -289,8 +318,8 @@ export default function QRPage() {
         return;
       }
 
-      // Try finished fabric roll
-      const { data: finishedRoll, error: finishedError } = await supabaseBrowserClient
+      // Try finished fabric roll - check qr_code, then roll_no as fallback
+      let { data: finishedRoll, error: finishedError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .select(
           `
@@ -306,7 +335,33 @@ export default function QRPage() {
         `
         )
         .eq("qr_code", qrCode)
-        .single();
+        .maybeSingle();
+
+      // If not found by qr_code, try roll_no
+      if (!finishedRoll || finishedError) {
+        const { data: finishedRollByRollNo, error: finishedErrorByRollNo } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .select(
+            `
+            id,
+            qr_code,
+            roll_no,
+            length_m,
+            status,
+            current_location,
+            grade,
+            color,
+            coating_type
+          `
+          )
+          .eq("roll_no", qrCode)
+          .maybeSingle();
+        
+        if (finishedRollByRollNo && !finishedErrorByRollNo) {
+          finishedRoll = finishedRollByRollNo;
+          finishedError = null;
+        }
+      }
 
       if (finishedRoll && !finishedError) {
         const scannedRoll: ScannedRoll = {
@@ -323,7 +378,7 @@ export default function QRPage() {
         return;
       }
 
-      setError(`QR code "${qrCode}" not found in database.`);
+      setError(`QR code "${qrCode}" not found in database. Please ensure the roll exists and has a QR code or roll number.`);
     } catch (err: any) {
       setError(err.message || "Failed to lookup QR code.");
     }
