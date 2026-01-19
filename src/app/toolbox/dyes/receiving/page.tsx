@@ -15,11 +15,6 @@ interface DyeItem {
   uom: string;
 }
 
-interface Supplier {
-  id: string;
-  name: string;
-}
-
 interface ReceiptRow {
   id: string;
   txn_time: string;
@@ -48,7 +43,6 @@ const defaultForm = {
 
 export default function DyesReceivingPage() {
   const [dyeItems, setDyeItems] = useState<DyeItem[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [form, setForm] = useState(defaultForm);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -62,24 +56,14 @@ export default function DyesReceivingPage() {
 
   async function fetchOptions() {
     try {
-      const [{ data: dyeData, error: dyeError }, { data: supplierData, error: supplierError }] =
-        await Promise.all([
-          supabaseBrowserClient
-            .from("dye_items")
-            .select("id, name, type, code, uom")
-            .order("name", { ascending: true }),
-          supabaseBrowserClient
-            .from("suppliers")
-            .select("id, name")
-            .eq("is_active", true)
-            .order("name", { ascending: true }),
-        ]);
+      const { data: dyeData, error: dyeError } = await supabaseBrowserClient
+        .from("dye_items")
+        .select("id, name, type, code, uom")
+        .order("name", { ascending: true });
 
       if (dyeError) throw dyeError;
-      if (supplierError) throw supplierError;
 
       setDyeItems(dyeData as DyeItem[]);
-      setSuppliers(supplierData as Supplier[]);
     } catch (err: any) {
       setError(err.message || "Failed to load options.");
     }
@@ -215,11 +199,9 @@ export default function DyesReceivingPage() {
 
           <div className="sm:col-span-1">
             <SupplierSelect
-              label="Supplier"
               value={form.supplier_id}
               onChange={(value) => setForm((prev) => ({ ...prev, supplier_id: value }))}
-              suppliers={suppliers}
-              includeEmpty
+              allowNone
             />
           </div>
 
