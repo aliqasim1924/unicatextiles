@@ -158,7 +158,7 @@ export default function DyesLedgerPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Dyes &amp; Chemicals Ledger</h1>
           <p className="mt-1 text-slate-600">
-            Complete transaction history for {ledgerData.dyeItem.name}
+            Complete transaction history for {ledgerData.dyeItem?.name ?? "Unknown Item"}
           </p>
         </div>
         <Link
@@ -179,15 +179,15 @@ export default function DyesLedgerPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <p className="text-sm font-semibold text-slate-600">Name</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900">{ledgerData.dyeItem.name}</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{ledgerData.dyeItem?.name ?? "—"}</p>
           </div>
-          {ledgerData.dyeItem.type && (
+          {ledgerData.dyeItem?.type && (
             <div>
               <p className="text-sm font-semibold text-slate-600">Type</p>
               <p className="mt-1 text-lg text-slate-900">{ledgerData.dyeItem.type}</p>
             </div>
           )}
-          {ledgerData.dyeItem.code && (
+          {ledgerData.dyeItem?.code && (
             <div>
               <p className="text-sm font-semibold text-slate-600">Code</p>
               <p className="mt-1 text-lg text-slate-900">{ledgerData.dyeItem.code}</p>
@@ -196,7 +196,7 @@ export default function DyesLedgerPage() {
           <div>
             <p className="text-sm font-semibold text-slate-600">Current Stock</p>
             <p className="mt-1 text-lg font-semibold text-teal-700">
-              {ledgerData.currentStock.toFixed(3)} {ledgerData.dyeItem.uom}
+              {ledgerData.currentStock.toFixed(3)} {ledgerData.dyeItem?.uom ?? "—"}
             </p>
           </div>
         </div>
@@ -302,7 +302,7 @@ export default function DyesLedgerPage() {
                     <td className="px-4 py-3 text-slate-600">{txn.batch_no || "-"}</td>
                     <td className="px-4 py-3 text-slate-600">{txn.slip_no || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                      {txn.runningBalance.toFixed(3)} {ledgerData.dyeItem.uom}
+                      {txn.runningBalance.toFixed(3)} {ledgerData.dyeItem?.uom ?? txn.uom}
                     </td>
                   </tr>
                 ))}
