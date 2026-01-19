@@ -7,11 +7,6 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { SupplierSelect } from "@/components/suppliers/SupplierSelect";
 
-interface Supplier {
-  id: string;
-  name: string;
-}
-
 interface DyeItem {
   id: string;
   name: string;
@@ -35,7 +30,6 @@ const defaultForm = {
 
 export default function DyeItemsPage() {
   const [items, setItems] = useState<DyeItem[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [form, setForm] = useState(defaultForm);
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,18 +37,8 @@ export default function DyeItemsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchSuppliers();
     fetchItems();
   }, []);
-
-  async function fetchSuppliers() {
-    const { data, error } = await supabaseBrowserClient
-      .from("suppliers")
-      .select("id, name")
-      .eq("is_active", true)
-      .order("name", { ascending: true });
-    if (!error && data) setSuppliers(data as Supplier[]);
-  }
 
   async function fetchItems() {
     try {
@@ -242,11 +226,9 @@ export default function DyeItemsPage() {
 
           <div>
             <SupplierSelect
-              label="Default Supplier"
               value={form.supplier_id || ""}
               onChange={(value) => setForm((prev) => ({ ...prev, supplier_id: value }))}
-              suppliers={suppliers}
-              includeEmpty
+              allowNone
             />
           </div>
 
