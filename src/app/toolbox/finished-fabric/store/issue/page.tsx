@@ -556,7 +556,7 @@ export default function FinishedFabricStoreIssuePage() {
           destination: destination || null,
           reference:
             destination === "CUSTOMER" && !reference
-              ? customerOrders.find((o) => o.id === selectedOrderId)?.order_no || null
+              ? customerOrders.find((o) => o.id === selectedOrderId)?.order_ref || null
               : reference || null,
           notes: notes || null,
           order_id: destination === "CUSTOMER" ? selectedOrderId : null,
