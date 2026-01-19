@@ -7,6 +7,7 @@ import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
+import { generateQRCode } from "@/lib/qr/generateQRCode";
 
 interface CoatingBatch {
   id: string;
@@ -285,6 +286,9 @@ export default function CoatingBatchDetailPage() {
 
     setIsAddingRoll(true);
     try {
+      // Generate QR code for the new finished roll
+      const qrCode = generateQRCode("finished_fabric");
+
       const { data: inserted, error: insertError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .insert({
@@ -292,6 +296,7 @@ export default function CoatingBatchDetailPage() {
           length_m: lengthVal,
           grade: newRollGrade || null,
           notes: newRollNotes || null,
+          qr_code: qrCode,
           // Use catalog IDs from batch
           fabric_type_id: (batch as any)?.fabric_type_id || null,
           gsm_option_id: (batch as any)?.gsm_option_id || null,
@@ -963,9 +968,19 @@ export default function CoatingBatchDetailPage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">
-          Finished Fabric Rolls ({finishedRolls.length})
-        </h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Finished Fabric Rolls ({finishedRolls.length})
+          </h2>
+          {finishedRolls.length > 0 && (
+            <Link
+              href={`/toolbox/qr/print?rollIds=${finishedRolls.map((r) => r.id).join(",")}&type=finished_fabric`}
+              target="_blank"
+            >
+              <Button variant="primary">Print QR Codes</Button>
+            </Link>
+          )}
+        </div>
         {finishedRolls.length === 0 ? (
           <p className="text-slate-600">No finished rolls created yet.</p>
         ) : (

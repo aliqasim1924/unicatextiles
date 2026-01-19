@@ -232,3 +232,38 @@ Design system colors and layout rules apply to all pages in this module:
     - Create Issue Slip to Coating.
     - Select rolls (later: scan via QR).
 
+### QR Code System
+
+- QR Code Generation:
+  - QR codes are automatically generated when rolls are created (both base fabric and finished fabric).
+  - Format: `BFR-{timestamp}-{random}` for base fabric, `FFR-{timestamp}-{random}` for finished fabric.
+  - QR codes are stored in the `qr_code` field and remain stable throughout the roll's lifecycle.
+  
+- QR Code Printing:
+  - `/toolbox/qr/print` - Print page for QR code labels.
+  - A4 layout with 4 QR codes per page (2x2 grid).
+  - Each QR code label includes:
+    - Visual QR code image
+    - Roll number
+    - QR code text value
+    - Roll information (length, order, fabric name, etc.)
+    - Cutting/tearing lines for easy separation
+  - Print buttons available on:
+    - Base Fabric Order detail page (prints all rolls for the order)
+    - Finished Fabric Coating Batch detail page (prints all finished rolls for the batch)
+  
+- QR Code Scanning:
+  - `/toolbox/qr` - QR code scanning page with camera access.
+  - Features:
+    - Action selection before scanning:
+      - Receive Base Fabric at Coating (marks rolls as received at coating)
+      - Receive Finished Fabric at Store (marks rolls as received in store)
+      - Issue Finished Fabric to Customer (marks rolls as issued/dispatched)
+      - View Roll Details (scan to view information only)
+    - Real-time camera scanning using device camera
+    - Batch processing: scan multiple rolls, then process all at once
+    - Automatic status and location updates based on selected action
+    - Validation: ensures rolls are in correct status/location before processing
+  - Requires user authentication and camera permissions.
+  - Works on mobile devices with camera access.
+

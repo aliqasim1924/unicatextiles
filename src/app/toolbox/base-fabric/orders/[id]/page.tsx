@@ -7,6 +7,7 @@ import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
+import { generateQRCode } from "@/lib/qr/generateQRCode";
 
 interface OrderDetail {
   id: string;
@@ -193,12 +194,16 @@ export default function BaseFabricOrderDetailPage() {
 
     setIsSubmitting(true);
     try {
+      // Generate QR code for the new roll
+      const qrCode = generateQRCode("base_fabric");
+
       const { error: insertError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
         .insert({
           base_fabric_order_id: orderId,
           length_m: Number(rollForm.length_m),
           notes: rollForm.notes || null,
+          qr_code: qrCode,
         });
 
       if (insertError) throw insertError;
@@ -975,9 +980,19 @@ export default function BaseFabricOrderDetailPage() {
         transition={{ duration: 0.3, delay: 0.3 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
       >
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">
-          Rolls ({rolls.length} total, {totalProduced.toFixed(2)} m)
-        </h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Rolls ({rolls.length} total, {totalProduced.toFixed(2)} m)
+          </h2>
+          {rolls.length > 0 && (
+            <Link
+              href={`/toolbox/qr/print?rollIds=${rolls.map((r) => r.id).join(",")}&type=base_fabric`}
+              target="_blank"
+            >
+              <Button variant="primary">Print QR Codes</Button>
+            </Link>
+          )}
+        </div>
 
         {rolls.length === 0 ? (
           <p className="text-sm text-slate-600">No rolls recorded yet.</p>
