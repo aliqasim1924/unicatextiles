@@ -15,7 +15,7 @@ export default async function ToolboxLayout({
   }
 
   return (
-    <ToolboxShell email={session.user.email} version={packageJson.version}>
+    <ToolboxShell email={session.user.email ?? ""} version={packageJson.version}>
       {children}
     </ToolboxShell>
   );
