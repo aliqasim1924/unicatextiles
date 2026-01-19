@@ -164,7 +164,7 @@ export default function YarnLedgerPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Transaction Ledger</h1>
           <p className="mt-1 text-slate-600">
-            Complete transaction history for {ledgerData.yarnItem.name}
+            Complete transaction history for {ledgerData.yarnItem?.name ?? "Unknown Item"}
           </p>
         </div>
         <Link
@@ -186,10 +186,10 @@ export default function YarnLedgerPage() {
           <div>
             <p className="text-sm font-semibold text-slate-600">Yarn Name</p>
             <p className="mt-1 text-lg font-semibold text-slate-900">
-              {ledgerData.yarnItem.name}
+              {ledgerData.yarnItem?.name ?? "—"}
             </p>
           </div>
-          {ledgerData.yarnItem.denier && (
+          {ledgerData.yarnItem?.denier && (
             <div>
               <p className="text-sm font-semibold text-slate-600">Denier</p>
               <p className="mt-1 text-lg text-slate-900">
@@ -197,7 +197,7 @@ export default function YarnLedgerPage() {
               </p>
             </div>
           )}
-          {ledgerData.yarnItem.material && (
+          {ledgerData.yarnItem?.material && (
             <div>
               <p className="text-sm font-semibold text-slate-600">Material</p>
               <p className="mt-1 text-lg text-slate-900">
@@ -208,7 +208,7 @@ export default function YarnLedgerPage() {
           <div>
             <p className="text-sm font-semibold text-slate-600">Current Stock</p>
             <p className="mt-1 text-lg font-semibold text-teal-700">
-              {ledgerData.currentStock.toFixed(3)} {ledgerData.yarnItem.uom}
+              {ledgerData.currentStock.toFixed(3)} {ledgerData.yarnItem?.uom ?? "—"}
             </p>
           </div>
         </div>
@@ -322,7 +322,7 @@ export default function YarnLedgerPage() {
                     <td className="px-4 py-3 text-slate-600">{txn.destination || "-"}</td>
                     <td className="px-4 py-3 text-slate-600">{txn.batch_no || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                      {txn.runningBalance.toFixed(3)} {ledgerData.yarnItem.uom}
+                      {txn.runningBalance.toFixed(3)} {ledgerData.yarnItem?.uom ?? txn.uom}
                     </td>
                   </tr>
                 ))}
