@@ -12,5 +12,6 @@ export const toolboxNav: ToolboxNavItem[] = [
   { label: 'Finished Fabric Control', href: '/toolbox/finished-fabric', key: 'finished-fabric' },
   { label: 'Stock Control', href: '/toolbox/stock', key: 'stock' },
   { label: 'Orders & Dispatch', href: '/toolbox/orders', key: 'orders' },
+  { label: 'QR Code Scanner', href: '/toolbox/qr', key: 'qr' },
 ];
 
