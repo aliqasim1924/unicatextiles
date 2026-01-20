@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { BackButton } from "@/components/navigation/BackButton";
 import { Button } from "@/components/ui/Button";
@@ -38,6 +39,7 @@ const emptyForm: FormState = {
 };
 
 export default function CustomersPage() {
+  const router = useRouter();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -377,7 +379,11 @@ export default function CustomersPage() {
               </thead>
               <tbody>
                 {filtered.map((c) => (
-                  <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <tr
+                    key={c.id}
+                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
+                    onClick={() => router.push(`/toolbox/orders/customers/${c.id}/activity`)}
+                  >
                     <td className="px-4 py-3 text-slate-900 font-medium">{c.name}</td>
                     <td className="px-4 py-3 text-slate-900">
                       {c.pastel_code || <span className="text-slate-400">—</span>}
@@ -407,11 +413,11 @@ export default function CustomersPage() {
                         {c.is_active ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         onClick={() => startEdit(c)}
-                        className="text-sm text-teal-700 hover:text-teal-900"
+                        className="text-sm text-slate-600 hover:text-slate-900"
                       >
                         Edit
                       </button>
