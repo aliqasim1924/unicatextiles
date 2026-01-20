@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -133,6 +133,9 @@ export default function OrdersPage() {
         </div>
         <div className="flex items-center gap-2">
           <BackButton href="/toolbox" label="Back" />
+          <Link href="/toolbox/orders/order-book">
+            <Button variant="outline">Order Book Report</Button>
+          </Link>
           <Link href="/toolbox/orders/customers">
             <Button variant="outline">Customers</Button>
           </Link>
