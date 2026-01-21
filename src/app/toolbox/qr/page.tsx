@@ -238,6 +238,42 @@ export default function QRPage() {
     lastScannedRef.current.clear();
   }
 
+  // Validate if roll type matches selected action
+  function validateRollType(rollType: "base_fabric" | "finished_fabric", qrCode: string): boolean {
+    if (!selectedAction) {
+      return true; // No action selected, allow any type
+    }
+
+    if (selectedAction === "view_roll_details") {
+      return true; // View mode allows both types
+    }
+
+    // Check if roll type matches the action requirements
+    if (selectedAction === "receive_base_at_coating") {
+      if (rollType !== "base_fabric") {
+        setError(
+          `❌ Incorrect QR Code Type!\n\n` +
+          `Scanned: ${rollType === "finished_fabric" ? "Finished Fabric" : "Unknown"} roll\n` +
+          `Expected: Base Fabric roll\n\n` +
+          `You selected "Receive Base Fabric at Coating". Please scan a base fabric roll QR code.`
+        );
+        return false;
+      }
+    } else if (selectedAction === "receive_finished_at_store" || selectedAction === "issue_finished_to_customer") {
+      if (rollType !== "finished_fabric") {
+        setError(
+          `❌ Incorrect QR Code Type!\n\n` +
+          `Scanned: ${rollType === "base_fabric" ? "Base Fabric" : "Unknown"} roll\n` +
+          `Expected: Finished Fabric roll\n\n` +
+          `You selected "${selectedAction === "receive_finished_at_store" ? "Receive Finished Fabric at Store" : "Issue Finished Fabric to Customer"}". Please scan a finished fabric roll QR code.`
+        );
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   async function handleScannedCode(qrCode: string) {
     const now = Date.now();
     const lastScanTime = lastScannedRef.current.get(qrCode);
@@ -254,6 +290,9 @@ export default function QRPage() {
     if (scannedRolls.some((r) => r.qr_code === qrCode || r.roll_no === qrCode)) {
       return;
     }
+
+    // Clear previous errors when starting a new scan
+    setError(null);
 
     try {
       // Try to find base fabric roll first - check qr_code, then roll_no as fallback
@@ -308,6 +347,11 @@ export default function QRPage() {
       }
 
       if (baseRoll && !baseError) {
+        // Validate roll type matches selected action
+        if (!validateRollType("base_fabric", qrCode)) {
+          return; // Error already set by validateRollType
+        }
+
         const order = Array.isArray(baseRoll.base_fabric_orders)
           ? baseRoll.base_fabric_orders[0]
           : baseRoll.base_fabric_orders;
@@ -330,6 +374,10 @@ export default function QRPage() {
         };
 
         setScannedRolls((prev) => [...prev, scannedRoll]);
+        setError(null); // Clear any previous errors on successful scan
+        // Show brief success feedback
+        setSuccess(`✓ Scanned: ${baseRoll.roll_no || qrCode} (Base Fabric)`);
+        setTimeout(() => setSuccess(null), 2000); // Clear after 2 seconds
         return;
       }
 
@@ -379,6 +427,11 @@ export default function QRPage() {
       }
 
       if (finishedRoll && !finishedError) {
+        // Validate roll type matches selected action
+        if (!validateRollType("finished_fabric", qrCode)) {
+          return; // Error already set by validateRollType
+        }
+
         const scannedRoll: ScannedRoll = {
           qr_code: finishedRoll.qr_code || qrCode,
           roll_id: finishedRoll.id,
@@ -390,6 +443,10 @@ export default function QRPage() {
         };
 
         setScannedRolls((prev) => [...prev, scannedRoll]);
+        setError(null); // Clear any previous errors on successful scan
+        // Show brief success feedback
+        setSuccess(`✓ Scanned: ${finishedRoll.roll_no || qrCode} (Finished Fabric)`);
+        setTimeout(() => setSuccess(null), 2000); // Clear after 2 seconds
         return;
       }
 
