@@ -288,11 +288,18 @@ export default function QRPage() {
     
     // Prevent duplicate scans in the scanned rolls list
     if (scannedRolls.some((r) => r.qr_code === qrCode || r.roll_no === qrCode)) {
+      setError(`Roll ${qrCode} has already been scanned.`);
       return;
     }
 
-    // Clear previous errors when starting a new scan
-    setError(null);
+    // Clear previous errors when starting a new scan (but keep validation errors)
+    // Only clear if it's not a validation error
+    setError((prev) => {
+      if (prev && prev.includes("Incorrect QR Code Type")) {
+        return prev; // Keep validation errors
+      }
+      return null; // Clear other errors
+    });
 
     try {
       // Try to find base fabric roll first - check qr_code, then roll_no as fallback
@@ -349,7 +356,8 @@ export default function QRPage() {
       if (baseRoll && !baseError) {
         // Validate roll type matches selected action
         if (!validateRollType("base_fabric", qrCode)) {
-          return; // Error already set by validateRollType
+          console.warn(`Validation failed: Base fabric roll scanned but action requires different type. Action: ${selectedAction}`);
+          return; // Error already set by validateRollType - do NOT add roll to list
         }
 
         const order = Array.isArray(baseRoll.base_fabric_orders)
@@ -429,7 +437,8 @@ export default function QRPage() {
       if (finishedRoll && !finishedError) {
         // Validate roll type matches selected action
         if (!validateRollType("finished_fabric", qrCode)) {
-          return; // Error already set by validateRollType
+          console.warn(`Validation failed: Finished fabric roll scanned but action requires different type. Action: ${selectedAction}`);
+          return; // Error already set by validateRollType - do NOT add roll to list
         }
 
         const scannedRoll: ScannedRoll = {
@@ -464,6 +473,29 @@ export default function QRPage() {
 
     if (!selectedAction) {
       setError("Please select an action.");
+      return;
+    }
+
+    // Pre-validate all rolls before processing any
+    const invalidRolls: string[] = [];
+    for (const roll of scannedRolls) {
+      if (selectedAction === "receive_base_at_coating" && roll.type !== "base_fabric") {
+        invalidRolls.push(`${roll.roll_no || roll.qr_code} (Expected: Base Fabric, Found: ${roll.type === "finished_fabric" ? "Finished Fabric" : "Unknown"})`);
+      } else if (
+        (selectedAction === "receive_finished_at_store" || selectedAction === "issue_finished_to_customer") &&
+        roll.type !== "finished_fabric"
+      ) {
+        invalidRolls.push(`${roll.roll_no || roll.qr_code} (Expected: Finished Fabric, Found: ${roll.type === "base_fabric" ? "Base Fabric" : "Unknown"})`);
+      }
+    }
+
+    if (invalidRolls.length > 0) {
+      setError(
+        `❌ Cannot process: Incorrect roll types detected!\n\n` +
+        `Selected action: "${selectedAction === "receive_base_at_coating" ? "Receive Base Fabric at Coating" : selectedAction === "receive_finished_at_store" ? "Receive Finished Fabric at Store" : "Issue Finished Fabric to Customer"}"\n\n` +
+        `Invalid rolls:\n${invalidRolls.map((r) => `  • ${r}`).join("\n")}\n\n` +
+        `Please remove these rolls from the list before processing.`
+      );
       return;
     }
 
