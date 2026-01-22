@@ -368,7 +368,9 @@ export default function CustomerActivityPage() {
                         borderRadius: "8px",
                         padding: "8px",
                       }}
-                      formatter={(value: number) => `${Number(value).toFixed(2)} m`}
+                      formatter={(value: number | undefined) =>
+                        value == null ? "" : `${Number(value).toFixed(2)} m`
+                      }
                     />
                     <Legend />
                     <Line

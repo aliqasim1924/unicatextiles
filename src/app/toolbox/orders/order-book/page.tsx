@@ -376,7 +376,7 @@ export default function OrderBookPage() {
       const buildPivotTable = (
         ordersToProcess: CustomerOrder[],
         title: string,
-        headerColor: number[]
+        headerColor: [number, number, number]
       ) => {
         if (ordersToProcess.length === 0) return;
 
