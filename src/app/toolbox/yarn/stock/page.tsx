@@ -4,6 +4,9 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
+import { Button } from "@/components/ui/Button";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 interface YarnStockItem {
   yarn_item_id: string;
@@ -14,6 +17,8 @@ interface YarnStockItem {
     denier: number | null;
     uom: string;
   };
+  avg_price_zar?: number;
+  valuation_zar?: number;
 }
 
 export default function YarnStockPage() {
@@ -21,6 +26,7 @@ export default function YarnStockPage() {
   const [filteredItems, setFilteredItems] = useState<YarnStockItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     async function fetchStock() {
@@ -54,8 +60,57 @@ export default function YarnStockPage() {
           return nameA.localeCompare(nameB);
         });
 
-        setStockItems(processedData);
-        setFilteredItems(processedData);
+        // Fetch pricing data for valuation
+        const itemsWithPricing = await Promise.all(
+          processedData.map(async (item) => {
+            try {
+              // Get RECEIPT and RETURN transactions with pricing
+              const { data: receiptData } = await supabaseBrowserClient
+                .from("yarn_transactions")
+                .select("quantity, unit_price_zar")
+                .eq("yarn_item_id", item.yarn_item_id)
+                .in("transaction_type", ["RECEIPT", "RETURN"])
+                .not("unit_price_zar", "is", null);
+
+              if (receiptData && receiptData.length > 0) {
+                // Calculate weighted average price
+                let totalQty = 0;
+                let totalCost = 0;
+                receiptData.forEach((txn: any) => {
+                  const qty = Number(txn.quantity || 0);
+                  const price = Number(txn.unit_price_zar || 0);
+                  totalQty += qty;
+                  totalCost += qty * price;
+                });
+
+                const avgPrice = totalQty > 0 ? totalCost / totalQty : 0;
+                const valuation = item.stock_qty * avgPrice;
+
+                return {
+                  ...item,
+                  avg_price_zar: avgPrice,
+                  valuation_zar: valuation,
+                };
+              }
+
+              return {
+                ...item,
+                avg_price_zar: 0,
+                valuation_zar: 0,
+              };
+            } catch (err) {
+              console.error(`Error fetching pricing for ${item.yarn_item_id}:`, err);
+              return {
+                ...item,
+                avg_price_zar: 0,
+                valuation_zar: 0,
+              };
+            }
+          })
+        );
+
+        setStockItems(itemsWithPricing);
+        setFilteredItems(itemsWithPricing);
       } catch (err) {
         console.error("Error fetching yarn stock:", err);
       } finally {
@@ -79,6 +134,208 @@ export default function YarnStockPage() {
     setFilteredItems(filtered);
   }, [searchQuery, stockItems]);
 
+  async function generatePDF() {
+    if (stockItems.length === 0) {
+      alert("No stock data to generate report");
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const templateName = "Yarn Stock Report";
+      let pageNumber = 1;
+
+      // ===== COVER PAGE =====
+      let logoLoaded = false;
+      try {
+        const logoImg = new Image();
+        logoImg.crossOrigin = "anonymous";
+        logoImg.src = "/Logo.png";
+        
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            logoImg.onload = () => {
+              try {
+                const logoWidth = 60;
+                const logoHeight = (logoImg.height / logoImg.width) * logoWidth;
+                const logoX = (pageWidth - logoWidth) / 2;
+                doc.addImage(logoImg, "PNG", logoX, 30, logoWidth, logoHeight);
+                logoLoaded = true;
+                resolve();
+              } catch (err) {
+                resolve();
+              }
+            };
+            logoImg.onerror = () => resolve();
+          }),
+          new Promise<void>((resolve) => setTimeout(() => resolve(), 1500)),
+        ]);
+      } catch (err) {
+        console.warn("Logo loading error:", err);
+      }
+
+      const titleY = logoLoaded ? 100 : 60;
+      doc.setFontSize(24);
+      doc.setFont("helvetica", "bold");
+      doc.text("UNICA TEXTILES", pageWidth / 2, titleY, { align: "center" });
+      
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "normal");
+      doc.text("Yarn Stock Report", pageWidth / 2, titleY + 15, { align: "center" });
+
+      doc.setFontSize(12);
+      const reportDate = new Date().toLocaleDateString("en-ZA", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      const metadataY = titleY + 35;
+      doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
+      
+      const totalItems = stockItems.length;
+      const totalStockQty = stockItems.reduce((sum, item) => sum + item.stock_qty, 0);
+      const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
+
+      doc.text(`Total Items: ${totalItems}`, pageWidth / 2, metadataY + 15, { align: "center" });
+      doc.text(`Total Stock: ${totalStockQty.toFixed(3)} kg`, pageWidth / 2, metadataY + 30, { align: "center" });
+      doc.text(`Total Valuation: R ${totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 45, { align: "center" });
+
+      doc.setFontSize(10);
+      doc.setTextColor(128, 128, 128);
+      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
+
+      // ===== STOCK TABLE =====
+      doc.addPage();
+      pageNumber++;
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("Stock Overview", margin, 20);
+
+      const tableData = stockItems.map((item) => [
+        item.yarn_items?.name || "N/A",
+        item.yarn_items?.material || "-",
+        item.yarn_items?.denier ? `${item.yarn_items.denier}D` : "-",
+        item.stock_qty.toFixed(3),
+        item.yarn_items?.uom || "kg",
+        item.avg_price_zar && item.avg_price_zar > 0 ? `R ${item.avg_price_zar.toFixed(4)}` : "-",
+        item.valuation_zar && item.valuation_zar > 0 ? `R ${item.valuation_zar.toFixed(2)}` : "-",
+      ]);
+
+      const availableWidth = pageWidth - 2 * margin;
+      autoTable(doc, {
+        head: [["Yarn Name", "Material", "Denier", "Stock Qty", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
+        body: tableData,
+        startY: 30,
+        margin: { left: margin, right: margin },
+        styles: { fontSize: 8 },
+        headStyles: {
+          fillColor: [16, 185, 129],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251],
+        },
+        columnStyles: {
+          3: { halign: "right" },
+          5: { halign: "right" },
+          6: { halign: "right" },
+        },
+        didDrawPage: function (data: any) {
+          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
+          if (currentPage > 1) {
+            doc.setFontSize(8);
+            doc.setTextColor(100, 100, 100);
+            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
+            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
+          }
+        },
+      });
+
+      // ===== VALUATION SUMMARY =====
+      doc.addPage();
+      pageNumber++;
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("Valuation Summary", margin, 20);
+
+      const valuationData = stockItems
+        .filter((item) => item.valuation_zar && item.valuation_zar > 0)
+        .map((item) => [
+          item.yarn_items?.name || "N/A",
+          item.stock_qty.toFixed(3),
+          item.yarn_items?.uom || "kg",
+          `R ${(item.avg_price_zar || 0).toFixed(4)}`,
+          `R ${(item.valuation_zar || 0).toFixed(2)}`,
+        ])
+        .sort((a, b) => {
+          const valA = parseFloat(a[4].replace("R ", "").replace(",", ""));
+          const valB = parseFloat(b[4].replace("R ", "").replace(",", ""));
+          return valB - valA; // Sort descending by valuation
+        });
+
+      if (valuationData.length > 0) {
+        autoTable(doc, {
+          head: [["Yarn Name", "Stock Qty", "UoM", "Avg Price (ZAR)", "Total Valuation (ZAR)"]],
+          body: valuationData,
+          startY: 30,
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 8 },
+          headStyles: {
+            fillColor: [16, 185, 129],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+          },
+          alternateRowStyles: {
+            fillColor: [249, 250, 251],
+          },
+          columnStyles: {
+            1: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right" },
+          },
+          didDrawPage: function (data: any) {
+            const currentPage = data.pageNumber || doc.internal.pages.length - 1;
+            if (currentPage > 1) {
+              doc.setFontSize(8);
+              doc.setTextColor(100, 100, 100);
+              doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
+              doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
+            }
+          },
+        });
+
+        // Add total at the end
+        const finalY = (doc as any).lastAutoTable.finalY || 30;
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.text(
+          `Grand Total Valuation: R ${totalValuation.toFixed(2)}`,
+          pageWidth - margin,
+          finalY + 10,
+          { align: "right" }
+        );
+      } else {
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text("No valuation data available (no pricing information found)", margin, 40);
+      }
+
+      doc.save(`yarn-stock-report-${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (err: any) {
+      console.error("Error generating PDF:", err);
+      alert("Failed to generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
   return (
     <div className="grid gap-8">
       {/* Header */}
@@ -89,12 +346,17 @@ export default function YarnStockPage() {
             Current stock levels for all yarn items
           </p>
         </div>
-        <Link
-          href="/toolbox/yarn"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-        >
-          ← Back to Yarn Control
-        </Link>
+        <div className="flex items-center gap-3">
+          <Button variant="primary" onClick={generatePDF} disabled={isGenerating || isLoading}>
+            {isGenerating ? "Generating..." : "Print Report"}
+          </Button>
+          <Link
+            href="/toolbox/yarn"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            ← Back to Yarn Control
+          </Link>
+        </div>
       </div>
 
       {/* Search */}
@@ -153,6 +415,12 @@ export default function YarnStockPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     UoM
                   </th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                    Avg Price (ZAR)
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                    Valuation (ZAR)
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     Actions
                   </th>
@@ -178,6 +446,16 @@ export default function YarnStockPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {item.yarn_items?.uom || "kg"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-900">
+                      {item.avg_price_zar && item.avg_price_zar > 0
+                        ? `R ${item.avg_price_zar.toFixed(4)}`
+                        : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {item.valuation_zar && item.valuation_zar > 0
+                        ? `R ${item.valuation_zar.toFixed(2)}`
+                        : "-"}
                     </td>
                     <td className="px-4 py-3">
                       <Link

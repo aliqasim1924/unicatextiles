@@ -6,6 +6,8 @@ import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { QRCode } from "@/components/qr/QRCode";
 import { Button } from "@/components/ui/Button";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const LOCATION_WEAVING = "WEAVING";
 const STATUS_AVAILABLE = "AVAILABLE";
@@ -24,6 +26,9 @@ interface BaseFabricRoll {
   order_no: string | null;
   fabric_name: string | null;
   loom_no: number | null;
+  base_fabric_order_id?: string | null;
+  yarn_cost_per_m?: number | null;
+  valuation_zar?: number;
 }
 
 export default function BaseFabricStockPage() {
@@ -34,6 +39,7 @@ export default function BaseFabricStockPage() {
   const [activeTab, setActiveTab] = useState<"inStock" | "history">("inStock");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRoll, setSelectedRoll] = useState<BaseFabricRoll | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -120,10 +126,92 @@ export default function BaseFabricStockPage() {
             order_no: order?.order_no || null,
             fabric_name: item?.name || null,
             loom_no: order?.loom_no || null,
+            base_fabric_order_id: row.base_fabric_order_id || null,
           };
         });
 
-      setInStockRolls(mapRolls(inStockData || []));
+      const mappedInStock = mapRolls(inStockData || []);
+      
+      // Calculate yarn cost per meter for each roll
+      const rollsWithValuation = await Promise.all(
+        mappedInStock.map(async (roll) => {
+          if (!roll.base_fabric_order_id) {
+            return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
+          }
+
+          try {
+            // Get yarn issues for this order
+            const { data: yarnIssues } = await supabaseBrowserClient
+              .from("yarn_issues")
+              .select("yarn_item_id, quantity")
+              .eq("base_fabric_order_id", roll.base_fabric_order_id);
+
+            if (!yarnIssues || yarnIssues.length === 0) {
+              return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
+            }
+
+            // Get yarn receipt prices for weighted average
+            const yarnItemIds = [...new Set(yarnIssues.map((issue: any) => issue.yarn_item_id))];
+            const { data: yarnReceipts } = await supabaseBrowserClient
+              .from("yarn_transactions")
+              .select("yarn_item_id, quantity, unit_price_zar")
+              .in("yarn_item_id", yarnItemIds)
+              .in("transaction_type", ["RECEIPT", "RETURN"])
+              .not("unit_price_zar", "is", null);
+
+            // Calculate weighted average price per yarn item
+            const avgPriceMap = new Map<string, { qty: number; cost: number }>();
+            (yarnReceipts || []).forEach((txn: any) => {
+              const existing = avgPriceMap.get(txn.yarn_item_id) || { qty: 0, cost: 0 };
+              const qty = Number(txn.quantity || 0);
+              const price = Number(txn.unit_price_zar || 0);
+              avgPriceMap.set(txn.yarn_item_id, {
+                qty: existing.qty + qty,
+                cost: existing.cost + qty * price,
+              });
+            });
+
+            const avgUnitPriceByYarn = new Map<string, number>();
+            avgPriceMap.forEach((val, key) => {
+              if (val.qty > 0) {
+                avgUnitPriceByYarn.set(key, val.cost / val.qty);
+              }
+            });
+
+            // Calculate total yarn cost for the order
+            let totalYarnCost = 0;
+            yarnIssues.forEach((issue: any) => {
+              const avgPrice = avgUnitPriceByYarn.get(issue.yarn_item_id) || 0;
+              totalYarnCost += Number(issue.quantity || 0) * avgPrice;
+            });
+
+            // Get total produced meters for the order
+            const { data: orderRolls } = await supabaseBrowserClient
+              .from("base_fabric_rolls")
+              .select("length_m")
+              .eq("base_fabric_order_id", roll.base_fabric_order_id);
+
+            const totalMeters = (orderRolls || []).reduce(
+              (sum: number, r: any) => sum + Number(r.length_m || 0),
+              0
+            );
+
+            const yarnCostPerM = totalMeters > 0 ? totalYarnCost / totalMeters : null;
+            const valuation = yarnCostPerM ? roll.length_m * yarnCostPerM : 0;
+
+            return {
+              ...roll,
+              yarn_cost_per_m: yarnCostPerM,
+              valuation_zar: valuation,
+            };
+          } catch (err) {
+            console.error(`Error calculating valuation for roll ${roll.id}:`, err);
+            return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
+          }
+        })
+      );
+
+      setInStockRolls(rollsWithValuation);
       setHistoryRolls(mapRolls(historyData || []));
     } catch (err: any) {
       console.error("Error fetching base fabric stock:", err);
@@ -160,8 +248,202 @@ export default function BaseFabricStockPage() {
   const inStockTotals = useMemo(() => {
     const rollsCount = inStockRolls.length;
     const metersTotal = inStockRolls.reduce((sum, roll) => sum + roll.length_m, 0);
-    return { rollsCount, metersTotal };
+    const totalValuation = inStockRolls.reduce((sum, roll) => sum + (roll.valuation_zar || 0), 0);
+    return { rollsCount, metersTotal, totalValuation };
   }, [inStockRolls]);
+
+  async function generatePDF() {
+    if (inStockRolls.length === 0) {
+      alert("No stock data to generate report");
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const templateName = "Base Fabric Stock Report";
+      let pageNumber = 1;
+
+      // ===== COVER PAGE =====
+      let logoLoaded = false;
+      try {
+        const logoImg = new Image();
+        logoImg.crossOrigin = "anonymous";
+        logoImg.src = "/Logo.png";
+        
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            logoImg.onload = () => {
+              try {
+                const logoWidth = 60;
+                const logoHeight = (logoImg.height / logoImg.width) * logoWidth;
+                const logoX = (pageWidth - logoWidth) / 2;
+                doc.addImage(logoImg, "PNG", logoX, 30, logoWidth, logoHeight);
+                logoLoaded = true;
+                resolve();
+              } catch (err) {
+                resolve();
+              }
+            };
+            logoImg.onerror = () => resolve();
+          }),
+          new Promise<void>((resolve) => setTimeout(() => resolve(), 1500)),
+        ]);
+      } catch (err) {
+        console.warn("Logo loading error:", err);
+      }
+
+      const titleY = logoLoaded ? 100 : 60;
+      doc.setFontSize(24);
+      doc.setFont("helvetica", "bold");
+      doc.text("UNICA TEXTILES", pageWidth / 2, titleY, { align: "center" });
+      
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "normal");
+      doc.text("Base Fabric Stock Report", pageWidth / 2, titleY + 15, { align: "center" });
+
+      doc.setFontSize(12);
+      const reportDate = new Date().toLocaleDateString("en-ZA", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      const metadataY = titleY + 35;
+      doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
+      
+      doc.text(`Total Rolls: ${inStockTotals.rollsCount}`, pageWidth / 2, metadataY + 15, { align: "center" });
+      doc.text(`Total Meters: ${inStockTotals.metersTotal.toFixed(3)} m`, pageWidth / 2, metadataY + 30, { align: "center" });
+      doc.text(`Total Valuation: R ${inStockTotals.totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 45, { align: "center" });
+
+      doc.setFontSize(10);
+      doc.setTextColor(128, 128, 128);
+      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
+
+      // ===== STOCK TABLE =====
+      doc.addPage();
+      pageNumber++;
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("Stock Overview", margin, 20);
+
+      const tableData = inStockRolls.map((roll) => [
+        roll.roll_no || roll.qr_code || "N/A",
+        roll.fabric_name || "-",
+        roll.order_no || "-",
+        roll.loom_no?.toString() || "-",
+        roll.length_m.toFixed(3),
+        roll.yarn_cost_per_m && roll.yarn_cost_per_m > 0 ? `R ${roll.yarn_cost_per_m.toFixed(4)}` : "-",
+        roll.valuation_zar && roll.valuation_zar > 0 ? `R ${roll.valuation_zar.toFixed(2)}` : "-",
+      ]);
+
+      const availableWidth = pageWidth - 2 * margin;
+      autoTable(doc, {
+        head: [["Roll No", "Fabric Name", "Order No", "Loom", "Length (m)", "Cost/m (ZAR)", "Valuation (ZAR)"]],
+        body: tableData,
+        startY: 30,
+        margin: { left: margin, right: margin },
+        styles: { fontSize: 8 },
+        headStyles: {
+          fillColor: [16, 185, 129],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251],
+        },
+        columnStyles: {
+          4: { halign: "right" },
+          5: { halign: "right" },
+          6: { halign: "right" },
+        },
+        didDrawPage: function (data: any) {
+          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
+          if (currentPage > 1) {
+            doc.setFontSize(8);
+            doc.setTextColor(100, 100, 100);
+            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
+            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
+          }
+        },
+      });
+
+      // ===== VALUATION SUMMARY =====
+      const rollsWithValuation = inStockRolls.filter((r) => r.valuation_zar && r.valuation_zar > 0);
+      if (rollsWithValuation.length > 0) {
+        doc.addPage();
+        pageNumber++;
+        doc.setFontSize(16);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text("Valuation Summary", margin, 20);
+
+        const valuationData = rollsWithValuation
+          .map((roll) => [
+            roll.roll_no || roll.qr_code || "N/A",
+            roll.fabric_name || "-",
+            roll.length_m.toFixed(3),
+            `R ${(roll.yarn_cost_per_m || 0).toFixed(4)}`,
+            `R ${(roll.valuation_zar || 0).toFixed(2)}`,
+          ])
+          .sort((a, b) => {
+            const valA = parseFloat(a[4].replace("R ", "").replace(",", ""));
+            const valB = parseFloat(b[4].replace("R ", "").replace(",", ""));
+            return valB - valA;
+          });
+
+        autoTable(doc, {
+          head: [["Roll No", "Fabric Name", "Length (m)", "Cost/m (ZAR)", "Total Valuation (ZAR)"]],
+          body: valuationData,
+          startY: 30,
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 8 },
+          headStyles: {
+            fillColor: [16, 185, 129],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+          },
+          alternateRowStyles: {
+            fillColor: [249, 250, 251],
+          },
+          columnStyles: {
+            2: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right" },
+          },
+          didDrawPage: function (data: any) {
+            const currentPage = data.pageNumber || doc.internal.pages.length - 1;
+            if (currentPage > 1) {
+              doc.setFontSize(8);
+              doc.setTextColor(100, 100, 100);
+              doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
+              doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
+            }
+          },
+        });
+
+        const finalY = (doc as any).lastAutoTable.finalY || 30;
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.text(
+          `Grand Total Valuation: R ${inStockTotals.totalValuation.toFixed(2)}`,
+          pageWidth - margin,
+          finalY + 10,
+          { align: "right" }
+        );
+      }
+
+      doc.save(`base-fabric-stock-report-${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (err: any) {
+      console.error("Error generating PDF:", err);
+      alert("Failed to generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
   return (
     <div className="grid gap-8">
@@ -173,12 +455,17 @@ export default function BaseFabricStockPage() {
             View available rolls and access QR codes. History shows consumed/dispatched rolls.
           </p>
         </div>
-        <Link
-          href="/toolbox/stock"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-        >
-          ← Back to Stock Control
-        </Link>
+        <div className="flex items-center gap-3">
+          <Button variant="primary" onClick={generatePDF} disabled={isGenerating || isLoading}>
+            {isGenerating ? "Generating..." : "Print Report"}
+          </Button>
+          <Link
+            href="/toolbox/stock"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            ← Back to Stock Control
+          </Link>
+        </div>
       </div>
 
       {/* Summary Card */}
@@ -198,6 +485,12 @@ export default function BaseFabricStockPage() {
               <p className="text-xs font-medium text-slate-500">Total Meters</p>
               <p className="text-2xl font-semibold text-slate-900">
                 {inStockTotals.metersTotal.toFixed(3)} m
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-medium text-slate-500">Total Valuation</p>
+              <p className="text-2xl font-semibold text-slate-900">
+                R {inStockTotals.totalValuation?.toFixed(2) || "0.00"}
               </p>
             </div>
           </div>

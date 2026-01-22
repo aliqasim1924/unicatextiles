@@ -6,6 +6,8 @@ import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { QRCode } from "@/components/qr/QRCode";
 import { Button } from "@/components/ui/Button";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const LOCATION_STORE = "FINISHED_STORE";
 const STATUS_IN_STORE = "IN_STORE";
@@ -35,6 +37,7 @@ export default function FinishedFabricStockPage() {
   const [activeTab, setActiveTab] = useState<"inStock" | "history">("inStock");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRoll, setSelectedRoll] = useState<FinishedFabricRoll | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -232,6 +235,131 @@ export default function FinishedFabricStockPage() {
     return { rollsCount, metersTotal };
   }, [inStockRolls]);
 
+  async function generatePDF() {
+    if (inStockRolls.length === 0) {
+      alert("No stock data to generate report");
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const templateName = "Finished Fabric Stock Report";
+      let pageNumber = 1;
+
+      // ===== COVER PAGE =====
+      let logoLoaded = false;
+      try {
+        const logoImg = new Image();
+        logoImg.crossOrigin = "anonymous";
+        logoImg.src = "/Logo.png";
+        
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            logoImg.onload = () => {
+              try {
+                const logoWidth = 60;
+                const logoHeight = (logoImg.height / logoImg.width) * logoWidth;
+                const logoX = (pageWidth - logoWidth) / 2;
+                doc.addImage(logoImg, "PNG", logoX, 30, logoWidth, logoHeight);
+                logoLoaded = true;
+                resolve();
+              } catch (err) {
+                resolve();
+              }
+            };
+            logoImg.onerror = () => resolve();
+          }),
+          new Promise<void>((resolve) => setTimeout(() => resolve(), 1500)),
+        ]);
+      } catch (err) {
+        console.warn("Logo loading error:", err);
+      }
+
+      const titleY = logoLoaded ? 100 : 60;
+      doc.setFontSize(24);
+      doc.setFont("helvetica", "bold");
+      doc.text("UNICA TEXTILES", pageWidth / 2, titleY, { align: "center" });
+      
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "normal");
+      doc.text("Finished Fabric Stock Report", pageWidth / 2, titleY + 15, { align: "center" });
+
+      doc.setFontSize(12);
+      const reportDate = new Date().toLocaleDateString("en-ZA", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      const metadataY = titleY + 35;
+      doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
+      
+      doc.text(`Total Rolls: ${inStockTotals.rollsCount}`, pageWidth / 2, metadataY + 15, { align: "center" });
+      doc.text(`Total Meters: ${inStockTotals.metersTotal.toFixed(3)} m`, pageWidth / 2, metadataY + 30, { align: "center" });
+
+      doc.setFontSize(10);
+      doc.setTextColor(128, 128, 128);
+      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
+
+      // ===== STOCK TABLE =====
+      doc.addPage();
+      pageNumber++;
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("Stock Overview", margin, 20);
+
+      const tableData = inStockRolls.map((roll) => [
+        roll.roll_no || roll.qr_code || "N/A",
+        roll.batch_no || "-",
+        roll.color || "-",
+        roll.gsm?.toString() || "-",
+        roll.coating_type || "-",
+        roll.grade || "-",
+        roll.length_m.toFixed(3),
+      ]);
+
+      const availableWidth = pageWidth - 2 * margin;
+      autoTable(doc, {
+        head: [["Roll No", "Batch No", "Color", "GSM", "Coating Type", "Grade", "Length (m)"]],
+        body: tableData,
+        startY: 30,
+        margin: { left: margin, right: margin },
+        styles: { fontSize: 8 },
+        headStyles: {
+          fillColor: [16, 185, 129],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251],
+        },
+        columnStyles: {
+          6: { halign: "right" },
+        },
+        didDrawPage: function (data: any) {
+          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
+          if (currentPage > 1) {
+            doc.setFontSize(8);
+            doc.setTextColor(100, 100, 100);
+            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
+            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
+          }
+        },
+      });
+
+      doc.save(`finished-fabric-stock-report-${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (err: any) {
+      console.error("Error generating PDF:", err);
+      alert("Failed to generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
   // Breakdown by attributes
   const inStockByGsm = useMemo(() => {
     const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
@@ -262,12 +390,17 @@ export default function FinishedFabricStockPage() {
             View available rolls and access QR codes. History shows dispatched rolls.
           </p>
         </div>
-        <Link
-          href="/toolbox/stock"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-        >
-          ← Back to Stock Control
-        </Link>
+        <div className="flex items-center gap-3">
+          <Button variant="primary" onClick={generatePDF} disabled={isGenerating || isLoading}>
+            {isGenerating ? "Generating..." : "Print Report"}
+          </Button>
+          <Link
+            href="/toolbox/stock"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            ← Back to Stock Control
+          </Link>
+        </div>
       </div>
 
       {/* Summary Card */}
