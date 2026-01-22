@@ -6,9 +6,11 @@ import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
 import { motion } from "framer-motion";
+import Link from "next/link";
 
 type ActionType =
   | "receive_base_at_coating"
+  | "issue_base_to_coating"
   | "receive_finished_at_store"
   | "issue_finished_to_customer"
   | "view_roll_details";
@@ -25,6 +27,15 @@ interface ScannedRoll {
   fabric_name?: string | null;
 }
 
+interface SlipPopupData {
+  slipId: string;
+  slipNo: string | null;
+  issueDate: string;
+  fromLocation: string;
+  toLocation: string;
+  rollCount: number;
+}
+
 export default function QRPage() {
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -32,6 +43,7 @@ export default function QRPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [slipPopup, setSlipPopup] = useState<SlipPopupData | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scanAreaRef = useRef<HTMLDivElement>(null);
   const lastScannedRef = useRef<Map<string, number>>(new Map()); // Track last scan time for each QR code
@@ -249,13 +261,13 @@ export default function QRPage() {
     }
 
     // Check if roll type matches the action requirements
-    if (selectedAction === "receive_base_at_coating") {
+    if (selectedAction === "receive_base_at_coating" || selectedAction === "issue_base_to_coating") {
       if (rollType !== "base_fabric") {
         setError(
           `❌ Incorrect QR Code Type!\n\n` +
           `Scanned: ${rollType === "finished_fabric" ? "Finished Fabric" : "Unknown"} roll\n` +
           `Expected: Base Fabric roll\n\n` +
-          `You selected "Receive Base Fabric at Coating". Please scan a base fabric roll QR code.`
+          `You selected "${selectedAction === "receive_base_at_coating" ? "Receive Base Fabric at Coating" : "Issue Base Fabric to Coating"}". Please scan a base fabric roll QR code.`
         );
         return false;
       }
@@ -479,7 +491,7 @@ export default function QRPage() {
     // Pre-validate all rolls before processing any
     const invalidRolls: string[] = [];
     for (const roll of scannedRolls) {
-      if (selectedAction === "receive_base_at_coating" && roll.type !== "base_fabric") {
+      if ((selectedAction === "receive_base_at_coating" || selectedAction === "issue_base_to_coating") && roll.type !== "base_fabric") {
         invalidRolls.push(`${roll.roll_no || roll.qr_code} (Expected: Base Fabric, Found: ${roll.type === "finished_fabric" ? "Finished Fabric" : "Unknown"})`);
       } else if (
         (selectedAction === "receive_finished_at_store" || selectedAction === "issue_finished_to_customer") &&
@@ -490,9 +502,15 @@ export default function QRPage() {
     }
 
     if (invalidRolls.length > 0) {
+      const actionNames: Record<string, string> = {
+        receive_base_at_coating: "Receive Base Fabric at Coating",
+        issue_base_to_coating: "Issue Base Fabric to Coating",
+        receive_finished_at_store: "Receive Finished Fabric at Store",
+        issue_finished_to_customer: "Issue Finished Fabric to Customer",
+      };
       setError(
         `❌ Cannot process: Incorrect roll types detected!\n\n` +
-        `Selected action: "${selectedAction === "receive_base_at_coating" ? "Receive Base Fabric at Coating" : selectedAction === "receive_finished_at_store" ? "Receive Finished Fabric at Store" : "Issue Finished Fabric to Customer"}"\n\n` +
+        `Selected action: "${actionNames[selectedAction] || selectedAction}"\n\n` +
         `Invalid rolls:\n${invalidRolls.map((r) => `  • ${r}`).join("\n")}\n\n` +
         `Please remove these rolls from the list before processing.`
       );
@@ -502,10 +520,81 @@ export default function QRPage() {
     setIsProcessing(true);
     setError(null);
     setSuccess(null);
+    setSlipPopup(null);
 
     try {
       const { data: userData } = await supabaseBrowserClient.auth.getUser();
 
+      // Handle issue_base_to_coating - create issue slip
+      if (selectedAction === "issue_base_to_coating") {
+        // Validate all rolls first
+        for (const roll of scannedRolls) {
+          if (roll.type !== "base_fabric") {
+            throw new Error(`Roll ${roll.qr_code} is not a base fabric roll.`);
+          }
+          if (roll.current_status !== "AVAILABLE" || roll.current_location !== "WEAVING") {
+            throw new Error(
+              `Roll ${roll.qr_code} is not available at weaving. Current: ${roll.current_status} at ${roll.current_location}`
+            );
+          }
+        }
+
+        // Create issue slip
+        const issueDateIso = new Date().toISOString();
+        const { data: slip, error: slipError } = await supabaseBrowserClient
+          .from("base_fabric_issue_slips")
+          .insert({
+            issue_date: issueDateIso,
+            notes: null,
+            from_location: "WEAVING",
+            to_location: "COATING",
+            created_by: userData?.user?.id || null,
+          })
+          .select("id, slip_no")
+          .single();
+
+        if (slipError) throw slipError;
+
+        // Create issue lines
+        const lines = scannedRolls.map((roll) => ({
+          slip_id: slip.id,
+          base_fabric_roll_id: roll.roll_id,
+          length_m: roll.length_m || 0,
+          notes: null,
+        }));
+
+        const { error: lineError } = await supabaseBrowserClient
+          .from("base_fabric_issue_lines")
+          .insert(lines);
+        if (lineError) throw lineError;
+
+        // Update roll statuses
+        const { error: updateError } = await supabaseBrowserClient
+          .from("base_fabric_rolls")
+          .update({
+            current_location: "COATING",
+            status: "IN_TRANSIT",
+          })
+          .in("id", scannedRolls.map((r) => r.roll_id));
+        if (updateError) throw updateError;
+
+        // Set slip popup data for mobile display
+        setSlipPopup({
+          slipId: slip.id,
+          slipNo: slip.slip_no,
+          issueDate: issueDateIso,
+          fromLocation: "WEAVING",
+          toLocation: "COATING",
+          rollCount: scannedRolls.length,
+        });
+
+        setSuccess(`Successfully created issue slip ${slip.slip_no || slip.id} with ${scannedRolls.length} roll(s).`);
+        setScannedRolls([]);
+        await stopScanning();
+        return;
+      }
+
+      // Handle other actions (existing logic)
       for (const roll of scannedRolls) {
         if (selectedAction === "receive_base_at_coating") {
           if (roll.type !== "base_fabric") {
@@ -619,6 +708,24 @@ export default function QRPage() {
             <div className="font-semibold text-slate-900">Receive Base Fabric at Coating</div>
             <div className="mt-1 text-sm text-slate-600">
               Mark base fabric rolls as received at coating department
+            </div>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedAction("issue_base_to_coating");
+              setScannedRolls([]);
+              lastScannedRef.current.clear();
+            }}
+            className={`rounded-lg border-2 p-4 text-left transition ${
+              selectedAction === "issue_base_to_coating"
+                ? "border-teal-700 bg-teal-50"
+                : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+          >
+            <div className="font-semibold text-slate-900">Issue Base Fabric to Coating</div>
+            <div className="mt-1 text-sm text-slate-600">
+              Scan base fabric rolls at weaving to create issue slip
             </div>
           </button>
 
@@ -778,6 +885,77 @@ export default function QRPage() {
             ))}
           </div>
         </motion.section>
+      )}
+
+      {/* Mobile Slip Popup */}
+      {slipPopup && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+          onClick={() => setSlipPopup(null)}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="rounded-xl border border-slate-200 bg-white p-6 shadow-lg max-w-md w-full max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">Issue Slip Created</h3>
+              <button
+                onClick={() => setSlipPopup(null)}
+                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div>
+                <span className="text-sm font-semibold text-slate-700">Slip No:</span>
+                <span className="ml-2 text-slate-900">{slipPopup.slipNo || "N/A"}</span>
+              </div>
+              <div>
+                <span className="text-sm font-semibold text-slate-700">Date:</span>
+                <span className="ml-2 text-slate-900">
+                  {new Date(slipPopup.issueDate).toLocaleString("en-ZA")}
+                </span>
+              </div>
+              <div>
+                <span className="text-sm font-semibold text-slate-700">From:</span>
+                <span className="ml-2 text-slate-900">{slipPopup.fromLocation}</span>
+              </div>
+              <div>
+                <span className="text-sm font-semibold text-slate-700">To:</span>
+                <span className="ml-2 text-slate-900">{slipPopup.toLocation}</span>
+              </div>
+              <div>
+                <span className="text-sm font-semibold text-slate-700">Rolls:</span>
+                <span className="ml-2 text-slate-900">{slipPopup.rollCount} roll(s)</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Link
+                href={`/toolbox/base-fabric/issuing/${slipPopup.slipId}`}
+                className="flex-1"
+                onClick={() => setSlipPopup(null)}
+              >
+                <Button variant="primary" className="w-full">
+                  View Full Slip
+                </Button>
+              </Link>
+              <Button
+                variant="secondary"
+                onClick={() => setSlipPopup(null)}
+                className="flex-1"
+              >
+                Close
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
       )}
     </div>
   );

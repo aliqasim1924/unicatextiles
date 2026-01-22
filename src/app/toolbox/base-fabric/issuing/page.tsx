@@ -345,43 +345,61 @@ export default function BaseFabricIssuingPage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-slate-900">Recent Issue Slips</h2>
-          <p className="text-sm text-slate-500">Latest 5 slips</p>
+          <Button
+            variant="primary"
+            onClick={() => router.push("/toolbox/base-fabric/issuing/slips")}
+          >
+            View All Slips
+          </Button>
         </div>
         {recentSlips.length === 0 ? (
           <p className="text-sm text-slate-600">No slips yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200">
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Date</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">From → To</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentSlips.map((slip) => (
-                  <tr
-                    key={slip.id}
-                    onClick={() => router.push(`/toolbox/base-fabric/issuing/${slip.id}`)}
-                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
-                  >
-                    <td className="px-4 py-3 text-slate-900 font-semibold">
-                      {slip.slip_no || "N/A"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {new Date(slip.issue_date).toLocaleString("en-ZA")}
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">
-                      {slip.from_location || "-"} → {slip.to_location || "-"}
-                    </td>
+          <>
+            <div className="overflow-x-auto mb-4">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-900">Date</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-900">From → To</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {recentSlips.slice(0, 5).map((slip) => (
+                    <tr
+                      key={slip.id}
+                      onClick={() => router.push(`/toolbox/base-fabric/issuing/${slip.id}`)}
+                      className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                    >
+                      <td className="px-4 py-3 text-slate-900 font-semibold">
+                        {slip.slip_no || "N/A"}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {new Date(slip.issue_date).toLocaleString("en-ZA", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {slip.from_location || "-"} → {slip.to_location || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {recentSlips.length > 5 && (
+              <p className="text-xs text-slate-500 text-center">
+                Showing latest 5 slips. Click "View All Slips" to see all.
+              </p>
+            )}
+          </>
         )}
       </motion.section>
     </div>

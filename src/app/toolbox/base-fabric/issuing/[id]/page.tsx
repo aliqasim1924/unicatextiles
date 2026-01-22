@@ -133,8 +133,13 @@ export default function BaseFabricIssueSlipPage() {
       <div className="print-page-shell min-h-screen bg-slate-100 print:bg-white print:min-h-0">
         {/* Top actions (screen only) */}
         <div className="mx-auto max-w-[800px] px-4 py-6 print:hidden">
-          <div className="mb-4 flex items-center justify-between">
-            <BackButton href="/toolbox/base-fabric/issuing" label="Back to Issuing" />
+          <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex gap-2">
+              <BackButton href="/toolbox/base-fabric/issuing" label="Back to Issuing" />
+              <Link href="/toolbox/base-fabric/issuing/slips">
+                <Button variant="secondary">All Slips</Button>
+              </Link>
+            </div>
             <Button variant="primary" onClick={handlePrint}>
               Print Slip
             </Button>
