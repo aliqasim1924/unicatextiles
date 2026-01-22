@@ -34,8 +34,16 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Root "/" redirect: send to toolbox if authenticated, else to login
+  const pathname = request.nextUrl.pathname;
+  if (pathname === "/" || pathname === "") {
+    const url = request.nextUrl.clone();
+    url.pathname = user ? "/toolbox" : "/auth/login";
+    return NextResponse.redirect(url);
+  }
+
   // Protect /toolbox routes
-  if (request.nextUrl.pathname.startsWith("/toolbox") && !user) {
+  if (pathname.startsWith("/toolbox") && !user) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     return NextResponse.redirect(url);
@@ -43,8 +51,7 @@ export async function middleware(request: NextRequest) {
 
   // Redirect authenticated users away from auth pages
   if (
-    (request.nextUrl.pathname.startsWith("/auth/login") ||
-      request.nextUrl.pathname.startsWith("/auth/register")) &&
+    (pathname.startsWith("/auth/login") || pathname.startsWith("/auth/register")) &&
     user
   ) {
     const url = request.nextUrl.clone();
@@ -57,12 +64,10 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    // Explicitly match root so redirect always runs (avoids CDN/build caching of old page)
+    "/",
     /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder
+     * Match all other request paths except static assets
      */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
