@@ -25,6 +25,41 @@ interface ScannedRoll {
   length_m?: number;
   order_no?: string | null;
   fabric_name?: string | null;
+  // For finished fabric rolls - order matching data
+  fabric_type_id?: string | null;
+  color_option_id?: string | null;
+  gsm_option_id?: string | null;
+  width_option_id?: string | null;
+  color?: string | null;
+  coating_type?: string | null;
+  gsm?: number | null;
+}
+
+interface CustomerOrder {
+  id: string;
+  order_ref: string;
+  status: string;
+  customer_id: string;
+  customers?: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+interface OrderRequirement {
+  key: string;
+  fabric_type_id: string | null;
+  color_option_id: string | null;
+  gsm_option_id: string | null;
+  width_option_id: string | null;
+  coating_type: string;
+  color: string;
+  gsm: string | null;
+  ordered_m: number;
+  issued_m: number;
+  selected_m: number;
+  remaining_m: number;
+  isLegacyMatch: boolean;
 }
 
 interface SlipPopupData {
@@ -44,6 +79,13 @@ export default function QRPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [slipPopup, setSlipPopup] = useState<SlipPopupData | null>(null);
+  
+  // Customer order selection state
+  const [customerOrders, setCustomerOrders] = useState<CustomerOrder[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+  const [orderRequirements, setOrderRequirements] = useState<OrderRequirement[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scanAreaRef = useRef<HTMLDivElement>(null);
   const lastScannedRef = useRef<Map<string, number>>(new Map()); // Track last scan time for each QR code
@@ -64,6 +106,217 @@ export default function QRPage() {
       }
     };
   }, []);
+
+  // Fetch customer orders when issue_finished_to_customer action is selected
+  useEffect(() => {
+    if (selectedAction === "issue_finished_to_customer") {
+      fetchCustomerOrders();
+    } else {
+      setCustomerOrders([]);
+      setSelectedOrderId("");
+      setOrderRequirements([]);
+    }
+  }, [selectedAction]);
+
+  // Fetch order requirements when order is selected
+  useEffect(() => {
+    if (selectedAction === "issue_finished_to_customer" && selectedOrderId) {
+      fetchOrderRequirements();
+    } else {
+      setOrderRequirements([]);
+    }
+  }, [selectedAction, selectedOrderId]);
+
+  async function fetchCustomerOrders() {
+    try {
+      setIsLoadingOrders(true);
+      const { data, error: orderError } = await supabaseBrowserClient
+        .from("customer_orders")
+        .select(
+          `
+          id,
+          order_ref,
+          status,
+          customer_id,
+          customers:customer_id (
+            id,
+            name
+          )
+        `
+        )
+        .in("status", ["OPEN", "PARTIALLY_FULFILLED"])
+        .order("order_ref", { ascending: false });
+
+      if (orderError) throw orderError;
+
+      // Normalize customers from array to single object
+      const normalized = (data || []).map((item: any) => ({
+        ...item,
+        customers: Array.isArray(item.customers)
+          ? item.customers[0] || null
+          : item.customers,
+      }));
+
+      setCustomerOrders(normalized as CustomerOrder[]);
+    } catch (err: any) {
+      console.error("Failed to load customer orders", err);
+      setError(err?.message || "Failed to load customer orders.");
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }
+
+  async function fetchOrderRequirements() {
+    if (!selectedOrderId) return;
+
+    try {
+      // Fetch order lines
+      const { data: linesData, error: linesError } = await supabaseBrowserClient
+        .from("customer_order_lines")
+        .select("id, fabric_type_id, color_option_id, gsm_option_id, width_option_id, coating_type, color, gsm, quantity_m")
+        .eq("order_id", selectedOrderId);
+
+      if (linesError) throw linesError;
+
+      // Build match key helper
+      const buildMatchKey = (line: any): string => {
+        if (line.fabric_type_id && line.color_option_id) {
+          const parts = [
+            line.fabric_type_id,
+            line.color_option_id,
+            line.gsm_option_id || "",
+            line.width_option_id || "",
+          ];
+          return parts.join("|");
+        }
+        // Fallback: use text matching for legacy data
+        const normalizedCoating = (line.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
+        const normalizedColor = (line.color || "").trim().toLowerCase().replace(/\s+/g, " ");
+        const normalizedGsm = line.gsm ? line.gsm.toString().trim().toLowerCase() : "";
+        return `TEXT|${normalizedCoating}|${normalizedColor}|${normalizedGsm}`;
+      };
+
+      // Group by match key
+      const requiredMap: Record<
+        string,
+        {
+          ordered_m: number;
+          coating_type: string;
+          color: string;
+          gsm: string | null;
+          fabric_type_id: string | null;
+          color_option_id: string | null;
+          gsm_option_id: string | null;
+          width_option_id: string | null;
+        }
+      > = {};
+
+      (linesData || []).forEach((line: any) => {
+        const key = buildMatchKey(line);
+        if (!requiredMap[key]) {
+          requiredMap[key] = {
+            ordered_m: 0,
+            coating_type: line.coating_type,
+            color: line.color,
+            gsm: line.gsm?.toString() || null,
+            fabric_type_id: line.fabric_type_id,
+            color_option_id: line.color_option_id,
+            gsm_option_id: line.gsm_option_id,
+            width_option_id: line.width_option_id,
+          };
+        }
+        requiredMap[key].ordered_m += Number(line.quantity_m || 0);
+      });
+
+      // Fetch already-issued meters
+      const { data: issuesData, error: issuesError } = await supabaseBrowserClient
+        .from("finished_fabric_store_issues")
+        .select(
+          `
+          id,
+          finished_fabric_store_issue_items (
+            roll_id,
+            finished_fabric_rolls:roll_id (
+              fabric_type_id,
+              color_option_id,
+              gsm_option_id,
+              width_option_id,
+              color,
+              coating_type,
+              gsm,
+              length_m
+            )
+          )
+        `
+        )
+        .eq("order_id", selectedOrderId)
+        .eq("destination", "CUSTOMER");
+
+      if (issuesError) throw issuesError;
+
+      // Build roll match key helper
+      const buildRollMatchKey = (roll: any): string | null => {
+        if (roll.fabric_type_id && roll.color_option_id) {
+          const parts = [
+            roll.fabric_type_id,
+            roll.color_option_id,
+            roll.gsm_option_id || "",
+            roll.width_option_id || "",
+          ];
+          return parts.join("|");
+        }
+        // Fallback: use text matching for legacy data
+        if (roll.coating_type && roll.color) {
+          const normalizedCoating = (roll.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
+          const normalizedColor = (roll.color || "").trim().toLowerCase().replace(/\s+/g, " ");
+          const normalizedGsm = roll.gsm ? roll.gsm.toString().trim().toLowerCase() : "";
+          return `TEXT|${normalizedCoating}|${normalizedColor}|${normalizedGsm}`;
+        }
+        return null;
+      };
+
+      const issuedMap: Record<string, number> = {};
+      (issuesData || []).forEach((issue: any) => {
+        (issue.finished_fabric_store_issue_items || []).forEach((item: any) => {
+          const roll = Array.isArray(item.finished_fabric_rolls)
+            ? item.finished_fabric_rolls[0]
+            : item.finished_fabric_rolls;
+          if (roll) {
+            const key = buildRollMatchKey(roll);
+            if (key) {
+              issuedMap[key] = (issuedMap[key] || 0) + Number(roll.length_m || 0);
+            }
+          }
+        });
+      });
+
+      // Build requirements array
+      const requirements: OrderRequirement[] = Object.entries(requiredMap).map(([key, data]) => {
+        const isLegacyMatch = key.startsWith("TEXT|");
+        const issued_m = issuedMap[key] || 0;
+        return {
+          key,
+          fabric_type_id: data.fabric_type_id,
+          color_option_id: data.color_option_id,
+          gsm_option_id: data.gsm_option_id,
+          width_option_id: data.width_option_id,
+          coating_type: data.coating_type,
+          color: data.color,
+          gsm: data.gsm,
+          ordered_m: data.ordered_m,
+          issued_m,
+          selected_m: 0, // Will be computed from scanned rolls
+          remaining_m: data.ordered_m - issued_m,
+          isLegacyMatch,
+        };
+      });
+
+      setOrderRequirements(requirements);
+    } catch (err: any) {
+      console.error("Failed to load order requirements", err);
+      setError(err?.message || "Failed to load order requirements.");
+    }
+  }
 
   async function startScanning() {
     if (!selectedAction) {
@@ -414,7 +667,12 @@ export default function QRPage() {
           current_location,
           grade,
           color,
-          coating_type
+          coating_type,
+          gsm,
+          fabric_type_id,
+          color_option_id,
+          gsm_option_id,
+          width_option_id
         `
         )
         .eq("qr_code", qrCode)
@@ -434,7 +692,12 @@ export default function QRPage() {
             current_location,
             grade,
             color,
-            coating_type
+            coating_type,
+            gsm,
+            fabric_type_id,
+            color_option_id,
+            gsm_option_id,
+            width_option_id
           `
           )
           .eq("roll_no", qrCode)
@@ -461,6 +724,13 @@ export default function QRPage() {
           current_status: finishedRoll.status || "UNKNOWN",
           current_location: finishedRoll.current_location || "UNKNOWN",
           length_m: finishedRoll.length_m,
+          fabric_type_id: finishedRoll.fabric_type_id || null,
+          color_option_id: finishedRoll.color_option_id || null,
+          gsm_option_id: finishedRoll.gsm_option_id || null,
+          width_option_id: finishedRoll.width_option_id || null,
+          color: finishedRoll.color || null,
+          coating_type: finishedRoll.coating_type || null,
+          gsm: finishedRoll.gsm ? Number(finishedRoll.gsm) : null,
         };
 
         setScannedRolls((prev) => [...prev, scannedRoll]);
@@ -477,6 +747,99 @@ export default function QRPage() {
     }
   }
 
+  // Helper function to build match key from roll
+  function buildRollKey(roll: ScannedRoll): string | null {
+    if (roll.fabric_type_id && roll.color_option_id) {
+      const parts = [
+        roll.fabric_type_id,
+        roll.color_option_id,
+        roll.gsm_option_id || "",
+        roll.width_option_id || "",
+      ];
+      return parts.join("|");
+    }
+    // Fallback for legacy data
+    if (roll.coating_type && roll.color) {
+      const normalizedCoating = (roll.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedColor = (roll.color || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedGsm = roll.gsm ? roll.gsm.toString().trim().toLowerCase() : "";
+      return `TEXT|${normalizedCoating}|${normalizedColor}|${normalizedGsm}`;
+    }
+    return null;
+  }
+
+  // Helper function to check if a roll matches a requirement
+  function rollMatchesRequirement(roll: ScannedRoll, req: OrderRequirement): boolean {
+    // Primary matching: Use catalog IDs
+    if (roll.fabric_type_id && roll.color_option_id && req.fabric_type_id && req.color_option_id) {
+      // Must match fabric_type_id and color_option_id
+      if (roll.fabric_type_id !== req.fabric_type_id || roll.color_option_id !== req.color_option_id) {
+        return false;
+      }
+      // If gsm_option_id exists on both, they must match
+      if (req.gsm_option_id && roll.gsm_option_id && roll.gsm_option_id !== req.gsm_option_id) {
+        return false;
+      }
+      // If width_option_id exists on both, they must match
+      if (req.width_option_id && roll.width_option_id && roll.width_option_id !== req.width_option_id) {
+        return false;
+      }
+      return true;
+    }
+
+    // Fallback: Text matching for legacy data
+    if (req.isLegacyMatch && roll.coating_type && roll.color) {
+      const normalizedRollCoating = (roll.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedRollColor = (roll.color || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedRollGsm = roll.gsm ? roll.gsm.toString().trim().toLowerCase() : "";
+      const normalizedReqCoating = (req.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedReqColor = (req.color || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+      return (
+        normalizedRollCoating === normalizedReqCoating &&
+        normalizedRollColor === normalizedReqColor &&
+        (!req.gsm_option_id || normalizedRollGsm === (req.gsm || "").trim().toLowerCase())
+      );
+    }
+
+    return false;
+  }
+
+  // Validate scanned rolls against order requirements
+  function validateScannedRollsAgainstOrder(): { valid: boolean; error?: string } {
+    if (selectedAction !== "issue_finished_to_customer" || !selectedOrderId) {
+      return { valid: true };
+    }
+
+    if (orderRequirements.length === 0) {
+      return { valid: true }; // No requirements to validate against
+    }
+
+    // Compute selected meters per requirement key
+    const selectedMetersByKey: Record<string, number> = {};
+    scannedRolls.forEach((roll) => {
+      const key = buildRollKey(roll);
+      if (key) {
+        selectedMetersByKey[key] = (selectedMetersByKey[key] || 0) + (roll.length_m || 0);
+      }
+    });
+
+    // Check each requirement
+    for (const req of orderRequirements) {
+      const selected_m = selectedMetersByKey[req.key] || 0;
+      const newRemaining = req.ordered_m - req.issued_m - selected_m;
+
+      if (newRemaining < 0) {
+        return {
+          valid: false,
+          error: `Cannot allocate: Selected quantity (${selected_m.toFixed(2)} m) exceeds remaining ordered amount (${(req.ordered_m - req.issued_m).toFixed(2)} m) for ${req.color} (${req.coating_type})`,
+        };
+      }
+    }
+
+    return { valid: true };
+  }
+
   async function processScannedRolls() {
     if (scannedRolls.length === 0) {
       setError("No rolls scanned yet.");
@@ -485,6 +848,12 @@ export default function QRPage() {
 
     if (!selectedAction) {
       setError("Please select an action.");
+      return;
+    }
+
+    // Validate customer order selection for issue_finished_to_customer
+    if (selectedAction === "issue_finished_to_customer" && !selectedOrderId) {
+      setError("Please select a customer order before processing.");
       return;
     }
 
@@ -641,17 +1010,69 @@ export default function QRPage() {
               `Roll ${roll.qr_code} is not in store. Current: ${roll.current_status} at ${roll.current_location}`
             );
           }
-
-          await supabaseBrowserClient
-            .from("finished_fabric_rolls")
-            .update({
-              status: "ISSUED",
-              current_location: "DISPATCHED",
-              issued_store_at: new Date().toISOString(),
-              issued_store_by: userData?.user?.id || null,
-            })
-            .eq("id", roll.roll_id);
         }
+      }
+
+      // Handle issue_finished_to_customer - create store issue with order
+      if (selectedAction === "issue_finished_to_customer") {
+        // Validate against order requirements
+        const validation = validateScannedRollsAgainstOrder();
+        if (!validation.valid) {
+          throw new Error(validation.error || "Validation failed");
+        }
+
+        // Get selected order details
+        const selectedOrder = customerOrders.find((o) => o.id === selectedOrderId);
+        if (!selectedOrder) {
+          throw new Error("Selected customer order not found.");
+        }
+
+        // Create store issue
+        const { data: issue, error: issueError } = await supabaseBrowserClient
+          .from("finished_fabric_store_issues")
+          .insert({
+            issued_by: userData?.user?.id || null,
+            destination: "CUSTOMER",
+            reference: selectedOrder.order_ref || null,
+            notes: null,
+            order_id: selectedOrderId,
+          })
+          .select("id, issue_no")
+          .single();
+
+        if (issueError) throw issueError;
+
+        // Create issue items
+        const lineRows = scannedRolls.map((roll) => ({
+          issue_id: issue.id,
+          roll_id: roll.roll_id,
+          roll_no: roll.roll_no,
+          length_m: roll.length_m || 0,
+          grade: null, // Grade not available from scanned roll
+        }));
+
+        const { error: lineError } = await supabaseBrowserClient
+          .from("finished_fabric_store_issue_items")
+          .insert(lineRows);
+        if (lineError) throw lineError;
+
+        // Update roll statuses
+        const { error: updateError } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .update({
+            status: "ISSUED",
+            current_location: "DISPATCHED",
+            issued_store_at: new Date().toISOString(),
+            issued_store_by: userData?.user?.id || null,
+          })
+          .in("id", scannedRolls.map((r) => r.roll_id));
+        if (updateError) throw updateError;
+
+        setSuccess(`Successfully issued ${scannedRolls.length} roll(s) to customer order ${selectedOrder.order_ref || selectedOrderId}.`);
+        setScannedRolls([]);
+        setSelectedOrderId("");
+        await stopScanning();
+        return;
       }
 
       setSuccess(`Successfully processed ${scannedRolls.length} roll(s).`);
@@ -783,6 +1204,108 @@ export default function QRPage() {
         </div>
       </motion.section>
 
+      {/* Customer Order Selection - for issue_finished_to_customer */}
+      {selectedAction === "issue_finished_to_customer" && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+          className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
+        >
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Select Customer Order</h2>
+          
+          {isLoadingOrders ? (
+            <p className="text-sm text-slate-600">Loading customer orders...</p>
+          ) : customerOrders.length === 0 ? (
+            <p className="text-sm text-slate-600">No open or partially fulfilled customer orders available.</p>
+          ) : (
+            <>
+              <div className="mb-4">
+                <label className="block text-sm font-semibold text-slate-900 mb-2">
+                  Customer Order <span className="text-red-600">*</span>
+                </label>
+                <select
+                  value={selectedOrderId}
+                  onChange={(e) => setSelectedOrderId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                >
+                  <option value="">-- Select Order --</option>
+                  {customerOrders.map((order) => (
+                    <option key={order.id} value={order.id}>
+                      {order.order_ref} - {order.customers?.name || "Unknown Customer"} ({order.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Order Requirements Summary */}
+              {selectedOrderId && orderRequirements.length > 0 && (
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <h3 className="mb-3 text-sm font-semibold text-slate-900">Order Requirements</h3>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {orderRequirements.map((req) => {
+                      // Calculate selected meters for this requirement
+                      const selectedMeters = scannedRolls
+                        .filter((roll) => {
+                          const key = buildRollKey(roll);
+                          return key === req.key && rollMatchesRequirement(roll, req);
+                        })
+                        .reduce((sum, roll) => sum + (roll.length_m || 0), 0);
+                      
+                      const remaining = req.ordered_m - req.issued_m - selectedMeters;
+                      const isExceeding = remaining < 0;
+
+                      return (
+                        <div
+                          key={req.key}
+                          className={`rounded border p-2 text-xs sm:text-sm ${
+                            isExceeding
+                              ? "border-red-300 bg-red-50"
+                              : remaining < 1
+                              ? "border-yellow-300 bg-yellow-50"
+                              : "border-slate-200 bg-white"
+                          }`}
+                        >
+                          <div className="font-medium text-slate-900">
+                            {req.color} ({req.coating_type})
+                            {req.gsm && ` - ${req.gsm} GSM`}
+                          </div>
+                          <div className="mt-1 grid grid-cols-2 gap-2 text-slate-600">
+                            <div>
+                              <span className="font-medium">Ordered:</span> {req.ordered_m.toFixed(2)} m
+                            </div>
+                            <div>
+                              <span className="font-medium">Issued:</span> {req.issued_m.toFixed(2)} m
+                            </div>
+                            <div>
+                              <span className="font-medium">Scanned:</span> {selectedMeters.toFixed(2)} m
+                            </div>
+                            <div className={isExceeding ? "text-red-700 font-semibold" : "text-slate-700"}>
+                              <span className="font-medium">Remaining:</span> {remaining.toFixed(2)} m
+                            </div>
+                          </div>
+                          {isExceeding && (
+                            <div className="mt-1 text-xs text-red-700 font-medium">
+                              ⚠ Exceeds order requirement
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {selectedOrderId && orderRequirements.length === 0 && (
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                  Loading order requirements...
+                </div>
+              )}
+            </>
+          )}
+        </motion.section>
+      )}
+
       {/* Scanner */}
       {selectedAction && (
         <motion.section
@@ -859,30 +1382,81 @@ export default function QRPage() {
           </div>
 
           <div className="space-y-2">
-            {scannedRolls.map((roll) => (
-              <div
-                key={roll.qr_code}
-                className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3"
-              >
-                <div className="flex-1">
-                  <div className="font-semibold text-slate-900">
-                    {roll.roll_no || roll.qr_code} ({roll.type === "base_fabric" ? "Base" : "Finished"})
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    QR: {roll.qr_code} | Status: {roll.current_status} | Location: {roll.current_location}
-                  </div>
-                  {roll.length_m && (
-                    <div className="text-xs text-slate-500">Length: {roll.length_m.toFixed(2)} m</div>
-                  )}
-                </div>
-                <button
-                  onClick={() => removeScannedRoll(roll.qr_code)}
-                  className="ml-4 rounded-lg border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
+            {scannedRolls.map((roll) => {
+              // Check if roll matches order requirement (for issue_finished_to_customer)
+              let matchesOrder = false;
+              let orderMatchInfo = null;
+              if (selectedAction === "issue_finished_to_customer" && selectedOrderId && orderRequirements.length > 0) {
+                const matchingReq = orderRequirements.find((req) => rollMatchesRequirement(roll, req));
+                if (matchingReq) {
+                  matchesOrder = true;
+                  const selectedMeters = scannedRolls
+                    .filter((r) => {
+                      const key = buildRollKey(r);
+                      return key === matchingReq.key && rollMatchesRequirement(r, matchingReq);
+                    })
+                    .reduce((sum, r) => sum + (r.length_m || 0), 0);
+                  const remaining = matchingReq.ordered_m - matchingReq.issued_m - selectedMeters;
+                  orderMatchInfo = {
+                    requirement: matchingReq,
+                    remaining,
+                    isExceeding: remaining < 0,
+                  };
+                }
+              }
+
+              return (
+                <div
+                  key={roll.qr_code}
+                  className={`flex items-center justify-between rounded-lg border p-3 ${
+                    selectedAction === "issue_finished_to_customer" && selectedOrderId
+                      ? matchesOrder
+                        ? orderMatchInfo?.isExceeding
+                          ? "border-red-300 bg-red-50"
+                          : "border-green-300 bg-green-50"
+                        : "border-yellow-300 bg-yellow-50"
+                      : "border-slate-200 bg-slate-50"
+                  }`}
                 >
-                  Remove
-                </button>
-              </div>
-            ))}
+                  <div className="flex-1">
+                    <div className="font-semibold text-slate-900">
+                      {roll.roll_no || roll.qr_code} ({roll.type === "base_fabric" ? "Base" : "Finished"})
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      QR: {roll.qr_code} | Status: {roll.current_status} | Location: {roll.current_location}
+                    </div>
+                    {roll.length_m && (
+                      <div className="text-xs text-slate-500">Length: {roll.length_m.toFixed(2)} m</div>
+                    )}
+                    {selectedAction === "issue_finished_to_customer" && selectedOrderId && (
+                      <div className="mt-1 text-xs">
+                        {matchesOrder ? (
+                          orderMatchInfo?.isExceeding ? (
+                            <span className="text-red-700 font-medium">
+                              ⚠ Exceeds order: {orderMatchInfo.remaining.toFixed(2)} m over
+                            </span>
+                          ) : (
+                            <span className="text-green-700">
+                              ✓ Matches order ({orderMatchInfo?.requirement.color} - {orderMatchInfo?.requirement.coating_type})
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-yellow-700">
+                            ⚠ Does not match any order requirement
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => removeScannedRoll(roll.qr_code)}
+                    className="ml-4 rounded-lg border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </motion.section>
       )}
