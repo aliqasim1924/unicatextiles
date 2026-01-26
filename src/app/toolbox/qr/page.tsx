@@ -1090,17 +1090,17 @@ export default function QRPage() {
   }
 
   return (
-    <div className="grid gap-8">
+    <div className="grid gap-4 sm:gap-6 md:gap-8 max-w-full overflow-x-hidden">
       <BackButton href="/toolbox" />
 
       {/* Header */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
       >
-      <h1 className="text-2xl font-semibold text-slate-900">Scan QR Code</h1>
-      <p className="mt-2 text-slate-600">
+      <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">Scan QR Code</h1>
+      <p className="mt-2 text-sm sm:text-base text-slate-600">
           Select an action, then scan QR codes to update roll statuses.
         </p>
       </motion.section>
@@ -1110,9 +1110,9 @@ export default function QRPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.1 }}
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
       >
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Select Action</h2>
+        <h2 className="mb-4 text-base sm:text-lg font-semibold text-slate-900">Select Action</h2>
         <div className="grid gap-3 sm:grid-cols-2">
           <button
             onClick={() => {
@@ -1120,14 +1120,14 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-4 text-left transition ${
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
               selectedAction === "receive_base_at_coating"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
             }`}
           >
-            <div className="font-semibold text-slate-900">Receive Base Fabric at Coating</div>
-            <div className="mt-1 text-sm text-slate-600">
+            <div className="font-semibold text-sm sm:text-base text-slate-900">Receive Base Fabric at Coating</div>
+            <div className="mt-1 text-xs sm:text-sm text-slate-600">
               Mark base fabric rolls as received at coating department
             </div>
           </button>
@@ -1138,14 +1138,14 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-4 text-left transition ${
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
               selectedAction === "issue_base_to_coating"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
             }`}
           >
-            <div className="font-semibold text-slate-900">Issue Base Fabric to Coating</div>
-            <div className="mt-1 text-sm text-slate-600">
+            <div className="font-semibold text-sm sm:text-base text-slate-900">Issue Base Fabric to Coating</div>
+            <div className="mt-1 text-xs sm:text-sm text-slate-600">
               Scan base fabric rolls at weaving to create issue slip
             </div>
           </button>
@@ -1156,14 +1156,14 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-4 text-left transition ${
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
               selectedAction === "receive_finished_at_store"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
             }`}
           >
-            <div className="font-semibold text-slate-900">Receive Finished Fabric at Store</div>
-            <div className="mt-1 text-sm text-slate-600">
+            <div className="font-semibold text-sm sm:text-base text-slate-900">Receive Finished Fabric at Store</div>
+            <div className="mt-1 text-xs sm:text-sm text-slate-600">
               Mark finished fabric rolls as received in store
             </div>
           </button>
@@ -1174,14 +1174,14 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-4 text-left transition ${
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
               selectedAction === "issue_finished_to_customer"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
             }`}
           >
-            <div className="font-semibold text-slate-900">Issue Finished Fabric to Customer</div>
-            <div className="mt-1 text-sm text-slate-600">
+            <div className="font-semibold text-sm sm:text-base text-slate-900">Issue Finished Fabric to Customer</div>
+            <div className="mt-1 text-xs sm:text-sm text-slate-600">
               Mark finished fabric rolls as issued/dispatched
             </div>
           </button>
@@ -1192,14 +1192,14 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-4 text-left transition ${
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
               selectedAction === "view_roll_details"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
             }`}
           >
-            <div className="font-semibold text-slate-900">View Roll Details</div>
-            <div className="mt-1 text-sm text-slate-600">Scan to view roll information only</div>
+            <div className="font-semibold text-sm sm:text-base text-slate-900">View Roll Details</div>
+            <div className="mt-1 text-xs sm:text-sm text-slate-600">Scan to view roll information only</div>
           </button>
         </div>
       </motion.section>
@@ -1212,7 +1212,7 @@ export default function QRPage() {
           transition={{ duration: 0.3, delay: 0.15 }}
           className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
         >
-          <h2 className="mb-4 text-lg font-semibold text-slate-900">Select Customer Order</h2>
+          <h2 className="mb-4 text-base sm:text-lg font-semibold text-slate-900">Select Customer Order</h2>
           
           {isLoadingOrders ? (
             <p className="text-sm text-slate-600">Loading customer orders...</p>
@@ -1227,7 +1227,7 @@ export default function QRPage() {
                 <select
                   value={selectedOrderId}
                   onChange={(e) => setSelectedOrderId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  className="w-full rounded-lg border border-slate-200 px-3 sm:px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent min-h-[44px]"
                 >
                   <option value="">-- Select Order --</option>
                   {customerOrders.map((order) => (
@@ -1240,9 +1240,9 @@ export default function QRPage() {
 
               {/* Order Requirements Summary */}
               {selectedOrderId && orderRequirements.length > 0 && (
-                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:p-4">
                   <h3 className="mb-3 text-sm font-semibold text-slate-900">Order Requirements</h3>
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                  <div className="space-y-2 max-h-48 sm:max-h-64 overflow-y-auto">
                     {orderRequirements.map((req) => {
                       // Calculate selected meters for this requirement
                       const selectedMeters = scannedRolls
@@ -1258,7 +1258,7 @@ export default function QRPage() {
                       return (
                         <div
                           key={req.key}
-                          className={`rounded border p-2 text-xs sm:text-sm ${
+                          className={`rounded border p-2.5 sm:p-3 text-xs sm:text-sm ${
                             isExceeding
                               ? "border-red-300 bg-red-50"
                               : remaining < 1
@@ -1266,26 +1266,26 @@ export default function QRPage() {
                               : "border-slate-200 bg-white"
                           }`}
                         >
-                          <div className="font-medium text-slate-900">
+                          <div className="font-medium text-slate-900 break-words">
                             {req.color} ({req.coating_type})
                             {req.gsm && ` - ${req.gsm} GSM`}
                           </div>
-                          <div className="mt-1 grid grid-cols-2 gap-2 text-slate-600">
-                            <div>
+                          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-600">
+                            <div className="break-words">
                               <span className="font-medium">Ordered:</span> {req.ordered_m.toFixed(2)} m
                             </div>
-                            <div>
+                            <div className="break-words">
                               <span className="font-medium">Issued:</span> {req.issued_m.toFixed(2)} m
                             </div>
-                            <div>
+                            <div className="break-words">
                               <span className="font-medium">Scanned:</span> {selectedMeters.toFixed(2)} m
                             </div>
-                            <div className={isExceeding ? "text-red-700 font-semibold" : "text-slate-700"}>
+                            <div className={`break-words ${isExceeding ? "text-red-700 font-semibold" : "text-slate-700"}`}>
                               <span className="font-medium">Remaining:</span> {remaining.toFixed(2)} m
                             </div>
                           </div>
                           {isExceeding && (
-                            <div className="mt-1 text-xs text-red-700 font-medium">
+                            <div className="mt-1.5 text-xs text-red-700 font-medium">
                               ⚠ Exceeds order requirement
                             </div>
                           )}
@@ -1297,7 +1297,7 @@ export default function QRPage() {
               )}
 
               {selectedOrderId && orderRequirements.length === 0 && (
-                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs sm:text-sm text-blue-800">
                   Loading order requirements...
                 </div>
               )}
@@ -1312,16 +1312,16 @@ export default function QRPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.2 }}
-          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
         >
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">QR Code Scanner</h2>
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <h2 className="text-base sm:text-lg font-semibold text-slate-900">QR Code Scanner</h2>
             {isScanning ? (
-              <Button variant="primary" onClick={stopScanning}>
+              <Button variant="primary" onClick={stopScanning} className="w-full sm:w-auto min-h-[44px]">
                 Stop Scanning
               </Button>
             ) : (
-              <Button variant="primary" onClick={startScanning}>
+              <Button variant="primary" onClick={startScanning} className="w-full sm:w-auto min-h-[44px]">
                 Start Scanning
               </Button>
             )}
@@ -1330,9 +1330,9 @@ export default function QRPage() {
           <div 
             id="qr-reader" 
             ref={scanAreaRef} 
-            className="mb-4"
+            className="mb-4 w-full overflow-hidden"
             style={{ 
-              minHeight: '300px',
+              minHeight: '250px',
               width: '100%'
             }}
           ></div>
@@ -1340,7 +1340,7 @@ export default function QRPage() {
           {/* iOS Safari Help Text */}
           {/iPhone|iPad|iPod/i.test(navigator.userAgent) && !isScanning && (
             <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
-              <p className="text-sm text-blue-800">
+              <p className="text-xs sm:text-sm text-blue-800">
                 <strong>iOS Safari Tip:</strong> If camera access is denied, go to{" "}
                 <strong>Settings → Safari → Camera</strong> and ensure this website has permission.
                 You may need to refresh the page after granting permission.
@@ -1350,13 +1350,13 @@ export default function QRPage() {
 
           {error && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-sm text-red-800 whitespace-pre-line">{error}</p>
+              <p className="text-xs sm:text-sm text-red-800 whitespace-pre-line break-words">{error}</p>
             </div>
           )}
 
           {success && (
             <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3">
-              <p className="text-sm text-green-800">{success}</p>
+              <p className="text-xs sm:text-sm text-green-800 break-words">{success}</p>
             </div>
           )}
         </motion.section>
@@ -1368,20 +1368,25 @@ export default function QRPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.3 }}
-          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
         >
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <h2 className="text-base sm:text-lg font-semibold text-slate-900">
               Scanned Rolls ({scannedRolls.length})
             </h2>
             {selectedAction !== "view_roll_details" && (
-              <Button variant="primary" onClick={processScannedRolls} disabled={isProcessing}>
+              <Button 
+                variant="primary" 
+                onClick={processScannedRolls} 
+                disabled={isProcessing}
+                className="w-full sm:w-auto min-h-[44px]"
+              >
                 {isProcessing ? "Processing..." : "Process All"}
               </Button>
             )}
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-[400px] sm:max-h-[500px] overflow-y-auto pr-1">
             {scannedRolls.map((roll) => {
               // Check if roll matches order requirement (for issue_finished_to_customer)
               let matchesOrder = false;
@@ -1408,7 +1413,7 @@ export default function QRPage() {
               return (
                 <div
                   key={roll.qr_code}
-                  className={`flex items-center justify-between rounded-lg border p-3 ${
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 gap-3 ${
                     selectedAction === "issue_finished_to_customer" && selectedOrderId
                       ? matchesOrder
                         ? orderMatchInfo?.isExceeding
@@ -1418,18 +1423,20 @@ export default function QRPage() {
                       : "border-slate-200 bg-slate-50"
                   }`}
                 >
-                  <div className="flex-1">
-                    <div className="font-semibold text-slate-900">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm sm:text-base text-slate-900 break-words">
                       {roll.roll_no || roll.qr_code} ({roll.type === "base_fabric" ? "Base" : "Finished"})
                     </div>
-                    <div className="text-sm text-slate-600">
-                      QR: {roll.qr_code} | Status: {roll.current_status} | Location: {roll.current_location}
+                    <div className="text-xs sm:text-sm text-slate-600 mt-1 space-y-0.5">
+                      <div className="break-words">QR: {roll.qr_code}</div>
+                      <div className="break-words">Status: {roll.current_status}</div>
+                      <div className="break-words">Location: {roll.current_location}</div>
                     </div>
                     {roll.length_m && (
-                      <div className="text-xs text-slate-500">Length: {roll.length_m.toFixed(2)} m</div>
+                      <div className="text-xs text-slate-500 mt-1">Length: {roll.length_m.toFixed(2)} m</div>
                     )}
                     {selectedAction === "issue_finished_to_customer" && selectedOrderId && (
-                      <div className="mt-1 text-xs">
+                      <div className="mt-2 text-xs break-words">
                         {matchesOrder ? (
                           orderMatchInfo?.isExceeding ? (
                             <span className="text-red-700 font-medium">
@@ -1450,7 +1457,7 @@ export default function QRPage() {
                   </div>
                   <button
                     onClick={() => removeScannedRoll(roll.qr_code)}
-                    className="ml-4 rounded-lg border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
+                    className="rounded-lg border border-red-300 bg-red-50 px-3 sm:px-4 py-2 text-xs sm:text-sm text-red-700 hover:bg-red-100 min-h-[44px] sm:min-h-auto sm:ml-4 flex-shrink-0"
                   >
                     Remove
                   </button>

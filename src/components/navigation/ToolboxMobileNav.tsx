@@ -36,12 +36,13 @@ export function ToolboxMobileNav({ currentPath }: Props) {
           <div className="rounded-xl border border-slate-200 bg-white shadow-lg">
             {toolboxNav.map((item) => {
               const isActive = activeKey === item.key;
+              const Icon = item.icon;
               return (
                 <Link
                   key={item.key}
                   href={item.href}
                   onClick={() => setOpen(false)}
-                  className={`relative block px-4 py-3 text-sm font-medium ${
+                  className={`relative flex items-center gap-3 px-4 py-3 text-sm font-medium ${
                     isActive
                       ? "bg-slate-100 text-slate-900"
                       : "text-slate-700 hover:bg-slate-50"
@@ -53,6 +54,13 @@ export function ToolboxMobileNav({ currentPath }: Props) {
                       className="absolute left-3 top-1/2 h-6 w-2 -translate-y-1/2 rounded-full bg-emerald-500 shadow-[0_0_0_6px_rgba(16,185,129,0.15)]"
                     />
                   )}
+                  <Icon 
+                    size={18} 
+                    className={isActive ? "text-slate-900" : "text-slate-700"} 
+                    fill={item.filled ? (item.fillColor || "currentColor") : "none"}
+                    strokeWidth={item.filled ? 1.5 : 2}
+                    stroke={item.filled ? (item.fillColor || "currentColor") : "currentColor"}
+                  />
                   {item.label}
                 </Link>
               );
