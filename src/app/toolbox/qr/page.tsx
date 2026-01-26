@@ -91,6 +91,31 @@ export default function QRPage() {
   const lastScannedRef = useRef<Map<string, number>>(new Map()); // Track last scan time for each QR code
   const SCAN_DEBOUNCE_MS = 2000; // 2 seconds between scans of the same QR code
 
+  // Function to play beep sound on successful scan
+  function playBeep() {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // Configure beep sound (800Hz frequency, 0.1 second duration)
+      oscillator.frequency.value = 800;
+      oscillator.type = "sine";
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+    } catch (err) {
+      // Silently fail if audio context is not available (e.g., user hasn't interacted with page)
+      console.debug("Could not play beep sound:", err);
+    }
+  }
+
   useEffect(() => {
     // Cleanup scanner on unmount
     return () => {
@@ -648,6 +673,8 @@ export default function QRPage() {
 
         setScannedRolls((prev) => [...prev, scannedRoll]);
         setError(null); // Clear any previous errors on successful scan
+        // Play beep sound on successful scan
+        playBeep();
         // Show brief success feedback
         setSuccess(`✓ Scanned: ${baseRoll.roll_no || qrCode} (Base Fabric)`);
         setTimeout(() => setSuccess(null), 2000); // Clear after 2 seconds
@@ -735,6 +762,8 @@ export default function QRPage() {
 
         setScannedRolls((prev) => [...prev, scannedRoll]);
         setError(null); // Clear any previous errors on successful scan
+        // Play beep sound on successful scan
+        playBeep();
         // Show brief success feedback
         setSuccess(`✓ Scanned: ${finishedRoll.roll_no || qrCode} (Finished Fabric)`);
         setTimeout(() => setSuccess(null), 2000); // Clear after 2 seconds
