@@ -383,23 +383,37 @@ export default function FinishedFabricStockPage() {
   return (
     <div className="grid gap-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold text-slate-900">Finished Fabric Stock</h1>
-          <p className="mt-1 text-slate-600">
-            View available rolls and access QR codes. History shows dispatched rolls.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="primary" onClick={generatePDF} disabled={isGenerating || isLoading}>
-            {isGenerating ? "Generating..." : "Print Report"}
-          </Button>
+      <div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold text-slate-900">Finished Fabric Stock</h1>
+            <p className="mt-1 text-slate-600">
+              View available rolls and access QR codes. History shows dispatched rolls.
+            </p>
+          </div>
           <Link
             href="/toolbox/stock"
             className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
           >
             ← Back to Stock Control
           </Link>
+        </div>
+        
+        {/* Action Buttons */}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Link href="/toolbox/finished-fabric/store">
+            <Button variant="primary" className="text-sm">
+              Store Management
+            </Button>
+          </Link>
+          <Button 
+            variant="secondary" 
+            onClick={generatePDF} 
+            disabled={isGenerating || isLoading}
+            className="text-sm"
+          >
+            {isGenerating ? "Generating..." : "Print Report"}
+          </Button>
         </div>
       </div>
 

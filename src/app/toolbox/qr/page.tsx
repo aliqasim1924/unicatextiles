@@ -79,6 +79,7 @@ export default function QRPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [slipPopup, setSlipPopup] = useState<SlipPopupData | null>(null);
+  const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
   
   // Customer order selection state
   const [customerOrders, setCustomerOrders] = useState<CustomerOrder[]>([]);
@@ -89,7 +90,7 @@ export default function QRPage() {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scanAreaRef = useRef<HTMLDivElement>(null);
   const lastScannedRef = useRef<Map<string, number>>(new Map()); // Track last scan time for each QR code
-  const SCAN_DEBOUNCE_MS = 2000; // 2 seconds between scans of the same QR code
+  const SCAN_DEBOUNCE_MS = 3000; // 3 seconds between scans of the same QR code (increased from 2 seconds)
 
   // Function to play beep sound on successful scan
   function playBeep() {
@@ -578,7 +579,11 @@ export default function QRPage() {
     
     // Prevent duplicate scans in the scanned rolls list
     if (scannedRolls.some((r) => r.qr_code === qrCode || r.roll_no === qrCode)) {
-      setError(`Roll ${qrCode} has already been scanned.`);
+      // Show temporary message instead of error
+      const duplicateRoll = scannedRolls.find((r) => r.qr_code === qrCode || r.roll_no === qrCode);
+      const rollIdentifier = duplicateRoll?.roll_no || qrCode;
+      setDuplicateMessage(`Roll ${rollIdentifier} was already scanned`);
+      setTimeout(() => setDuplicateMessage(null), 1000); // Clear after 1 second
       return;
     }
 
@@ -1386,6 +1391,12 @@ export default function QRPage() {
           {success && (
             <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3">
               <p className="text-xs sm:text-sm text-green-800 break-words">{success}</p>
+            </div>
+          )}
+
+          {duplicateMessage && (
+            <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+              <p className="text-xs sm:text-sm text-yellow-800 break-words">{duplicateMessage}</p>
             </div>
           )}
         </motion.section>
