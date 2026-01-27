@@ -31,6 +31,7 @@ export default function BaseFabricItemsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchItems();
@@ -77,6 +78,34 @@ export default function BaseFabricItemsPage() {
   function resetForm() {
     setForm(defaultForm);
     setIsEditing(false);
+  }
+
+  async function handleDelete(id: string, name: string) {
+    if (!id) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete "${name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setSuccess(null);
+    setDeletingId(id);
+    try {
+      const { error: deleteError } = await supabaseBrowserClient
+        .from("base_fabric_items")
+        .delete()
+        .eq("id", id);
+      if (deleteError) throw deleteError;
+      setSuccess("Item deleted.");
+      await fetchItems();
+      if (form.id === id) {
+        resetForm();
+      }
+    } catch (err: any) {
+      setError(err.message || "Delete failed.");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -278,12 +307,21 @@ export default function BaseFabricItemsPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-600">{item.is_active ? "Yes" : "No"}</td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => startEdit(item)}
-                        className="text-sm font-semibold text-teal-700 hover:text-teal-800"
-                      >
-                        Edit
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => startEdit(item)}
+                          className="text-sm font-semibold text-teal-700 hover:text-teal-800"
+                        >
+                          Edit
+                        </button>
+                          <button
+                            onClick={() => handleDelete(item.id, item.name)}
+                            className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-60"
+                            disabled={deletingId === item.id || isSubmitting}
+                          >
+                            {deletingId === item.id ? "Deleting..." : "Delete"}
+                          </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

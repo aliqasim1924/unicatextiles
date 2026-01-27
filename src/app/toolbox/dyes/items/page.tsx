@@ -35,6 +35,7 @@ export default function DyeItemsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     fetchItems();
@@ -97,6 +98,36 @@ export default function DyeItemsPage() {
   function resetForm() {
     setForm(defaultForm);
     setIsEditing(false);
+  }
+
+  async function handleDelete(id: string, name: string) {
+    if (!id) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete "${name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setSuccess(null);
+    setIsDeleting(id);
+    try {
+      const { error: deleteError } = await supabaseBrowserClient
+        .from("dye_items")
+        .delete()
+        .eq("id", id);
+      if (deleteError) throw deleteError;
+      setSuccess("Item deleted.");
+      // Refresh list
+      fetchItems();
+      // If we were editing this item, reset the form
+      if (form.id === id) {
+        resetForm();
+      }
+    } catch (err: any) {
+      setError(err.message || "Delete failed.");
+    } finally {
+      setIsDeleting(null);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -301,12 +332,19 @@ export default function DyeItemsPage() {
                     <td className="px-4 py-3 text-slate-600">{item.suppliers?.name || "-"}</td>
                     <td className="px-4 py-3 text-slate-600">{item.uom}</td>
                     <td className="px-4 py-3 text-slate-600">{item.is_active ? "Yes" : "No"}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 space-x-3">
                       <button
                         onClick={() => startEdit(item)}
                         className="text-sm font-semibold text-teal-700 hover:text-teal-800"
                       >
                         Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id, item.name)}
+                        className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-60"
+                        disabled={isDeleting === item.id || isSubmitting}
+                      >
+                        {isDeleting === item.id ? "Deleting..." : "Delete"}
                       </button>
                     </td>
                   </tr>

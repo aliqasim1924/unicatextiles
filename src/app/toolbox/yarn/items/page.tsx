@@ -39,6 +39,7 @@ export default function YarnItemsPage() {
   const [supplierId, setSupplierId] = useState("");
   const [uom, setUom] = useState("kg");
   const [isActive, setIsActive] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchYarnItems();
@@ -67,6 +68,32 @@ export default function YarnItemsPage() {
       console.error("Error fetching yarn items:", err);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleDelete(id: string, name: string) {
+    if (!id) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete "${name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setDeletingId(id);
+
+    try {
+      const { error } = await supabaseBrowserClient.from("yarn_items").delete().eq("id", id);
+      if (error) throw error;
+      setSuccessMessage("Yarn item deleted successfully!");
+      await fetchYarnItems();
+      if (editingItem && editingItem.id === id) {
+        resetForm();
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to delete yarn item. Please try again.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -377,12 +404,21 @@ export default function YarnItemsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => startEdit(item)}
-                        className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-                      >
-                        Edit
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => startEdit(item)}
+                          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id, item.name)}
+                          className="text-sm font-semibold text-red-600 hover:text-red-700 transition disabled:opacity-60"
+                          disabled={deletingId === item.id || isSubmitting}
+                        >
+                          {deletingId === item.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
