@@ -456,12 +456,18 @@ export default function BaseFabricStockPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            href="/toolbox/base-fabric/stocktake"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            Month-end Stocktake
+          </Link>
           <Button variant="primary" onClick={generatePDF} disabled={isGenerating || isLoading}>
             {isGenerating ? "Generating..." : "Print Report"}
           </Button>
           <Link
             href="/toolbox/stock"
-            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+            className="text-sm font-semibold text-slate-700 hover:text-slate-900 transition"
           >
             ← Back to Stock Control
           </Link>
