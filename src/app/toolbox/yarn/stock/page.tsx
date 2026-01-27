@@ -347,7 +347,17 @@ export default function YarnStockPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="primary" onClick={generatePDF} disabled={isGenerating || isLoading}>
+          <Link
+            href="/toolbox/yarn/stocktake"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            Month-end Stocktake
+          </Link>
+          <Button
+            variant="primary"
+            onClick={generatePDF}
+            disabled={isGenerating || isLoading}
+          >
             {isGenerating ? "Generating..." : "Print Report"}
           </Button>
           <Link

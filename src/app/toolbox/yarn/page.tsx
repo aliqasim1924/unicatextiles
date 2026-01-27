@@ -20,6 +20,11 @@ const actions = [
     description: "View current stock levels for all yarn items",
     href: "/toolbox/yarn/stock",
   },
+  {
+    title: "Month-end Stocktake",
+    description: "Run and review formal yarn stocktake sessions",
+    href: "/toolbox/yarn/stocktake",
+  },
 ];
 
 export default function YarnPage() {

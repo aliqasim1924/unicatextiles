@@ -20,6 +20,11 @@ const actions = [
     description: "Check current stock balances",
     href: "/toolbox/dyes/stock",
   },
+  {
+    title: "Month-end Stocktake",
+    description: "Run and review formal stocktake sessions",
+    href: "/toolbox/dyes/stocktake",
+  },
 ];
 
 export default function DyesDashboardPage() {

@@ -46,15 +46,27 @@ export default async function DyesStockPage() {
     <div className="grid gap-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-semibold text-slate-900">Dyes &amp; Chemicals Stock</h1>
-          <p className="mt-1 text-slate-600">Current stock levels for dyes &amp; chemicals.</p>
+          <h1 className="text-3xl font-semibold text-slate-900">
+            Dyes &amp; Chemicals Stock
+          </h1>
+          <p className="mt-1 text-slate-600">
+            Current stock levels for dyes &amp; chemicals.
+          </p>
         </div>
-        <Link
-          href="/toolbox/dyes"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-        >
-          ← Back to Dyes &amp; Chemicals
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/toolbox/dyes/stocktake"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            Month-end Stocktake
+          </Link>
+          <Link
+            href="/toolbox/dyes"
+            className="text-sm font-semibold text-slate-700 hover:text-slate-900 transition"
+          >
+            ← Back to Dyes &amp; Chemicals
+          </Link>
+        </div>
       </div>
 
       <StockClient initialStock={processed} />
