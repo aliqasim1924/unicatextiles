@@ -638,7 +638,7 @@ export default function YarnStocktakeDetailPage() {
               variant="primary"
               onClick={postAdjustments}
               disabled={
-                isPosting || isLoading || (session && session.status === "posted")
+                isPosting || isLoading || session?.status === "posted"
               }
             >
               {session && session.status === "posted"

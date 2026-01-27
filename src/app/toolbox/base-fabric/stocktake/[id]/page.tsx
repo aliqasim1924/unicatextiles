@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/Button";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+const LOCATION_WEAVING = "WEAVING";
+const STATUS_AVAILABLE = "AVAILABLE";
+
 interface Session {
   id: string;
   name: string;
@@ -21,33 +24,41 @@ interface Session {
 
 interface Line {
   id: string;
-  dye_item_id: string;
+  base_fabric_roll_id: string;
   system_qty: number;
   counted_qty: number | null;
   variance_qty: number | null;
   reason: string | null;
   note: string | null;
-  dye_items?: {
-    name: string;
-    type: string | null;
-    code: string | null;
-    uom: string;
+  base_fabric_rolls?: {
+    roll_no: string | null;
+    qr_code: string | null;
+    length_m: number;
+    base_fabric_orders?: {
+      order_no: string | null;
+      loom_no: number | null;
+      base_fabric_items?: {
+        name: string | null;
+      } | null;
+    } | null;
   } | null;
 }
 
-interface StockRow {
-  dye_item_id: string;
-  stock_qty: number;
-  dye_items: {
-    id: string;
-    name: string;
-    type: string | null;
-    code: string | null;
-    uom: string;
-  };
+interface RollRow {
+  id: string;
+  roll_no: string | null;
+  qr_code: string | null;
+  length_m: number;
+  base_fabric_orders?: {
+    order_no: string | null;
+    loom_no: number | null;
+    base_fabric_items?: {
+      name: string | null;
+    } | null;
+  } | null;
 }
 
-export default function DyesStocktakeDetailPage() {
+export default function BaseFabricStocktakeDetailPage() {
   const params = useParams();
   const router = useRouter();
   const sessionId = params?.id as string;
@@ -75,28 +86,32 @@ export default function DyesStocktakeDetailPage() {
         { data: linesData, error: linesError },
       ] = await Promise.all([
         supabaseBrowserClient
-          .from("dye_stocktake_sessions")
-          .select(
-            "id, name, stocktake_date, performed_by, status, created_at, notes",
-          )
+          .from("base_fabric_stocktake_sessions")
+          .select("id, name, stocktake_date, performed_by, status, created_at, notes")
           .eq("id", sessionId)
           .single(),
         supabaseBrowserClient
-          .from("dye_stocktake_lines")
+          .from("base_fabric_stocktake_lines")
           .select(
             `
               id,
-              dye_item_id,
+              base_fabric_roll_id,
               system_qty,
               counted_qty,
               variance_qty,
               reason,
               note,
-              dye_items:dye_item_id (
-                name,
-                type,
-                code,
-                uom
+              base_fabric_rolls:base_fabric_roll_id (
+                roll_no,
+                qr_code,
+                length_m,
+                base_fabric_orders:base_fabric_order_id (
+                  order_no,
+                  loom_no,
+                  base_fabric_items:base_fabric_item_id (
+                    name
+                  )
+                )
               )
             `,
           )
@@ -108,15 +123,38 @@ export default function DyesStocktakeDetailPage() {
       if (linesError) throw linesError;
 
       setSession(sessionData as Session);
-      const processed = (linesData as any[])?.map((row) => ({
-        ...row,
-        dye_items: Array.isArray(row.dye_items)
-          ? row.dye_items[0]
-          : row.dye_items,
-      })) as Line[];
+      const processed = (linesData as any[])?.map((row) => {
+        const roll = Array.isArray(row.base_fabric_rolls)
+          ? row.base_fabric_rolls[0]
+          : row.base_fabric_rolls;
+        const order = roll?.base_fabric_orders
+          ? Array.isArray(roll.base_fabric_orders)
+            ? roll.base_fabric_orders[0]
+            : roll.base_fabric_orders
+          : null;
+        const item = order?.base_fabric_items
+          ? Array.isArray(order.base_fabric_items)
+            ? order.base_fabric_items[0]
+            : order.base_fabric_items
+          : null;
+
+        return {
+          ...row,
+          base_fabric_rolls: roll
+            ? {
+                ...roll,
+                base_fabric_orders: order
+                  ? {
+                      ...order,
+                      base_fabric_items: item,
+                    }
+                  : null,
+              }
+            : null,
+        };
+      }) as Line[];
       setLines(processed || []);
 
-      // If no lines yet, offer to generate from current stock
       if (!linesData || (linesData as any[]).length === 0) {
         await generateLinesFromCurrentStock(sessionData as Session);
       }
@@ -131,66 +169,93 @@ export default function DyesStocktakeDetailPage() {
   async function generateLinesFromCurrentStock(currentSession: Session | null) {
     try {
       const { data: stockData, error: stockError } = await supabaseBrowserClient
-        .from("dye_stock")
-        .select(
-          `
-          dye_item_id,
-          stock_qty,
-          dye_items:dye_item_id (
-            id,
-            name,
-            type,
-            code,
-            uom
-          )
-        `,
-        );
-
-      if (stockError) throw stockError;
-
-      const stockRows: StockRow[] =
-        (stockData as any[])?.map((row) => ({
-          ...row,
-          dye_items: Array.isArray(row.dye_items)
-            ? row.dye_items[0]
-            : row.dye_items,
-        })) || [];
-
-      if (stockRows.length === 0) {
-        return;
-      }
-
-      const payload = stockRows.map((row) => ({
-        session_id: currentSession?.id || sessionId,
-        dye_item_id: row.dye_item_id,
-        system_qty: row.stock_qty,
-        counted_qty: row.stock_qty,
-        variance_qty: 0,
-      }));
-
-      // Use upsert with unique (session_id, dye_item_id) to avoid duplicates
-      const { error: upsertError } = await supabaseBrowserClient
-        .from("dye_stocktake_lines")
-        .upsert(payload, { onConflict: "session_id,dye_item_id" });
-      if (upsertError) throw upsertError;
-
-      // Reload lines
-      const { data: linesData, error: linesError } = await supabaseBrowserClient
-        .from("dye_stocktake_lines")
+        .from("base_fabric_rolls")
         .select(
           `
           id,
-          dye_item_id,
+          roll_no,
+          qr_code,
+          length_m,
+          base_fabric_orders:base_fabric_order_id (
+            order_no,
+            loom_no,
+            base_fabric_items:base_fabric_item_id (
+              name
+            )
+          )
+        `,
+        )
+        .eq("current_location", LOCATION_WEAVING)
+        .eq("status", STATUS_AVAILABLE)
+        .order("cut_at", { ascending: false });
+
+      if (stockError) throw stockError;
+
+      const rollRows: RollRow[] =
+        (stockData as any[])?.map((row) => {
+          const order = Array.isArray(row.base_fabric_orders)
+            ? row.base_fabric_orders[0]
+            : row.base_fabric_orders;
+          const item = order?.base_fabric_items
+            ? Array.isArray(order.base_fabric_items)
+              ? order.base_fabric_items[0]
+              : order.base_fabric_items
+            : null;
+
+          return {
+            id: row.id,
+            roll_no: row.roll_no,
+            qr_code: row.qr_code,
+            length_m: Number(row.length_m || 0),
+            base_fabric_orders: order
+              ? {
+                  order_no: order.order_no || null,
+                  loom_no: order.loom_no || null,
+                  base_fabric_items: item || null,
+                }
+              : null,
+          };
+        }) || [];
+
+      if (rollRows.length === 0) {
+        return;
+      }
+
+      const payload = rollRows.map((roll) => ({
+        session_id: currentSession?.id || sessionId,
+        base_fabric_roll_id: roll.id,
+        system_qty: roll.length_m,
+        counted_qty: roll.length_m,
+        variance_qty: 0,
+      }));
+
+      const { error: upsertError } = await supabaseBrowserClient
+        .from("base_fabric_stocktake_lines")
+        .upsert(payload, { onConflict: "session_id,base_fabric_roll_id" });
+      if (upsertError) throw upsertError;
+
+      const { data: linesData, error: linesError } = await supabaseBrowserClient
+        .from("base_fabric_stocktake_lines")
+        .select(
+          `
+          id,
+          base_fabric_roll_id,
           system_qty,
           counted_qty,
           variance_qty,
           reason,
           note,
-          dye_items:dye_item_id (
-            name,
-            type,
-            code,
-            uom
+          base_fabric_rolls:base_fabric_roll_id (
+            roll_no,
+            qr_code,
+            length_m,
+            base_fabric_orders:base_fabric_order_id (
+              order_no,
+              loom_no,
+              base_fabric_items:base_fabric_item_id (
+                name
+              )
+            )
           )
         `,
         )
@@ -199,12 +264,36 @@ export default function DyesStocktakeDetailPage() {
 
       if (linesError) throw linesError;
 
-      const processed = (linesData as any[])?.map((row) => ({
-        ...row,
-        dye_items: Array.isArray(row.dye_items)
-          ? row.dye_items[0]
-          : row.dye_items,
-      })) as Line[];
+      const processed = (linesData as any[])?.map((row) => {
+        const roll = Array.isArray(row.base_fabric_rolls)
+          ? row.base_fabric_rolls[0]
+          : row.base_fabric_rolls;
+        const order = roll?.base_fabric_orders
+          ? Array.isArray(roll.base_fabric_orders)
+            ? roll.base_fabric_orders[0]
+            : roll.base_fabric_orders
+          : null;
+        const item = order?.base_fabric_items
+          ? Array.isArray(order.base_fabric_items)
+            ? order.base_fabric_items[0]
+            : order.base_fabric_items
+          : null;
+
+        return {
+          ...row,
+          base_fabric_rolls: roll
+            ? {
+                ...roll,
+                base_fabric_orders: order
+                  ? {
+                      ...order,
+                      base_fabric_items: item,
+                    }
+                  : null,
+              }
+            : null,
+        };
+      }) as Line[];
       setLines(processed || []);
     } catch (err: any) {
       console.error("Failed to generate stocktake lines", err);
@@ -247,7 +336,7 @@ export default function DyesStocktakeDetailPage() {
       const updates = lines.map((line) => ({
         id: line.id,
         session_id: session?.id || sessionId,
-        dye_item_id: line.dye_item_id,
+        base_fabric_roll_id: line.base_fabric_roll_id,
         system_qty: line.system_qty,
         counted_qty: line.counted_qty,
         variance_qty:
@@ -259,7 +348,7 @@ export default function DyesStocktakeDetailPage() {
       }));
 
       const { error: updateError } = await supabaseBrowserClient
-        .from("dye_stocktake_lines")
+        .from("base_fabric_stocktake_lines")
         .upsert(updates);
       if (updateError) throw updateError;
 
@@ -285,7 +374,7 @@ export default function DyesStocktakeDetailPage() {
     }
 
     const confirm = window.confirm(
-      "Posting will create stock adjustment transactions and lock this stocktake. Continue?",
+      "Posting will mark missing rolls and update roll statuses. Continue?",
     );
     if (!confirm) return;
 
@@ -298,44 +387,60 @@ export default function DyesStocktakeDetailPage() {
         data: { user },
       } = await supabaseBrowserClient.auth.getUser();
 
-      const adjustments = lines
+      // For base fabric rolls, we handle variances differently:
+      // - If counted_qty < system_qty (or 0), mark roll as missing/lost
+      // - If counted_qty > system_qty, it's an extra roll found (less common)
+      const rollUpdates: Array<{
+        id: string;
+        status?: string;
+        current_location?: string;
+        notes?: string;
+      }> = [];
+
+      lines
         .filter((line) => (line.variance_qty ?? 0) !== 0)
-        .map((line) => {
+        .forEach((line) => {
           const variance = line.variance_qty ?? 0;
-          const isGain = variance > 0;
-          const qty = Math.abs(variance);
           const reasonText = line.reason || "";
-          const baseNotes = `Stocktake ${session.name} (${session.stocktake_date})`;
+          const baseNotes = `Base fabric stocktake ${session.name} (${session.stocktake_date})`;
           const fullNotes = reasonText
             ? `${baseNotes} - Reason: ${reasonText}`
             : baseNotes;
 
-          return {
-            dye_item_id: line.dye_item_id,
-            transaction_type: isGain ? "RECEIPT" : "ISSUE",
-            quantity: qty,
-            uom: line.dye_items?.uom || "kg",
-            source: isGain ? "STOCKTAKE ADJUSTMENT" : "STORE",
-            destination: isGain ? "STORE" : "STOCKTAKE ADJUSTMENT",
-            batch_no: null,
-            notes: fullNotes,
-            created_by: user?.id || null,
-          };
+          // If counted is 0 or significantly less, mark as missing/lost
+          if (line.counted_qty === 0 || (line.counted_qty ?? 0) < line.system_qty * 0.5) {
+            rollUpdates.push({
+              id: line.base_fabric_roll_id,
+              status: "LOST",
+              current_location: "UNKNOWN",
+              notes: fullNotes,
+            });
+          }
+          // If counted is more than system, it's an extra roll (shouldn't happen often)
+          // Could update length if it's a measurement difference
+          else if (variance > 0) {
+            // For now, just update the length if there's a variance
+            rollUpdates.push({
+              id: line.base_fabric_roll_id,
+              notes: fullNotes,
+            });
+          }
         });
 
-      if (adjustments.length === 0) {
-        setError("There are no variances to post.");
-        setIsPosting(false);
-        return;
+      // Update rolls
+      for (const update of rollUpdates) {
+        const { id, ...updateData } = update;
+        const { error: updateError } = await supabaseBrowserClient
+          .from("base_fabric_rolls")
+          .update(updateData)
+          .eq("id", id);
+        if (updateError) {
+          console.error(`Failed to update roll ${id}:`, updateError);
+        }
       }
 
-      const { error: txnError } = await supabaseBrowserClient
-        .from("dye_transactions")
-        .insert(adjustments);
-      if (txnError) throw txnError;
-
       const { error: statusError } = await supabaseBrowserClient
-        .from("dye_stocktake_sessions")
+        .from("base_fabric_stocktake_sessions")
         .update({ status: "posted" })
         .eq("id", session.id);
       if (statusError) throw statusError;
@@ -365,11 +470,11 @@ export default function DyesStocktakeDetailPage() {
       const marginLeft = 15;
       const marginRight = 15;
       const marginTop = 15;
-      const marginBottom = 25; // extra space for signatures
+      const marginBottom = 25;
 
-      const templateName = "Dyes & Chemicals Stocktake Report";
+      const templateName = "Base Fabric Stocktake Report";
 
-      // Try to load company logo for header
+      // Try to load company logo
       let logoLoaded = false;
       const logoMaxWidth = 40;
       let headerTopOffset = marginTop;
@@ -392,7 +497,7 @@ export default function DyesStocktakeDetailPage() {
                 logoLoaded = true;
                 headerTopOffset = y + logoHeight + 4;
               } catch {
-                // ignore draw error
+                // ignore draw errors
               }
               resolve();
             };
@@ -401,7 +506,7 @@ export default function DyesStocktakeDetailPage() {
           new Promise<void>((resolve) => setTimeout(resolve, 1000)),
         ]);
       } catch {
-        // ignore logo load issues
+        // ignore logo load failures
       }
 
       const addHeader = () => {
@@ -410,7 +515,6 @@ export default function DyesStocktakeDetailPage() {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(13);
         if (!logoLoaded) {
-          // Only show company name text if no logo image
           doc.text("UNICA TEXTILES", pageWidth / 2, y, { align: "center" });
           y += 6;
         }
@@ -489,21 +593,37 @@ export default function DyesStocktakeDetailPage() {
 
       addHeader();
 
-      const body = lines.map((line) => [
-        line.dye_items?.name || "N/A",
-        line.dye_items?.code || "-",
-        (line.system_qty ?? 0).toFixed(3),
-        (line.counted_qty ?? 0).toFixed(3),
-        (line.variance_qty ?? 0).toFixed(3),
-        line.reason || "-",
-      ]);
+      const body = lines.map((line) => {
+        const roll = line.base_fabric_rolls;
+        const order = roll?.base_fabric_orders;
+        const fabric = order?.base_fabric_items?.name || "-";
+        return [
+          roll?.roll_no || roll?.qr_code || "N/A",
+          fabric,
+          order?.order_no || "-",
+          order?.loom_no?.toString() || "-",
+          (line.system_qty ?? 0).toFixed(3),
+          (line.counted_qty ?? 0).toFixed(3),
+          (line.variance_qty ?? 0).toFixed(3),
+          line.reason || "-",
+        ];
+      });
 
       autoTable(doc, {
         head: [
-          ["Item", "Code", "System Qty", "Counted Qty", "Variance", "Reason"],
+          [
+            "Roll No",
+            "Fabric",
+            "Order No",
+            "Loom",
+            "System Length (m)",
+            "Counted Length (m)",
+            "Variance (m)",
+            "Reason",
+          ],
         ],
         body,
-        startY: session.notes ? marginTop + 40 : marginTop + 34,
+        startY: session.notes ? headerTopOffset + 30 : headerTopOffset + 24,
         margin: {
           left: marginLeft,
           right: marginRight,
@@ -517,9 +637,9 @@ export default function DyesStocktakeDetailPage() {
           fontStyle: "bold",
         },
         columnStyles: {
-          2: { halign: "right" },
-          3: { halign: "right" },
           4: { halign: "right" },
+          5: { halign: "right" },
+          6: { halign: "right" },
         },
         didDrawPage: (data: any) => {
           addHeader();
@@ -528,9 +648,9 @@ export default function DyesStocktakeDetailPage() {
       });
 
       doc.save(
-        `dyes-stocktake-${session.stocktake_date}-${
-          new Date().toISOString().split("T")[0]
-        }.pdf`,
+        `base-fabric-stocktake-${session.stocktake_date}-${new Date()
+          .toISOString()
+          .split("T")[0]}.pdf`,
       );
     } catch (err: any) {
       console.error("Failed to generate PDF", err);
@@ -553,7 +673,7 @@ export default function DyesStocktakeDetailPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">
-            Dyes &amp; Chemicals Stocktake
+            Base Fabric Stocktake
           </h1>
           {session && (
             <p className="mt-1 text-slate-600">
@@ -572,10 +692,10 @@ export default function DyesStocktakeDetailPage() {
           )}
         </div>
         <Link
-          href="/toolbox/dyes/stocktake"
+          href="/toolbox/base-fabric/stocktake"
           className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
         >
-          ← Back to Stocktakes
+          ← Back to Base Fabric Stocktakes
         </Link>
       </div>
 
@@ -601,7 +721,7 @@ export default function DyesStocktakeDetailPage() {
             <p>
               Variances:{" "}
               <span className="font-semibold">
-                {variances.totalCount} item(s)
+                {variances.totalCount} roll(s)
               </span>
             </p>
             {variances.hasMissingReasons && (
@@ -632,16 +752,14 @@ export default function DyesStocktakeDetailPage() {
               variant="primary"
               onClick={postAdjustments}
               disabled={
-                isPosting ||
-                isLoading ||
-                session?.status === "posted"
+                isPosting || isLoading || session?.status === "posted"
               }
             >
               {session && session.status === "posted"
                 ? "Already Posted"
                 : isPosting
-                  ? "Posting..."
-                  : "Post Adjustments"}
+                ? "Posting..."
+                : "Post Adjustments"}
             </Button>
           </div>
         </div>
@@ -650,7 +768,8 @@ export default function DyesStocktakeDetailPage() {
           <p className="text-sm text-slate-600">Loading stocktake...</p>
         ) : lines.length === 0 ? (
           <p className="text-sm text-slate-600">
-            No lines found for this stocktake.
+            No rolls found for this stocktake. Ensure there are rolls available
+            at WEAVING location with AVAILABLE status.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -658,19 +777,28 @@ export default function DyesStocktakeDetailPage() {
               <thead>
                 <tr className="border-b border-slate-200">
                   <th className="px-3 py-2 text-left font-semibold text-slate-900">
-                    Item
+                    Roll No
                   </th>
                   <th className="px-3 py-2 text-left font-semibold text-slate-900">
-                    Code
+                    QR Code
+                  </th>
+                  <th className="px-3 py-2 text-left font-semibold text-slate-900">
+                    Fabric
+                  </th>
+                  <th className="px-3 py-2 text-left font-semibold text-slate-900">
+                    Order No
+                  </th>
+                  <th className="px-3 py-2 text-left font-semibold text-slate-900">
+                    Loom
                   </th>
                   <th className="px-3 py-2 text-right font-semibold text-slate-900">
-                    System Qty
+                    System Length (m)
                   </th>
                   <th className="px-3 py-2 text-right font-semibold text-slate-900">
-                    Counted Qty
+                    Counted Length (m)
                   </th>
                   <th className="px-3 py-2 text-right font-semibold text-slate-900">
-                    Variance
+                    Variance (m)
                   </th>
                   <th className="px-3 py-2 text-left font-semibold text-slate-900">
                     Reason (required if variance)
@@ -682,6 +810,8 @@ export default function DyesStocktakeDetailPage() {
                   const variance = line.variance_qty ?? 0;
                   const hasVariance = variance !== 0;
                   const missingReason = hasVariance && !line.reason;
+                  const roll = line.base_fabric_rolls;
+                  const order = roll?.base_fabric_orders;
                   return (
                     <tr
                       key={line.id}
@@ -690,14 +820,22 @@ export default function DyesStocktakeDetailPage() {
                       }`}
                     >
                       <td className="px-3 py-2 font-medium text-slate-900">
-                        {line.dye_items?.name || "N/A"}
+                        {roll?.roll_no || "-"}
                       </td>
                       <td className="px-3 py-2 text-slate-600">
-                        {line.dye_items?.code || "-"}
+                        {roll?.qr_code || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">
+                        {order?.base_fabric_items?.name || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">
+                        {order?.order_no || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">
+                        {order?.loom_no ? `Loom ${order.loom_no}` : "-"}
                       </td>
                       <td className="px-3 py-2 text-right text-slate-700">
-                        {(line.system_qty ?? 0).toFixed(3)}{" "}
-                        {line.dye_items?.uom || "kg"}
+                        {(line.system_qty ?? 0).toFixed(3)} m
                       </td>
                       <td className="px-3 py-2">
                         <input
@@ -724,7 +862,7 @@ export default function DyesStocktakeDetailPage() {
                         />
                       </td>
                       <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                        {variance.toFixed(3)}
+                        {variance.toFixed(3)} m
                       </td>
                       <td className="px-3 py-2">
                         <input
@@ -734,9 +872,7 @@ export default function DyesStocktakeDetailPage() {
                             updateLineLocal(line.id, { reason: e.target.value })
                           }
                           className={`w-full rounded-lg border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent ${
-                            missingReason
-                              ? "border-red-400"
-                              : "border-slate-200"
+                            missingReason ? "border-red-400" : "border-slate-200"
                           }`}
                           placeholder={
                             hasVariance ? "Reason for variance" : "Optional"
