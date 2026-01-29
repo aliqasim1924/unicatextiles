@@ -278,7 +278,6 @@ export default function YarnStockPage() {
 
       const tableData = stockItems.map((item) => [
         item.yarn_items?.name || "N/A",
-        item.yarn_items?.material || "-",
         item.yarn_items?.denier ? `${item.yarn_items.denier}D` : "-",
         item.stock_qty.toFixed(3),
         (item.issued_qty ?? 0).toFixed(3),
@@ -291,7 +290,7 @@ export default function YarnStockPage() {
 
       const availableWidth = pageWidth - 2 * margin;
       autoTable(doc, {
-        head: [["Yarn Name", "Material", "Denier", "In Store", "Issued", "Consumed", "With Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
+        head: [["Yarn Name", "Denier", "In Store", "Issued", "Consumed", "With Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
@@ -305,12 +304,12 @@ export default function YarnStockPage() {
           fillColor: [249, 250, 251],
         },
         columnStyles: {
+          2: { halign: "right" },
           3: { halign: "right" },
           4: { halign: "right" },
           5: { halign: "right" },
-          6: { halign: "right" },
+          7: { halign: "right" },
           8: { halign: "right" },
-          9: { halign: "right" },
         },
         didDrawPage: function (data: any) {
           const currentPage = data.pageNumber || doc.internal.pages.length - 1;
