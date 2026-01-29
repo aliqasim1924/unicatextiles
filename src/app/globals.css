@@ -142,4 +142,25 @@ button {
     padding: 0 !important;
     background: #ffffff !important;
   }
+
+  /* Base Fabric Production Report: allow multi-page flow so Rolls section is not cut off */
+  .print-production-report .print-slip-container {
+    max-width: none;
+  }
+
+  .print-production-report .print-production-report-card {
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-inside: auto !important;
+    transform: none !important;
+  }
+
+  .print-production-report .print-production-report-card table {
+    page-break-inside: auto;
+  }
+
+  .print-production-report .print-production-report-card thead {
+    display: table-header-group;
+  }
 }

@@ -55,13 +55,14 @@ export default function BaseFabricPage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900">Setup &amp; Master Data</h3>
-            <p className="text-sm text-slate-600">Manage base fabric items and specs.</p>
-          </div>
+        <h3 className="text-lg font-semibold text-slate-900 mb-2">Setup &amp; Master Data</h3>
+        <p className="text-sm text-slate-600 mb-4">Manage base fabric items and weaving beams.</p>
+        <div className="flex flex-wrap gap-3">
           <Link href="/toolbox/base-fabric/items">
             <Button variant="secondary">Manage Base Fabric Items</Button>
+          </Link>
+          <Link href="/toolbox/base-fabric/beams">
+            <Button variant="secondary">Weaving Beams</Button>
           </Link>
         </div>
       </motion.section>

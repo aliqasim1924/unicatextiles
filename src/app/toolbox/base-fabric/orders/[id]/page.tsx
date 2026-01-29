@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
@@ -19,11 +19,43 @@ interface OrderDetail {
   actual_start_at: string | null;
   actual_completion_at: string | null;
   notes: string | null;
+  beam_weft_not_required?: boolean;
   base_fabric_items: {
     name: string;
     construction: string | null;
     gsm: number | null;
   };
+}
+
+interface IssuedYarnOption {
+  id: string;
+  name: string;
+}
+
+interface OrderBeamRow {
+  id: string;
+  base_fabric_order_id: string;
+  beam_id: string;
+  yarn_item_id: string;
+  weight_ready_kg: number;
+  weaving_beams: { beam_no: string; tare_weight_kg: number } | null;
+  yarn_items: { name: string } | null;
+}
+
+interface OrderWeftRow {
+  id: string;
+  base_fabric_order_id: string;
+  yarn_item_id: string;
+  cone_sequence: number | null;
+  kg_start: number;
+  kg_end: number | null;
+  yarn_items: { name: string } | null;
+}
+
+interface BeamOption {
+  id: string;
+  beam_no: string;
+  tare_weight_kg: number;
 }
 
 interface Roll {
@@ -72,6 +104,14 @@ export default function BaseFabricOrderDetailPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [orderBeams, setOrderBeams] = useState<OrderBeamRow[]>([]);
+  const [orderWeft, setOrderWeft] = useState<OrderWeftRow[]>([]);
+  const [beams, setBeams] = useState<BeamOption[]>([]);
+  const [beamForm, setBeamForm] = useState({ beam_id: "", yarn_item_id: "", weight_ready_kg: "" });
+  const [weftForm, setWeftForm] = useState({ yarn_item_id: "", cone_sequence: "", kg_start: "", kg_end: "" });
+  const [weftKgEndEdit, setWeftKgEndEdit] = useState<{ id: string; value: string } | null>(null);
+  const [beamFormError, setBeamFormError] = useState<string | null>(null);
+  const [weftFormError, setWeftFormError] = useState<string | null>(null);
 
   useEffect(() => {
     if (orderId) {
@@ -97,6 +137,7 @@ export default function BaseFabricOrderDetailPage() {
           actual_start_at,
           actual_completion_at,
           notes,
+          beam_weft_not_required,
           base_fabric_items:base_fabric_item_id ( name, construction, gsm )
         `
         )
@@ -151,6 +192,62 @@ export default function BaseFabricOrderDetailPage() {
           ...row,
           yarn_items: Array.isArray(row.yarn_items) ? row.yarn_items[0] : row.yarn_items,
         })) as YarnIssue[]
+      );
+
+      // Beam loadings and weft for this order
+      const [beamsRes, orderBeamsRes, orderWeftRes] = await Promise.all([
+        supabaseBrowserClient
+          .from("weaving_beams")
+          .select("id, beam_no, tare_weight_kg")
+          .eq("is_active", true)
+          .order("beam_no", { ascending: true }),
+        supabaseBrowserClient
+          .from("base_fabric_order_beams")
+          .select(
+            `
+            id,
+            base_fabric_order_id,
+            beam_id,
+            yarn_item_id,
+            weight_ready_kg,
+            weaving_beams:beam_id ( beam_no, tare_weight_kg ),
+            yarn_items:yarn_item_id ( name )
+          `
+          )
+          .eq("base_fabric_order_id", orderId),
+        supabaseBrowserClient
+          .from("base_fabric_order_weft")
+          .select(
+            `
+            id,
+            base_fabric_order_id,
+            yarn_item_id,
+            cone_sequence,
+            kg_start,
+            kg_end,
+            yarn_items:yarn_item_id ( name )
+          `
+          )
+          .eq("base_fabric_order_id", orderId),
+      ]);
+
+      if (beamsRes.data) {
+        setBeams((beamsRes.data as BeamOption[]) || []);
+      }
+      const beamsData = orderBeamsRes.data as any[] | null;
+      setOrderBeams(
+        (beamsData || []).map((row) => ({
+          ...row,
+          weaving_beams: Array.isArray(row.weaving_beams) ? row.weaving_beams[0] : row.weaving_beams,
+          yarn_items: Array.isArray(row.yarn_items) ? row.yarn_items[0] : row.yarn_items,
+        })) as OrderBeamRow[]
+      );
+      const weftData = orderWeftRes.data as any[] | null;
+      setOrderWeft(
+        (weftData || []).map((row) => ({
+          ...row,
+          yarn_items: Array.isArray(row.yarn_items) ? row.yarn_items[0] : row.yarn_items,
+        })) as OrderWeftRow[]
       );
 
       // Fetch receipt/return pricing samples for weighted average per yarn item
@@ -242,6 +339,18 @@ export default function BaseFabricOrderDetailPage() {
   async function handleCompleteOrder() {
     if (!order) return;
 
+    // Require beam loading and weft usage for orders that are not grandfathered
+    if (!order.beam_weft_not_required) {
+      if (orderBeams.length < 1) {
+        setError("Record at least one beam loading before completing.");
+        return;
+      }
+      if (orderWeft.length < 1) {
+        setError("Record at least one weft entry (cone) before completing.");
+        return;
+      }
+    }
+
     const totalProduced = rolls.reduce((sum, r) => sum + r.length_m, 0);
     const variance = totalProduced - order.planned_qty_m;
     const varianceAbs = Math.abs(variance);
@@ -274,6 +383,200 @@ export default function BaseFabricOrderDetailPage() {
       setError(err.message || "Failed to complete order.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  const issuedYarnItems: IssuedYarnOption[] = useMemo(() => {
+    const seen = new Set<string>();
+    return yarnIssues
+      .filter((i) => {
+        if (seen.has(i.yarn_item_id)) return false;
+        seen.add(i.yarn_item_id);
+        return true;
+      })
+      .map((i) => ({ id: i.yarn_item_id, name: i.yarn_items?.name || "N/A" }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [yarnIssues]);
+
+  const issuedPerYarn: Map<string, number> = useMemo(() => {
+    const m = new Map<string, number>();
+    yarnIssues.forEach((i) => m.set(i.yarn_item_id, (m.get(i.yarn_item_id) || 0) + i.quantity));
+    return m;
+  }, [yarnIssues]);
+
+  const consumedPerYarnCurrent: Map<string, number> = useMemo(() => {
+    const m = new Map<string, number>();
+    orderBeams.forEach((row) => {
+      const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+      const kg = Number(row.weight_ready_kg) - Number(tare);
+      if (kg > 0) m.set(row.yarn_item_id, (m.get(row.yarn_item_id) || 0) + kg);
+    });
+    orderWeft.forEach((row) => {
+      if (row.kg_end != null) {
+        const kg = Number(row.kg_start) - Number(row.kg_end);
+        if (kg > 0) m.set(row.yarn_item_id, (m.get(row.yarn_item_id) || 0) + kg);
+      }
+    });
+    return m;
+  }, [orderBeams, orderWeft]);
+
+  async function handleAddBeamLoading(e: React.FormEvent) {
+    e.preventDefault();
+    setBeamFormError(null);
+    const beamId = beamForm.beam_id.trim();
+    const yarnItemId = beamForm.yarn_item_id.trim();
+    const weightReady = beamForm.weight_ready_kg ? parseFloat(beamForm.weight_ready_kg) : NaN;
+    if (!beamId || !yarnItemId) {
+      setBeamFormError("Select beam and yarn.");
+      return;
+    }
+    if (isNaN(weightReady) || weightReady < 0) {
+      setBeamFormError("Weight when ready (kg) must be a non-negative number.");
+      return;
+    }
+    const beam = beams.find((b) => b.id === beamId);
+    const tare = beam ? Number(beam.tare_weight_kg) : 0;
+    const newBeamConsumption = weightReady - tare;
+    if (newBeamConsumption > 0) {
+      const issued = issuedPerYarn.get(yarnItemId) ?? 0;
+      const currentConsumed = consumedPerYarnCurrent.get(yarnItemId) ?? 0;
+      const totalAfter = currentConsumed + newBeamConsumption;
+      if (totalAfter > issued) {
+        setBeamFormError(
+          `Consumed (beams + cones) cannot exceed issued for this yarn. Issued: ${issued.toFixed(3)} kg, already consumed: ${currentConsumed.toFixed(3)} kg, this beam would add ${newBeamConsumption.toFixed(3)} kg (total ${totalAfter.toFixed(3)} kg).`
+        );
+        return;
+      }
+    }
+    try {
+      const { error: err } = await supabaseBrowserClient
+        .from("base_fabric_order_beams")
+        .insert({
+          base_fabric_order_id: orderId,
+          beam_id: beamId,
+          yarn_item_id: yarnItemId,
+          weight_ready_kg: weightReady,
+        });
+      if (err) throw err;
+      setBeamForm({ beam_id: "", yarn_item_id: "", weight_ready_kg: "" });
+      fetchOrderData();
+    } catch (err: any) {
+      setBeamFormError(err.message || "Failed to add beam loading.");
+    }
+  }
+
+  async function handleRemoveBeamLoading(id: string) {
+    if (!window.confirm("Remove this beam loading entry?")) return;
+    try {
+      const { error } = await supabaseBrowserClient
+        .from("base_fabric_order_beams")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      fetchOrderData();
+    } catch (err: any) {
+      setError((err as Error).message || "Failed to remove.");
+    }
+  }
+
+  async function handleAddWeftEntry(e: React.FormEvent) {
+    e.preventDefault();
+    setWeftFormError(null);
+    const yarnItemId = weftForm.yarn_item_id.trim();
+    const kgStart = weftForm.kg_start ? parseFloat(weftForm.kg_start) : NaN;
+    const kgEndRaw = weftForm.kg_end ? parseFloat(weftForm.kg_end) : NaN;
+    const kgEnd = !weftForm.kg_end || weftForm.kg_end.trim() === "" ? null : (isNaN(kgEndRaw) ? null : kgEndRaw);
+    if (!yarnItemId) {
+      setWeftFormError("Select yarn.");
+      return;
+    }
+    if (isNaN(kgStart) || kgStart < 0) {
+      setWeftFormError("Kg start must be a non-negative number.");
+      return;
+    }
+    if (kgEnd !== null && (isNaN(kgEndRaw) || kgEndRaw < 0)) {
+      setWeftFormError("Kg end must be a non-negative number when provided.");
+      return;
+    }
+    const weftConsumption = kgEnd != null ? kgStart - kgEnd : 0;
+    if (weftConsumption > 0) {
+      const issued = issuedPerYarn.get(yarnItemId) ?? 0;
+      const currentConsumed = consumedPerYarnCurrent.get(yarnItemId) ?? 0;
+      const totalAfter = currentConsumed + weftConsumption;
+      if (totalAfter > issued) {
+        setWeftFormError(
+          `Consumed (beams + cones) cannot exceed issued for this yarn. Issued: ${issued.toFixed(3)} kg, already consumed: ${currentConsumed.toFixed(3)} kg, this cone would add ${weftConsumption.toFixed(3)} kg (total ${totalAfter.toFixed(3)} kg).`
+        );
+        return;
+      }
+    }
+    try {
+      const { error: err } = await supabaseBrowserClient
+        .from("base_fabric_order_weft")
+        .insert({
+          base_fabric_order_id: orderId,
+          yarn_item_id: yarnItemId,
+          cone_sequence: weftForm.cone_sequence ? parseInt(weftForm.cone_sequence, 10) : null,
+          kg_start: kgStart,
+          kg_end: kgEnd,
+        });
+      if (err) throw err;
+      setWeftForm({ yarn_item_id: "", cone_sequence: "", kg_start: "", kg_end: "" });
+      fetchOrderData();
+    } catch (err: any) {
+      setWeftFormError(err.message || "Failed to add weft entry.");
+    }
+  }
+
+  async function handleUpdateWeftKgEnd(id: string, kgEndStr: string) {
+    const kgEnd = kgEndStr.trim() === "" ? null : parseFloat(kgEndStr);
+    if (kgEnd !== null && (isNaN(kgEnd) || kgEnd < 0)) {
+      setWeftFormError("Kg end must be a non-negative number.");
+      return;
+    }
+    setWeftFormError(null);
+    const row = orderWeft.find((r) => r.id === id);
+    if (row) {
+      const newRowConsumption = row.kg_end != null
+        ? Number(row.kg_start) - (kgEnd ?? 0)
+        : (kgEnd != null ? Number(row.kg_start) - kgEnd : 0);
+      if (newRowConsumption > 0) {
+        const currentConsumed = consumedPerYarnCurrent.get(row.yarn_item_id) ?? 0;
+        const previousRowConsumption = row.kg_end != null ? Number(row.kg_start) - Number(row.kg_end) : 0;
+        const totalAfter = currentConsumed - previousRowConsumption + newRowConsumption;
+        const issued = issuedPerYarn.get(row.yarn_item_id) ?? 0;
+        if (totalAfter > issued) {
+          setWeftFormError(
+            `Consumed (beams + cones) cannot exceed issued for this yarn. Issued: ${issued.toFixed(3)} kg. Setting this kg end would bring total consumed to ${totalAfter.toFixed(3)} kg.`
+          );
+          return;
+        }
+      }
+    }
+    try {
+      const { error } = await supabaseBrowserClient
+        .from("base_fabric_order_weft")
+        .update({ kg_end: kgEnd })
+        .eq("id", id);
+      if (error) throw error;
+      setWeftKgEndEdit(null);
+      fetchOrderData();
+    } catch (err: any) {
+      setWeftFormError(err.message || "Failed to update kg end.");
+    }
+  }
+
+  async function handleRemoveWeftEntry(id: string) {
+    if (!window.confirm("Remove this weft entry?")) return;
+    try {
+      const { error } = await supabaseBrowserClient
+        .from("base_fabric_order_weft")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      fetchOrderData();
+    } catch (err: any) {
+      setError((err as Error).message || "Failed to remove.");
     }
   }
 
@@ -348,9 +651,36 @@ export default function BaseFabricOrderDetailPage() {
     };
   });
 
-  const totalYarnKg = issueCosts.reduce((sum, issue) => sum + issue.quantity, 0);
-  const totalYarnCostZar = issueCosts.reduce((sum, issue) => sum + issue.line_cost_zar, 0);
-  const yarnKgPerM = totalFabricM > 0 ? totalYarnKg / totalFabricM : null;
+  const totalIssuedKg = issueCosts.reduce((sum, issue) => sum + issue.quantity, 0);
+
+  // Consumed = beam (warp) + weft cones; used for cost and "yarn used" in production
+  const consumedByYarn = new Map<string, number>();
+  orderBeams.forEach((row) => {
+    const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+    const yarnKg = Number(row.weight_ready_kg) - Number(tare);
+    if (yarnKg > 0) {
+      const id = row.yarn_item_id;
+      consumedByYarn.set(id, (consumedByYarn.get(id) || 0) + yarnKg);
+    }
+  });
+  orderWeft.forEach((row) => {
+    if (row.kg_end != null) {
+      const yarnKg = Number(row.kg_start) - Number(row.kg_end);
+      if (yarnKg > 0) {
+        const id = row.yarn_item_id;
+        consumedByYarn.set(id, (consumedByYarn.get(id) || 0) + yarnKg);
+      }
+    }
+  });
+  const totalConsumedKg = Array.from(consumedByYarn.values()).reduce((s, k) => s + k, 0);
+  const withDepartmentKg = Math.max(0, totalIssuedKg - totalConsumedKg);
+
+  // Cost based on consumed yarn (not issued)
+  const totalYarnCostZar = Array.from(consumedByYarn.entries()).reduce((sum, [yarnItemId, kg]) => {
+    const avgPrice = avgUnitPriceByYarn.get(yarnItemId) || 0;
+    return sum + kg * avgPrice;
+  }, 0);
+  const yarnKgPerM = totalFabricM > 0 ? totalConsumedKg / totalFabricM : null;
   const yarnCostPerM = totalFabricM > 0 ? totalYarnCostZar / totalFabricM : null;
 
   return (
@@ -372,10 +702,10 @@ export default function BaseFabricOrderDetailPage() {
         </div>
       </div>
 
-      {/* Production Report (Print Layout) */}
-      <div className="print-page-shell print:min-h-0 hidden print:block">
+      {/* Production Report (Print Layout) - multi-page allowed */}
+      <div className="print-production-report print-page-shell print:min-h-0 hidden print:block">
         <div className="print-slip-container">
-          <div className="print-slip-card flex flex-col min-h-[100vh]">
+          <div className="print-slip-card print-production-report-card flex flex-col min-h-0">
             {/* Print Header */}
             <div className="print:flex print:justify-between print:items-start print:mb-6 print:pb-4 print:border-b print:border-slate-300">
               <div>
@@ -480,15 +810,21 @@ export default function BaseFabricOrderDetailPage() {
               </div>
             )}
 
-            {/* Print Cost Summary */}
+            {/* Print Cost Summary (consumed = beams + cones; cost based on consumed) */}
             <div className="print:mb-4 print:text-sm print:text-slate-900 print:space-y-2">
               <div className="print:font-semibold print:text-slate-900">
-                Production Cost (Yarn Only)
+                Production Cost (Yarn Only – based on consumed)
               </div>
               <div className="print:grid print:grid-cols-2 print:gap-3">
                 <div className="print:space-y-1">
                   <div className="print:text-slate-700">
-                    Total Yarn Used: {totalYarnKg.toFixed(3)} kg
+                    Yarn Issued: {totalIssuedKg.toFixed(3)} kg
+                  </div>
+                  <div className="print:text-slate-700">
+                    Yarn Consumed (beams + cones): {totalConsumedKg.toFixed(3)} kg
+                  </div>
+                  <div className="print:text-slate-700">
+                    With Department: {withDepartmentKg.toFixed(3)} kg
                   </div>
                   <div className="print:text-slate-700">
                     Total Yarn Cost: {totalYarnCostZar.toFixed(2)} ZAR
@@ -509,6 +845,91 @@ export default function BaseFabricOrderDetailPage() {
                 </div>
               </div>
             </div>
+
+            {/* Print Beam Loading (Warp) */}
+            {orderBeams.length > 0 && (
+              <div className="print:mb-4">
+                <h3 className="print:text-sm print:font-bold print:text-slate-900 print:mb-2">
+                  Beam Loading (Warp)
+                </h3>
+                <table className="print:w-full print:text-xs print:border print:border-slate-300">
+                  <thead>
+                    <tr className="print:bg-slate-100">
+                      <th className="print:px-2 print:py-2 print:text-left print:font-semibold print:text-slate-900 print:border print:border-slate-300">Beam no</th>
+                      <th className="print:px-2 print:py-2 print:text-left print:font-semibold print:text-slate-900 print:border print:border-slate-300">Yarn</th>
+                      <th className="print:px-2 print:py-2 print:text-right print:font-semibold print:text-slate-900 print:border print:border-slate-300">Tare (kg)</th>
+                      <th className="print:px-2 print:py-2 print:text-right print:font-semibold print:text-slate-900 print:border print:border-slate-300">Ready (kg)</th>
+                      <th className="print:px-2 print:py-2 print:text-right print:font-semibold print:text-slate-900 print:border print:border-slate-300">Yarn loaded (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderBeams.map((row) => {
+                      const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+                      const yarnLoaded = Number(row.weight_ready_kg) - Number(tare);
+                      return (
+                        <tr key={row.id}>
+                          <td className="print:px-2 print:py-2 print:text-slate-900 print:border print:border-slate-300">{row.weaving_beams?.beam_no ?? "—"}</td>
+                          <td className="print:px-2 print:py-2 print:text-slate-700 print:border print:border-slate-300">{row.yarn_items?.name ?? "—"}</td>
+                          <td className="print:px-2 print:py-2 print:text-right print:text-slate-900 print:border print:border-slate-300">{Number(tare).toFixed(3)}</td>
+                          <td className="print:px-2 print:py-2 print:text-right print:text-slate-900 print:border print:border-slate-300">{Number(row.weight_ready_kg).toFixed(3)}</td>
+                          <td className="print:px-2 print:py-2 print:text-right print:text-slate-900 print:border print:border-slate-300">{yarnLoaded.toFixed(3)}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="print:font-semibold">
+                      <td className="print:px-2 print:py-2 print:border print:border-slate-300" colSpan={4}>Total warp yarn (kg)</td>
+                      <td className="print:px-2 print:py-2 print:text-right print:border print:border-slate-300">
+                        {orderBeams.reduce((sum, row) => {
+                          const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+                          return sum + (Number(row.weight_ready_kg) - Number(tare));
+                        }, 0).toFixed(3)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Print Weft Usage */}
+            {orderWeft.length > 0 && (
+              <div className="print:mb-4">
+                <h3 className="print:text-sm print:font-bold print:text-slate-900 print:mb-2">
+                  Weft Usage (Cones)
+                </h3>
+                <table className="print:w-full print:text-xs print:border print:border-slate-300">
+                  <thead>
+                    <tr className="print:bg-slate-100">
+                      <th className="print:px-2 print:py-2 print:text-left print:font-semibold print:text-slate-900 print:border print:border-slate-300">Cone</th>
+                      <th className="print:px-2 print:py-2 print:text-left print:font-semibold print:text-slate-900 print:border print:border-slate-300">Yarn</th>
+                      <th className="print:px-2 print:py-2 print:text-right print:font-semibold print:text-slate-900 print:border print:border-slate-300">Kg start</th>
+                      <th className="print:px-2 print:py-2 print:text-right print:font-semibold print:text-slate-900 print:border print:border-slate-300">Kg end</th>
+                      <th className="print:px-2 print:py-2 print:text-right print:font-semibold print:text-slate-900 print:border print:border-slate-300">Consumption (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderWeft.map((row) => {
+                      const kgEnd = row.kg_end != null ? Number(row.kg_end) : null;
+                      const consumption = kgEnd != null ? Number(row.kg_start) - kgEnd : null;
+                      return (
+                        <tr key={row.id}>
+                          <td className="print:px-2 print:py-2 print:text-slate-900 print:border print:border-slate-300">{row.cone_sequence ?? "—"}</td>
+                          <td className="print:px-2 print:py-2 print:text-slate-700 print:border print:border-slate-300">{row.yarn_items?.name ?? "—"}</td>
+                          <td className="print:px-2 print:py-2 print:text-right print:text-slate-900 print:border print:border-slate-300">{Number(row.kg_start).toFixed(3)}</td>
+                          <td className="print:px-2 print:py-2 print:text-right print:text-slate-900 print:border print:border-slate-300">{kgEnd != null ? kgEnd.toFixed(3) : "—"}</td>
+                          <td className="print:px-2 print:py-2 print:text-right print:text-slate-900 print:border print:border-slate-300">{consumption != null ? consumption.toFixed(3) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="print:font-semibold">
+                      <td className="print:px-2 print:py-2 print:border print:border-slate-300" colSpan={4}>Total weft consumption (kg)</td>
+                      <td className="print:px-2 print:py-2 print:text-right print:border print:border-slate-300">
+                        {orderWeft.reduce((sum, row) => row.kg_end != null ? sum + (Number(row.kg_start) - Number(row.kg_end)) : sum, 0).toFixed(3)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Print Rolls Table */}
             {rolls.length > 0 && (
@@ -660,7 +1081,7 @@ export default function BaseFabricOrderDetailPage() {
         )}
       </motion.section>
 
-      {/* Yarn Consumption & Cost */}
+      {/* Yarn Consumption & Cost (consumed = beams + cones; cost based on consumed) */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -670,15 +1091,15 @@ export default function BaseFabricOrderDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-xl font-semibold text-slate-900">Yarn Consumption &amp; Cost</h2>
           <p className="text-sm text-slate-600">
-            Linked yarn issues recorded against this order
+            Consumed = beam (warp) + cone (weft). Cost is based on consumed yarn.
           </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-600">Total yarn used</p>
+            <p className="text-sm font-semibold text-slate-600">Yarn consumed (beams + cones)</p>
             <p className="mt-1 text-lg font-semibold text-slate-900">
-              {totalYarnKg.toFixed(3)} kg
+              {totalConsumedKg.toFixed(3)} kg
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -707,34 +1128,62 @@ export default function BaseFabricOrderDetailPage() {
           </div>
         </div>
 
-        {issueCosts.length > 0 ? (
+        {/* Issued vs Consumed */}
+        {totalIssuedKg > 0 || totalConsumedKg > 0 ? (
+          <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50/50 p-4">
+            <h3 className="text-sm font-semibold text-slate-900 mb-2">Issued vs Consumed</h3>
+            <div className="grid gap-3 sm:grid-cols-3 text-sm">
+              <div>
+                <span className="text-slate-600">Issued (to department):</span>{" "}
+                <span className="font-semibold text-slate-900">{totalIssuedKg.toFixed(3)} kg</span>
+              </div>
+              <div>
+                <span className="text-slate-600">Consumed (beams + cones):</span>{" "}
+                <span className="font-semibold text-slate-900">{totalConsumedKg.toFixed(3)} kg</span>
+              </div>
+              <div>
+                <span className="text-slate-600">With department (on cones/beams):</span>{" "}
+                <span className="font-semibold text-slate-900">{withDepartmentKg.toFixed(3)} kg</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {issueCosts.length > 0 || consumedByYarn.size > 0 ? (
           <div className="mt-6 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Yarn</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Issue Qty (kg)</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Avg Unit Price (ZAR/kg)</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Line Cost (ZAR)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Issued (kg)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Consumed (kg)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">With dept (kg)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Avg Price (ZAR/kg)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Cost (ZAR)</th>
                 </tr>
               </thead>
               <tbody>
-                {issueCosts.map((issue) => (
-                  <tr key={issue.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">
-                      {issue.yarn_items?.name || "N/A"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-900">
-                      {issue.quantity.toFixed(3)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-900">
-                      {issue.avg_price_zar ? issue.avg_price_zar.toFixed(2) : "0.00"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-900">
-                      {issue.line_cost_zar.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  const yarnIds = new Set([...issueCosts.map((i) => i.yarn_item_id), ...consumedByYarn.keys()]);
+                  return Array.from(yarnIds).map((yarnItemId) => {
+                    const issued = issueCosts.filter((i) => i.yarn_item_id === yarnItemId).reduce((s, i) => s + i.quantity, 0);
+                    const consumed = consumedByYarn.get(yarnItemId) || 0;
+                    const withDept = Math.max(0, issued - consumed);
+                    const avgPrice = avgUnitPriceByYarn.get(yarnItemId) || 0;
+                    const costZar = consumed * avgPrice;
+                    const name = issueCosts.find((i) => i.yarn_item_id === yarnItemId)?.yarn_items?.name || "—";
+                    return (
+                      <tr key={yarnItemId} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium text-slate-900">{name}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{issued.toFixed(3)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{consumed.toFixed(3)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{withDept.toFixed(3)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{avgPrice ? avgPrice.toFixed(2) : "0.00"}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{costZar.toFixed(2)}</td>
+                      </tr>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>
@@ -820,6 +1269,298 @@ export default function BaseFabricOrderDetailPage() {
         )}
       </motion.section>
 
+      {/* Beam loading (warp) – only issued yarn selectable */}
+      {(order.status === "PLANNED" || order.status === "RUNNING" || orderBeams.length > 0) && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.08 }}
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+        >
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Beam loading (warp)</h2>
+              <p className="text-sm text-slate-600">
+                Record beam number and weight when ready to weave. You can only consume yarn that was issued to this order (issued = in stock in department).
+              </p>
+            </div>
+          </div>
+          {issuedYarnItems.length === 0 ? (
+            <p className="text-sm text-amber-700">
+              No yarn has been issued to this order. Issue yarn first before recording beam loading.
+            </p>
+          ) : (
+            <>
+              <form onSubmit={handleAddBeamLoading} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(280px,1.2fr)_1fr_140px_auto]">
+                <div className="min-w-0">
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Beam</label>
+                  <select
+                    value={beamForm.beam_id}
+                    onChange={(e) => setBeamForm((p) => ({ ...p, beam_id: e.target.value }))}
+                    className="w-full min-w-[260px] rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  >
+                    <option value="">Select beam</option>
+                    {beams.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.beam_no} (tare {Number(b.tare_weight_kg).toFixed(2)} kg)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Yarn issued to order</label>
+                  <select
+                    value={beamForm.yarn_item_id}
+                    onChange={(e) => setBeamForm((p) => ({ ...p, yarn_item_id: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  >
+                    <option value="">Select yarn</option>
+                    {issuedYarnItems.map((y) => {
+                      const issued = issuedPerYarn.get(y.id) ?? 0;
+                      const consumed = consumedPerYarnCurrent.get(y.id) ?? 0;
+                      const available = Math.max(0, issued - consumed);
+                      return (
+                        <option key={y.id} value={y.id}>
+                          {y.name} — issued {issued.toFixed(1)} kg, {available.toFixed(1)} kg left to consume
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Weight (kg)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={beamForm.weight_ready_kg}
+                    onChange={(e) => setBeamForm((p) => ({ ...p, weight_ready_kg: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 120.5"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button type="submit" variant="primary">Add beam</Button>
+                </div>
+              </form>
+              {beamFormError && <p className="mb-2 text-sm text-red-600">{beamFormError}</p>}
+              {orderBeams.length === 0 ? (
+                <p className="text-sm text-slate-600">No beam loadings recorded yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200">
+                        <th className="px-4 py-3 text-left font-semibold text-slate-900">Beam no</th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-900">Yarn</th>
+                        <th className="px-4 py-3 text-right font-semibold text-slate-900">Tare (kg)</th>
+                        <th className="px-4 py-3 text-right font-semibold text-slate-900">Ready (kg)</th>
+                        <th className="px-4 py-3 text-right font-semibold text-slate-900">Yarn loaded (kg)</th>
+                        {(order.status === "PLANNED" || order.status === "RUNNING") && (
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderBeams.map((row) => {
+                        const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+                        const yarnLoaded = Number(row.weight_ready_kg) - Number(tare);
+                        return (
+                          <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
+                            <td className="px-4 py-3 font-medium text-slate-900">{row.weaving_beams?.beam_no ?? "—"}</td>
+                            <td className="px-4 py-3 text-slate-900">{row.yarn_items?.name ?? "—"}</td>
+                            <td className="px-4 py-3 text-right text-slate-900">{Number(tare).toFixed(3)}</td>
+                            <td className="px-4 py-3 text-right text-slate-900">{Number(row.weight_ready_kg).toFixed(3)}</td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-900">{yarnLoaded.toFixed(3)}</td>
+                            {(order.status === "PLANNED" || order.status === "RUNNING") && (
+                              <td className="px-4 py-3">
+                                <button type="button" onClick={() => handleRemoveBeamLoading(row.id)} className="text-sm font-semibold text-red-600 hover:text-red-700">Remove</button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {orderBeams.length > 0 && (
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  Total warp yarn (kg):{" "}
+                  {orderBeams.reduce((sum, row) => {
+                    const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+                    return sum + (Number(row.weight_ready_kg) - Number(tare));
+                  }, 0).toFixed(3)}
+                </p>
+              )}
+            </>
+          )}
+        </motion.section>
+      )}
+
+      {/* Weft usage (cones) – only issued yarn selectable */}
+      {(order.status === "PLANNED" || order.status === "RUNNING" || orderWeft.length > 0) && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.09 }}
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+        >
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Weft usage (cones)</h2>
+              <p className="text-sm text-slate-600">
+                Record cone kg start (and kg end when cone or production run finishes). You can only consume yarn that was issued to this order (issued = in stock in department).
+              </p>
+            </div>
+          </div>
+          {issuedYarnItems.length === 0 ? (
+            <p className="text-sm text-amber-700">
+              No yarn has been issued to this order. Issue yarn first before recording weft usage.
+            </p>
+          ) : (
+            <>
+              <form onSubmit={handleAddWeftEntry} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1.2fr)_90px_110px_110px_auto]">
+                <div className="min-w-0">
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Yarn (issued to order – consume only up to issued)</label>
+                  <select
+                    value={weftForm.yarn_item_id}
+                    onChange={(e) => setWeftForm((p) => ({ ...p, yarn_item_id: e.target.value }))}
+                    className="w-full min-w-[200px] rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  >
+                    <option value="">Select yarn</option>
+                    {issuedYarnItems.map((y) => {
+                      const issued = issuedPerYarn.get(y.id) ?? 0;
+                      const consumed = consumedPerYarnCurrent.get(y.id) ?? 0;
+                      const available = Math.max(0, issued - consumed);
+                      return (
+                        <option key={y.id} value={y.id}>
+                          {y.name} — issued {issued.toFixed(1)} kg, {available.toFixed(1)} kg left to consume
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Cone No</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={weftForm.cone_sequence}
+                    onChange={(e) => setWeftForm((p) => ({ ...p, cone_sequence: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="1, 2, 3..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Kg Start</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={weftForm.kg_start}
+                    onChange={(e) => setWeftForm((p) => ({ ...p, kg_start: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 5.2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Kg End</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={weftForm.kg_end}
+                    onChange={(e) => setWeftForm((p) => ({ ...p, kg_end: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 1.1 or leave blank"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button type="submit" variant="primary">Add weft entry</Button>
+                </div>
+              </form>
+              {weftFormError && <p className="mb-2 text-sm text-red-600">{weftFormError}</p>}
+              {orderWeft.length === 0 ? (
+                <p className="text-sm text-slate-600">No weft entries recorded yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200">
+                        <th className="px-4 py-3 text-left font-semibold text-slate-900">Cone</th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-900">Yarn</th>
+                        <th className="px-4 py-3 text-right font-semibold text-slate-900">Kg start</th>
+                        <th className="px-4 py-3 text-right font-semibold text-slate-900">Kg end</th>
+                        <th className="px-4 py-3 text-right font-semibold text-slate-900">Consumption (kg)</th>
+                        {(order.status === "PLANNED" || order.status === "RUNNING") && (
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderWeft.map((row) => {
+                        const kgEnd = row.kg_end != null ? Number(row.kg_end) : null;
+                        const consumption = kgEnd != null ? Number(row.kg_start) - kgEnd : null;
+                        const isEditingKgEnd = weftKgEndEdit?.id === row.id;
+                        return (
+                          <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
+                            <td className="px-4 py-3 text-slate-900">{row.cone_sequence ?? "—"}</td>
+                            <td className="px-4 py-3 font-medium text-slate-900">{row.yarn_items?.name ?? "—"}</td>
+                            <td className="px-4 py-3 text-right text-slate-900">{Number(row.kg_start).toFixed(3)}</td>
+                            <td className="px-4 py-3 text-right">
+                              {isEditingKgEnd ? (
+                                <span className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.001"
+                                    className="w-20 rounded border border-slate-200 px-2 py-1 text-sm"
+                                    value={weftKgEndEdit.value}
+                                    onChange={(e) => setWeftKgEndEdit((p) => p ? { ...p, value: e.target.value } : null)}
+                                    autoFocus
+                                  />
+                                  <button type="button" onClick={() => handleUpdateWeftKgEnd(row.id, weftKgEndEdit.value)} className="text-xs font-semibold text-teal-700">Save</button>
+                                  <button type="button" onClick={() => setWeftKgEndEdit(null)} className="text-xs text-slate-600">Cancel</button>
+                                </span>
+                              ) : kgEnd != null ? (
+                                <span className="text-slate-900">{kgEnd.toFixed(3)}</span>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-900">
+                              {consumption != null ? consumption.toFixed(3) : "—"}
+                            </td>
+                            {(order.status === "PLANNED" || order.status === "RUNNING") && (
+                              <td className="px-4 py-3">
+                                {row.kg_end == null && !isEditingKgEnd ? (
+                                  <button type="button" onClick={() => setWeftKgEndEdit({ id: row.id, value: "" })} className="text-sm font-semibold text-teal-700 hover:text-teal-800 mr-2">Set kg end</button>
+                                ) : null}
+                                <button type="button" onClick={() => handleRemoveWeftEntry(row.id)} className="text-sm font-semibold text-red-600 hover:text-red-700">Remove</button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {orderWeft.length > 0 && (
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  Total weft consumption (kg):{" "}
+                  {orderWeft.reduce((sum, row) => row.kg_end != null ? sum + (Number(row.kg_start) - Number(row.kg_end)) : sum, 0).toFixed(3)}
+                  {orderWeft.some((row) => row.kg_end == null) && (
+                    <span className="ml-1 text-slate-600 font-normal">(pending: fill kg end for remaining cones)</span>
+                  )}
+                </p>
+              )}
+            </>
+          )}
+        </motion.section>
+      )}
+
       {/* Status Actions */}
       {order.status === "PLANNED" && (
         <motion.section
@@ -843,7 +1584,13 @@ export default function BaseFabricOrderDetailPage() {
         >
           {rolls.length >= 1 ? (
             !showCompleteDialog ? (
-              <Button variant="primary" onClick={() => setShowCompleteDialog(true)}>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setError(null);
+                  setShowCompleteDialog(true);
+                }}
+              >
                 Complete Order
               </Button>
             ) : (
