@@ -174,15 +174,20 @@ export default function RollingReportPage() {
             display: flex !important;
             flex-direction: column !important;
             box-sizing: border-box;
-            max-height: 100vh;
-            overflow: hidden;
-            page-break-before: avoid;
-            page-break-after: avoid;
-            page-break-inside: avoid;
+            min-height: 0;
             box-shadow: none !important;
             border: none !important;
             transform-origin: top left;
             transform: scale(0.96);
+          }
+          .print-slip-card .rolling-report-table-wrap {
+            page-break-inside: auto;
+          }
+          .print-slip-card .rolling-report-table thead {
+            display: table-header-group;
+          }
+          .print-slip-card .rolling-report-table tr {
+            page-break-inside: avoid;
           }
           footer {
             margin-top: auto !important;
@@ -194,7 +199,7 @@ export default function RollingReportPage() {
       `}</style>
 
       <div className="mx-auto max-w-[900px] px-4 pb-8 print:p-0">
-        <div className="print-slip-card flex flex-col min-h-[100vh] rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4">
+        <div className="print-slip-card flex flex-col min-h-0 rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4">
           {/* Header */}
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
@@ -267,7 +272,7 @@ export default function RollingReportPage() {
           </div>
 
           {/* Finished Rolls Table */}
-          <div className="mb-6">
+          <div className="mb-6 rolling-report-table-wrap">
             <h3 className="mb-3 text-lg font-semibold text-slate-900">
               Finished Rolls (Rolling & Inspection)
             </h3>
@@ -275,7 +280,7 @@ export default function RollingReportPage() {
               <p className="text-sm text-slate-600">No finished rolls recorded yet.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+                <table className="min-w-full text-sm rolling-report-table">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50">
                       <Th>Roll No</Th>

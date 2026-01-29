@@ -304,6 +304,24 @@ export default function CoatingBatchReportPage() {
             )}
           </div>
 
+          {/* Signatures */}
+          <div className="mt-10 pt-6 border-t border-slate-200">
+            <div className="grid grid-cols-2 gap-8 max-w-md">
+              <div>
+                <div className="border-b border-slate-400 mb-1 h-10" />
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Production Manager
+                </p>
+              </div>
+              <div>
+                <div className="border-b border-slate-400 mb-1 h-10" />
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  QC Controller
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Footer */}
           <div className="mt-10 flex items-center justify-between text-xs text-slate-600">
             <span>Document No: UTM-COAT-BATCH-REP-FT-001</span>
