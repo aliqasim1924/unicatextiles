@@ -11,6 +11,7 @@ import autoTable from "jspdf-autotable";
 interface YarnStockItem {
   yarn_item_id: string;
   stock_qty: number;
+  issued_qty: number;
   yarn_items: {
     name: string;
     material: string | null;
@@ -31,25 +32,43 @@ export default function YarnStockPage() {
   useEffect(() => {
     async function fetchStock() {
       try {
-        const { data, error } = await supabaseBrowserClient
-          .from("yarn_stock")
-          .select(
+        const [stockResult, issuedResult] = await Promise.all([
+          supabaseBrowserClient
+            .from("yarn_stock")
+            .select(
+              `
+              yarn_item_id,
+              stock_qty,
+              yarn_items:yarn_item_id (
+                name,
+                material,
+                denier,
+                uom
+              )
             `
-            yarn_item_id,
-            stock_qty,
-            yarn_items:yarn_item_id (
-              name,
-              material,
-              denier,
-              uom
-            )
-          `
-          );
+            ),
+          supabaseBrowserClient
+            .from("yarn_transactions")
+            .select("yarn_item_id, quantity")
+            .eq("transaction_type", "ISSUE"),
+        ]);
+
+        const { data, error } = stockResult;
+        const { data: issuedData } = issuedResult;
 
         if (error) throw error;
 
+        const issuedByItem: Record<string, number> = {};
+        (issuedData || []).forEach((row: { yarn_item_id: string; quantity: number }) => {
+          const id = row.yarn_item_id;
+          const qty = Number(row.quantity || 0);
+          issuedByItem[id] = (issuedByItem[id] || 0) + qty;
+        });
+
         const processedData = (data as any[]).map((item) => ({
           ...item,
+          stock_qty: Number(item.stock_qty || 0),
+          issued_qty: issuedByItem[item.yarn_item_id] ?? 0,
           yarn_items: Array.isArray(item.yarn_items) ? item.yarn_items[0] : item.yarn_items,
         })) as YarnStockItem[];
 
@@ -197,12 +216,14 @@ export default function YarnStockPage() {
       doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
       
       const totalItems = stockItems.length;
-      const totalStockQty = stockItems.reduce((sum, item) => sum + item.stock_qty, 0);
+      const totalInStore = stockItems.reduce((sum, item) => sum + item.stock_qty, 0);
+      const totalIssued = stockItems.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
       const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
 
       doc.text(`Total Items: ${totalItems}`, pageWidth / 2, metadataY + 15, { align: "center" });
-      doc.text(`Total Stock: ${totalStockQty.toFixed(3)} kg`, pageWidth / 2, metadataY + 30, { align: "center" });
-      doc.text(`Total Valuation: R ${totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 45, { align: "center" });
+      doc.text(`Total In Store: ${totalInStore.toFixed(3)}`, pageWidth / 2, metadataY + 30, { align: "center" });
+      doc.text(`Total Issued: ${totalIssued.toFixed(3)}`, pageWidth / 2, metadataY + 45, { align: "center" });
+      doc.text(`Total Valuation: R ${totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 60, { align: "center" });
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
@@ -221,6 +242,7 @@ export default function YarnStockPage() {
         item.yarn_items?.material || "-",
         item.yarn_items?.denier ? `${item.yarn_items.denier}D` : "-",
         item.stock_qty.toFixed(3),
+        (item.issued_qty ?? 0).toFixed(3),
         item.yarn_items?.uom || "kg",
         item.avg_price_zar && item.avg_price_zar > 0 ? `R ${item.avg_price_zar.toFixed(4)}` : "-",
         item.valuation_zar && item.valuation_zar > 0 ? `R ${item.valuation_zar.toFixed(2)}` : "-",
@@ -228,7 +250,7 @@ export default function YarnStockPage() {
 
       const availableWidth = pageWidth - 2 * margin;
       autoTable(doc, {
-        head: [["Yarn Name", "Material", "Denier", "Stock Qty", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
+        head: [["Yarn Name", "Material", "Denier", "In Store", "Issued", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
@@ -243,8 +265,9 @@ export default function YarnStockPage() {
         },
         columnStyles: {
           3: { halign: "right" },
-          5: { halign: "right" },
+          4: { halign: "right" },
           6: { halign: "right" },
+          7: { halign: "right" },
         },
         didDrawPage: function (data: any) {
           const currentPage = data.pageNumber || doc.internal.pages.length - 1;
@@ -343,7 +366,7 @@ export default function YarnStockPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Stock</h1>
           <p className="mt-1 text-slate-600">
-            Current stock levels for all yarn items
+            In-store and issued balances for yarn items.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -420,7 +443,10 @@ export default function YarnStockPage() {
                     Denier
                   </th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    Stock Quantity
+                    In Store
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                    Issued
                   </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     UoM
@@ -451,8 +477,11 @@ export default function YarnStockPage() {
                     <td className="px-4 py-3 text-slate-600">
                       {item.yarn_items?.denier ? `${item.yarn_items.denier}D` : "-"}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-900">
-                      {item.stock_qty?.toFixed(3) || "0.000"}
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {item.stock_qty?.toFixed(3) ?? "0.000"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {(item.issued_qty ?? 0).toFixed(3)}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {item.yarn_items?.uom || "kg"}

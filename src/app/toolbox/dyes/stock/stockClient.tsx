@@ -10,6 +10,7 @@ import autoTable from "jspdf-autotable";
 interface StockRow {
   dye_item_id: string;
   stock_qty: number;
+  issued_qty: number;
   dye_items: {
     id: string;
     name: string;
@@ -92,10 +93,12 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
       doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
       
       const totalItems = initialStock.length;
-      const totalStockQty = initialStock.reduce((sum, item) => sum + item.stock_qty, 0);
+      const totalInStore = initialStock.reduce((sum, item) => sum + item.stock_qty, 0);
+      const totalIssued = initialStock.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
 
       doc.text(`Total Items: ${totalItems}`, pageWidth / 2, metadataY + 15, { align: "center" });
-      doc.text(`Total Stock: ${totalStockQty.toFixed(3)}`, pageWidth / 2, metadataY + 30, { align: "center" });
+      doc.text(`Total In Store: ${totalInStore.toFixed(3)}`, pageWidth / 2, metadataY + 30, { align: "center" });
+      doc.text(`Total Issued: ${totalIssued.toFixed(3)}`, pageWidth / 2, metadataY + 45, { align: "center" });
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
@@ -114,12 +117,13 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
         item.dye_items?.type || "-",
         item.dye_items?.code || "-",
         item.stock_qty.toFixed(3),
+        (item.issued_qty ?? 0).toFixed(3),
         item.dye_items?.uom || "kg",
       ]);
 
       const availableWidth = pageWidth - 2 * margin;
       autoTable(doc, {
-        head: [["Name", "Type", "Code", "Stock Qty", "UoM"]],
+        head: [["Name", "Type", "Code", "In Store", "Issued", "UoM"]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
@@ -134,6 +138,7 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
         },
         columnStyles: {
           3: { halign: "right" },
+          4: { halign: "right" },
         },
         didDrawPage: function (data: any) {
           const currentPage = data.pageNumber || doc.internal.pages.length - 1;
@@ -199,7 +204,8 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Name</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Type</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Code</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Stock Qty</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">In Store</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Issued</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">UoM</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
                 </tr>
@@ -214,6 +220,9 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
                     <td className="px-4 py-3 text-slate-600">{row.dye_items?.code || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">
                       {row.stock_qty?.toFixed(3) ?? "0.000"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {(row.issued_qty ?? 0).toFixed(3)}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{row.dye_items?.uom || "kg"}</td>
                     <td className="px-4 py-3">
