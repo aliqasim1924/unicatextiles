@@ -6,11 +6,33 @@ import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
+import { generateQRCode } from "@/lib/qr/generateQRCode";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 const LOCATION_WEAVING = "WEAVING";
 const STATUS_AVAILABLE = "AVAILABLE";
+
+/** Predefined reasons for variances (including add/remove for balancing). */
+const VARIANCE_REASONS = [
+  { value: "", label: "— Select or type —" },
+  { value: "Manufactured – not recorded in app", label: "Manufactured – not recorded in app" },
+  { value: "Outsourced – not recorded in app", label: "Outsourced – not recorded in app" },
+  { value: "Stock balancing – initial setup", label: "Stock balancing – initial setup" },
+  { value: "Stock balancing – quantity correction", label: "Stock balancing – quantity correction" },
+  { value: "Roll lost or damaged", label: "Roll lost or damaged" },
+  { value: "Measurement variance (re-measured)", label: "Measurement variance (re-measured)" },
+  { value: "Other", label: "Other" },
+];
+
+/** Reasons when adding an unrecorded roll. */
+const UNRECORDED_ROLL_REASONS = [
+  { value: "Manufactured – not recorded in app", label: "Manufactured – not recorded in app" },
+  { value: "Outsourced – not recorded in app", label: "Outsourced – not recorded in app" },
+  { value: "Stock balancing – initial setup", label: "Stock balancing – initial setup" },
+  { value: "Stock balancing – quantity correction", label: "Stock balancing – quantity correction" },
+  { value: "Other", label: "Other" },
+];
 
 interface Session {
   id: string;
@@ -65,6 +87,16 @@ export default function BaseFabricStocktakeDetailPage() {
 
   const [session, setSession] = useState<Session | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  const [fabricItems, setFabricItems] = useState<{ id: string; name: string }[]>([]);
+  const [showAddRollModal, setShowAddRollModal] = useState(false);
+  const [addRollForm, setAddRollForm] = useState({
+    base_fabric_item_id: "",
+    roll_no: "",
+    length_m: "",
+    reason: "",
+    note: "",
+  });
+  const [isAddingRoll, setIsAddingRoll] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
@@ -84,6 +116,7 @@ export default function BaseFabricStocktakeDetailPage() {
       const [
         { data: sessionData, error: sessionError },
         { data: linesData, error: linesError },
+        { data: itemsData, error: itemsError },
       ] = await Promise.all([
         supabaseBrowserClient
           .from("base_fabric_stocktake_sessions")
@@ -117,10 +150,17 @@ export default function BaseFabricStocktakeDetailPage() {
           )
           .eq("session_id", sessionId)
           .order("id"),
+        supabaseBrowserClient
+          .from("base_fabric_items")
+          .select("id, name")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
       ]);
 
       if (sessionError) throw sessionError;
       if (linesError) throw linesError;
+      if (itemsError) throw itemsError;
+      setFabricItems((itemsData as { id: string; name: string }[]) || []);
 
       setSession(sessionData as Session);
       const processed = (linesData as any[])?.map((row) => {
@@ -358,6 +398,105 @@ export default function BaseFabricStocktakeDetailPage() {
       setError(err.message || "Failed to save stocktake counts.");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function addUnrecordedRoll(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!session) return;
+    if (session.status === "posted") {
+      setError("Cannot add rolls to a posted stocktake.");
+      return;
+    }
+    const lengthM = parseFloat(addRollForm.length_m);
+    if (!addRollForm.base_fabric_item_id.trim()) {
+      setError("Please select a fabric.");
+      return;
+    }
+    if (!Number.isFinite(lengthM) || lengthM <= 0) {
+      setError("Enter a valid length (m) greater than zero.");
+      return;
+    }
+    const reasonText =
+      addRollForm.reason === "Other" ? addRollForm.note.trim() : addRollForm.reason;
+    if (!reasonText) {
+      setError("Please select or enter a reason for this unrecorded roll.");
+      return;
+    }
+    if (addRollForm.reason === "Other" && !addRollForm.note.trim()) {
+      setError("Please enter a reason in the note field when selecting Other.");
+      return;
+    }
+
+    setIsAddingRoll(true);
+    try {
+      const orderNotes = `Stocktake – unrecorded roll. Session: ${session.name} (${session.stocktake_date}). Reason: ${reasonText}`;
+      const isOutsourced =
+        addRollForm.reason === "Outsourced – not recorded in app";
+
+      const { data: orderData, error: orderError } = await supabaseBrowserClient
+        .from("base_fabric_orders")
+        .insert({
+          base_fabric_item_id: addRollForm.base_fabric_item_id.trim(),
+          planned_qty_m: lengthM,
+          status: "COMPLETED",
+          is_outsourced: isOutsourced,
+          beam_weft_not_required: true,
+          notes: orderNotes,
+          actual_completion_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+
+      if (orderError) throw orderError;
+
+      const qrCode = generateQRCode("base_fabric");
+      const { data: rollData, error: rollError } = await supabaseBrowserClient
+        .from("base_fabric_rolls")
+        .insert({
+          base_fabric_order_id: orderData.id,
+          roll_no: addRollForm.roll_no.trim() || null,
+          length_m: lengthM,
+          qr_code: qrCode,
+          cut_at: new Date().toISOString(),
+          current_location: LOCATION_WEAVING,
+          status: STATUS_AVAILABLE,
+        })
+        .select("id")
+        .single();
+
+      if (rollError) throw rollError;
+
+      const { error: lineError } = await supabaseBrowserClient
+        .from("base_fabric_stocktake_lines")
+        .insert({
+          session_id: session.id,
+          base_fabric_roll_id: rollData.id,
+          system_qty: 0,
+          counted_qty: lengthM,
+          variance_qty: lengthM,
+          reason: reasonText,
+          note: addRollForm.note.trim() || null,
+        });
+
+      if (lineError) throw lineError;
+
+      setSuccess("Unrecorded roll added. Reloading list.");
+      setShowAddRollModal(false);
+      setAddRollForm({
+        base_fabric_item_id: "",
+        roll_no: "",
+        length_m: "",
+        reason: "",
+        note: "",
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error("Failed to add unrecorded roll", err);
+      setError(err.message || "Failed to add unrecorded roll.");
+    } finally {
+      setIsAddingRoll(false);
     }
   }
 
@@ -724,6 +863,12 @@ export default function BaseFabricStocktakeDetailPage() {
                 {variances.totalCount} roll(s)
               </span>
             </p>
+            <p className="text-slate-600 mt-0.5">
+              To add a roll that exists physically but was never recorded (e.g.
+              manufactured/outsourced or for balancing), use{" "}
+              <strong>Add unrecorded roll</strong>. To remove a roll (e.g. lost
+              or balancing), set its counted length to 0 and give a reason.
+            </p>
             {variances.hasMissingReasons && (
               <p className="text-red-600">
                 All variances must have a reason before posting.
@@ -731,6 +876,14 @@ export default function BaseFabricStocktakeDetailPage() {
             )}
           </div>
           <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowAddRollModal(true)}
+              disabled={isLoading || session?.status === "posted"}
+            >
+              Add unrecorded roll
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -865,26 +1018,189 @@ export default function BaseFabricStocktakeDetailPage() {
                         {variance.toFixed(3)} m
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="text"
-                          value={line.reason || ""}
-                          onChange={(e) =>
-                            updateLineLocal(line.id, { reason: e.target.value })
-                          }
-                          className={`w-full rounded-lg border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent ${
-                            missingReason ? "border-red-400" : "border-slate-200"
-                          }`}
-                          placeholder={
-                            hasVariance ? "Reason for variance" : "Optional"
-                          }
-                          disabled={session?.status === "posted"}
-                        />
+                        <div className="flex flex-col gap-1">
+                          <select
+                            value={
+                              VARIANCE_REASONS.some(
+                                (r) => r.value === (line.reason || "")
+                              )
+                                ? line.reason || ""
+                                : line.reason
+                                  ? "Other"
+                                  : ""
+                            }
+                            onChange={(e) =>
+                              updateLineLocal(line.id, {
+                                reason: e.target.value || null,
+                              })
+                            }
+                            className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                            disabled={session?.status === "posted"}
+                          >
+                            {VARIANCE_REASONS.map((r) => (
+                              <option key={r.value || "empty"} value={r.value}>
+                                {r.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={line.reason || ""}
+                            onChange={(e) =>
+                              updateLineLocal(line.id, {
+                                reason: e.target.value || null,
+                              })
+                            }
+                            className={`w-full rounded-lg border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent ${
+                              missingReason ? "border-red-400" : "border-slate-200"
+                            }`}
+                            placeholder={
+                              hasVariance ? "Or type reason" : "Optional"
+                            }
+                            disabled={session?.status === "posted"}
+                          />
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Modal: Add unrecorded roll */}
+        {showAddRollModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            onClick={() => !isAddingRoll && setShowAddRollModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="mb-4 text-lg font-semibold text-slate-900">
+                Add unrecorded roll
+              </h3>
+              <p className="mb-4 text-sm text-slate-600">
+                Use this when a roll is physically present but was never recorded
+                (e.g. manufactured or outsourced without being logged, or for
+                stock balancing).
+              </p>
+              <form onSubmit={addUnrecordedRoll} className="grid gap-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Fabric <span className="text-red-600">*</span>
+                  </label>
+                  <select
+                    value={addRollForm.base_fabric_item_id}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({
+                        ...prev,
+                        base_fabric_item_id: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    required
+                  >
+                    <option value="">Select fabric</option>
+                    {fabricItems.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Roll no (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addRollForm.roll_no}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({ ...prev, roll_no: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. R-001"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Length (m) <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={addRollForm.length_m}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({ ...prev, length_m: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="0.000"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Reason <span className="text-red-600">*</span>
+                  </label>
+                  <select
+                    value={addRollForm.reason}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({ ...prev, reason: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    required
+                  >
+                    <option value="">Select reason</option>
+                    {UNRECORDED_ROLL_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {addRollForm.reason === "Other" && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Reason (free text) <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addRollForm.note}
+                      onChange={(e) =>
+                        setAddRollForm((prev) => ({ ...prev, note: e.target.value }))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                      placeholder="Describe reason"
+                    />
+                  </div>
+                )}
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowAddRollModal(false)}
+                    disabled={isAddingRoll}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={isAddingRoll}
+                    className="flex-1"
+                  >
+                    {isAddingRoll ? "Adding..." : "Add roll"}
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
           </div>
         )}
       </motion.section>

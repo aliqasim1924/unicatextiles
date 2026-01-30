@@ -31,6 +31,7 @@ export default function BaseFabricStocktakeListPage() {
   const [showForm, setShowForm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -106,6 +107,38 @@ export default function BaseFabricStocktakeListPage() {
       setError(err.message || "Failed to create stocktake session.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleDelete(session: BaseFabricStocktakeSession) {
+    if (
+      !window.confirm(
+        `Delete stocktake "${session.name}"? This will remove the session and all its count lines. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setDeletingId(session.id);
+    try {
+      const { error: linesError } = await supabaseBrowserClient
+        .from("base_fabric_stocktake_lines")
+        .delete()
+        .eq("session_id", session.id);
+      if (linesError) throw linesError;
+
+      const { error: sessionError } = await supabaseBrowserClient
+        .from("base_fabric_stocktake_sessions")
+        .delete()
+        .eq("id", session.id);
+      if (sessionError) throw sessionError;
+
+      await fetchSessions();
+    } catch (err: any) {
+      console.error("Failed to delete stocktake session", err);
+      setError(err.message || "Failed to delete stocktake session.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -323,7 +356,7 @@ export default function BaseFabricStocktakeListPage() {
                         minute: "2-digit",
                       })}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 flex gap-2 items-center">
                       <button
                         onClick={() =>
                           router.push(`/toolbox/base-fabric/stocktake/${s.id}`)
@@ -331,6 +364,14 @@ export default function BaseFabricStocktakeListPage() {
                         className="text-sm font-semibold text-teal-700 hover:text-teal-800"
                       >
                         Open
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(s)}
+                        disabled={deletingId === s.id}
+                        className="text-sm text-red-600 hover:text-red-700 disabled:opacity-50"
+                      >
+                        {deletingId === s.id ? "Deleting..." : "Delete"}
                       </button>
                     </td>
                   </tr>
