@@ -20,6 +20,11 @@ interface OrderDetail {
   actual_completion_at: string | null;
   notes: string | null;
   beam_weft_not_required?: boolean;
+  is_outsourced?: boolean;
+  purchased_cost_per_m_zar?: number | null;
+  invoice_no?: string | null;
+  invoice_date?: string | null;
+  purchased_from?: string | null;
   base_fabric_items: {
     name: string;
     construction: string | null;
@@ -138,6 +143,11 @@ export default function BaseFabricOrderDetailPage() {
           actual_completion_at,
           notes,
           beam_weft_not_required,
+          is_outsourced,
+          purchased_cost_per_m_zar,
+          invoice_no,
+          invoice_date,
+          purchased_from,
           base_fabric_items:base_fabric_item_id ( name, construction, gsm )
         `
         )
@@ -690,19 +700,79 @@ export default function BaseFabricOrderDetailPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Order Detail</h1>
           <p className="mt-1 text-slate-600">Order No: {order.order_no || "N/A"}</p>
+          {order.is_outsourced && (
+            <span className="mt-2 inline-block rounded-full bg-slate-200 px-3 py-1 text-sm font-semibold text-slate-700">
+              Outsourced (purchased) base fabric
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => window.print()}
-            className="print:hidden rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800"
-          >
-            Print Production Report
-          </button>
+          {!order.is_outsourced && (
+            <button
+              onClick={() => window.print()}
+              className="print:hidden rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800"
+            >
+              Print Production Report
+            </button>
+          )}
           <BackButton href="/toolbox/base-fabric/orders" label="Back to Orders" />
         </div>
       </div>
 
-      {/* Production Report (Print Layout) - multi-page allowed */}
+      {order.is_outsourced && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-slate-200 bg-slate-50 p-6 shadow-sm print:hidden"
+        >
+          <h2 className="text-lg font-semibold text-slate-900 mb-3">Purchased (outsourced) details</h2>
+          {(order.invoice_no || order.invoice_date || order.purchased_from) && (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+              {order.invoice_no && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-600">Invoice No</p>
+                  <p className="mt-1 text-slate-900">{order.invoice_no}</p>
+                </div>
+              )}
+              {order.invoice_date && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-600">Invoice Date</p>
+                  <p className="mt-1 text-slate-900">{new Date(order.invoice_date).toLocaleDateString("en-ZA")}</p>
+                </div>
+              )}
+              {order.purchased_from && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-600">Supplier</p>
+                  <p className="mt-1 text-slate-900">{order.purchased_from}</p>
+                </div>
+              )}
+            </div>
+          )}
+          {order.purchased_cost_per_m_zar != null && (
+            <div className="grid gap-4 sm:grid-cols-3 border-t border-slate-200 pt-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-600">Cost per metre</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900">
+                  R {Number(order.purchased_cost_per_m_zar).toFixed(2)} / m
+                </p>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-600">Total metres</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900">{totalProduced.toFixed(2)} m</p>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-600">Total cost (ZAR)</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900">
+                  R {(totalProduced * Number(order.purchased_cost_per_m_zar)).toFixed(2)}
+                </p>
+              </div>
+            </div>
+          )}
+        </motion.section>
+      )}
+
+      {/* Production Report (Print Layout) - multi-page allowed; hidden for outsourced */}
+      {!order.is_outsourced && (
       <div className="print-production-report print-page-shell print:min-h-0 hidden print:block">
         <div className="print-slip-container">
           <div className="print-slip-card print-production-report-card flex flex-col min-h-0">
@@ -990,6 +1060,7 @@ export default function BaseFabricOrderDetailPage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Order Summary (Screen View) */}
       <motion.section
@@ -1081,7 +1152,8 @@ export default function BaseFabricOrderDetailPage() {
         )}
       </motion.section>
 
-      {/* Yarn Consumption & Cost (consumed = beams + cones; cost based on consumed) */}
+      {/* Yarn Consumption & Cost (consumed = beams + cones; cost based on consumed) – hidden for outsourced */}
+      {!order.is_outsourced && (
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1193,8 +1265,10 @@ export default function BaseFabricOrderDetailPage() {
           </p>
         )}
       </motion.section>
+      )}
 
-      {/* Linked Yarn Issuings */}
+      {/* Linked Yarn Issuings – hidden for outsourced */}
+      {!order.is_outsourced && (
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1268,9 +1342,10 @@ export default function BaseFabricOrderDetailPage() {
           </div>
         )}
       </motion.section>
+      )}
 
-      {/* Beam loading (warp) – only issued yarn selectable */}
-      {(order.status === "PLANNED" || order.status === "RUNNING" || orderBeams.length > 0) && (
+      {/* Beam loading (warp) – only issued yarn selectable; hidden for outsourced */}
+      {!order.is_outsourced && (order.status === "PLANNED" || order.status === "RUNNING" || orderBeams.length > 0) && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1398,8 +1473,8 @@ export default function BaseFabricOrderDetailPage() {
         </motion.section>
       )}
 
-      {/* Weft usage (cones) – only issued yarn selectable */}
-      {(order.status === "PLANNED" || order.status === "RUNNING" || orderWeft.length > 0) && (
+      {/* Weft usage (cones) – only issued yarn selectable; hidden for outsourced */}
+      {!order.is_outsourced && (order.status === "PLANNED" || order.status === "RUNNING" || orderWeft.length > 0) && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1575,7 +1650,7 @@ export default function BaseFabricOrderDetailPage() {
         </motion.section>
       )}
 
-      {order.status === "RUNNING" && (
+      {!order.is_outsourced && order.status === "RUNNING" && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

@@ -16,6 +16,7 @@ interface TransactionDetail {
   source: string | null;
   destination: string | null;
   batch_no: string | null;
+  invoice_no: string | null;
   notes: string | null;
   slip_no: string | null;
   dye_item_id: string;
@@ -60,6 +61,7 @@ export default function DyeTransactionDetailPage() {
           source,
           destination,
           batch_no,
+          invoice_no,
           notes,
           slip_no,
           dye_item_id,
@@ -222,6 +224,13 @@ export default function DyeTransactionDetailPage() {
             <p className="text-sm font-semibold text-slate-600">Batch No</p>
             <p className="mt-1 text-base text-slate-900">{transaction.batch_no || "-"}</p>
           </div>
+
+          {(transaction.invoice_no != null && transaction.invoice_no !== "") && (
+            <div>
+              <p className="text-sm font-semibold text-slate-600">Invoice No</p>
+              <p className="mt-1 text-base text-slate-900">{transaction.invoice_no}</p>
+            </div>
+          )}
 
           {transaction.suppliers && (
             <div>

@@ -36,6 +36,11 @@ export default function BaseFabricPage() {
               View Orders
             </Button>
           </Link>
+          <Link href="/toolbox/base-fabric/purchased/new" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Record Purchased (Outsourced)
+            </Button>
+          </Link>
           <Link href="/toolbox/base-fabric/issuing" className="w-full">
             <Button variant="secondary" className="w-full">
               Issue to Coating

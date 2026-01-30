@@ -40,6 +40,7 @@ export default function BaseFabricOrdersPage() {
       setIsLoading(true);
 
       // Fetch orders with fabric items
+      // Production orders only; outsourced (purchased) base fabric is not shown here
       const { data: ordersData, error: ordersError } = await supabaseBrowserClient
         .from("base_fabric_orders")
         .select(
@@ -52,6 +53,7 @@ export default function BaseFabricOrdersPage() {
           base_fabric_items:base_fabric_item_id ( name )
         `
         )
+        .eq("is_outsourced", false)
         .order("created_at", { ascending: false });
 
       if (ordersError) throw ordersError;

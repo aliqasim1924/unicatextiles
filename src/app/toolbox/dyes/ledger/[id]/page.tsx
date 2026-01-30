@@ -26,6 +26,7 @@ interface DyeTransaction {
   source: string | null;
   destination: string | null;
   batch_no: string | null;
+  invoice_no: string | null;
   notes: string | null;
   slip_no: string | null;
 }
@@ -83,7 +84,7 @@ export default function DyesLedgerPage() {
       const { data: transactionsData, error: transactionsError } = await supabaseBrowserClient
         .from("dye_transactions")
         .select(
-          "id, txn_time, transaction_type, quantity, uom, source, destination, batch_no, notes, slip_no"
+          "id, txn_time, transaction_type, quantity, uom, source, destination, batch_no, invoice_no, notes, slip_no"
         )
         .eq("dye_item_id", dyeItemId)
         .order("txn_time", { ascending: true });
@@ -303,6 +304,7 @@ export default function DyesLedgerPage() {
         txn.source || "-",
         txn.destination || "-",
         txn.batch_no || "-",
+        txn.invoice_no || "-",
         txn.slip_no || "-",
         `${txn.runningBalance.toFixed(3)} ${item.uom}`,
       ]);
@@ -316,6 +318,7 @@ export default function DyesLedgerPage() {
             "Source",
             "Destination",
             "Batch",
+            "Invoice",
             "Slip No",
             "Balance",
           ],
@@ -336,7 +339,7 @@ export default function DyesLedgerPage() {
         },
         columnStyles: {
           2: { halign: "right" },
-          7: { halign: "right" },
+          8: { halign: "right" },
         },
         didDrawPage: (data: any) => {
           const pageNumber = data.pageNumber;
@@ -494,6 +497,7 @@ export default function DyesLedgerPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Source</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Destination</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Invoice</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Balance</th>
                 </tr>
@@ -580,6 +584,7 @@ export default function DyesLedgerPage() {
                       <td className="px-4 py-3 text-slate-600">{txn.source || "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{txn.destination || "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{txn.batch_no || "-"}</td>
+                      <td className="px-4 py-3 text-slate-600">{txn.invoice_no || "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{txn.slip_no || "-"}</td>
                       <td className="px-4 py-3 text-right font-semibold text-slate-900">
                         {txn.runningBalance.toFixed(3)} {ledgerData.dyeItem?.uom ?? txn.uom}

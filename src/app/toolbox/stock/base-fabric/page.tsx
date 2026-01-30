@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
@@ -27,6 +27,8 @@ interface BaseFabricRoll {
   fabric_name: string | null;
   loom_no: number | null;
   base_fabric_order_id?: string | null;
+  is_outsourced?: boolean;
+  purchased_cost_per_m_zar?: number | null;
   yarn_cost_per_m?: number | null;
   valuation_zar?: number;
 }
@@ -39,6 +41,8 @@ export default function BaseFabricStockPage() {
   const [activeTab, setActiveTab] = useState<"inStock" | "history">("inStock");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRoll, setSelectedRoll] = useState<BaseFabricRoll | null>(null);
+  const [expandedFabric, setExpandedFabric] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"summary" | "detail">("summary");
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
@@ -65,6 +69,8 @@ export default function BaseFabricStockPage() {
           base_fabric_orders:base_fabric_order_id (
             order_no,
             loom_no,
+            is_outsourced,
+            purchased_cost_per_m_zar,
             base_fabric_items:base_fabric_item_id (
               name
             )
@@ -127,24 +133,38 @@ export default function BaseFabricStockPage() {
             fabric_name: item?.name || null,
             loom_no: order?.loom_no || null,
             base_fabric_order_id: row.base_fabric_order_id || null,
+            is_outsourced: order?.is_outsourced ?? false,
+            purchased_cost_per_m_zar: order?.purchased_cost_per_m_zar ?? null,
           };
         });
 
       const mappedInStock = mapRolls(inStockData || []);
       
-      // Calculate yarn cost per meter for each roll
+      // Calculate cost per meter and valuation for each roll (outsourced = purchased cost; else yarn-based)
       const rollsWithValuation = await Promise.all(
         mappedInStock.map(async (roll) => {
+          // Outsourced (purchased) base fabric: use purchased_cost_per_m_zar
+          if (roll.is_outsourced && roll.purchased_cost_per_m_zar != null && Number(roll.purchased_cost_per_m_zar) >= 0) {
+            const costPerM = Number(roll.purchased_cost_per_m_zar);
+            const valuation = roll.length_m * costPerM;
+            return {
+              ...roll,
+              yarn_cost_per_m: costPerM,
+              valuation_zar: valuation,
+            };
+          }
+
           if (!roll.base_fabric_order_id) {
             return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
           }
 
           try {
-            // Get yarn issues for this order
+            // Get yarn issues for this order (in-house production)
             const { data: yarnIssues } = await supabaseBrowserClient
-              .from("yarn_issues")
+              .from("yarn_transactions")
               .select("yarn_item_id, quantity")
-              .eq("base_fabric_order_id", roll.base_fabric_order_id);
+              .eq("base_fabric_order_id", roll.base_fabric_order_id)
+              .eq("transaction_type", "ISSUE");
 
             if (!yarnIssues || yarnIssues.length === 0) {
               return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
@@ -252,6 +272,34 @@ export default function BaseFabricStockPage() {
     return { rollsCount, metersTotal, totalValuation };
   }, [inStockRolls]);
 
+  // Group in-stock rolls by fabric name for summary view (uses filtered rolls so search applies)
+  const summaryByFabric = useMemo(() => {
+    const byFabric = new Map<
+      string,
+      { fabricName: string; rolls: BaseFabricRoll[]; totalMetres: number; totalValuation: number }
+    >();
+    filteredInStockRolls.forEach((roll) => {
+      const name = roll.fabric_name || "Unknown";
+      const existing = byFabric.get(name);
+      const totalValuation = roll.valuation_zar ?? 0;
+      if (existing) {
+        existing.rolls.push(roll);
+        existing.totalMetres += roll.length_m;
+        existing.totalValuation += totalValuation;
+      } else {
+        byFabric.set(name, {
+          fabricName: name,
+          rolls: [roll],
+          totalMetres: roll.length_m,
+          totalValuation,
+        });
+      }
+    });
+    return Array.from(byFabric.values()).sort((a, b) =>
+      a.fabricName.localeCompare(b.fabricName)
+    );
+  }, [filteredInStockRolls]);
+
   async function generatePDF() {
     if (inStockRolls.length === 0) {
       alert("No stock data to generate report");
@@ -322,13 +370,58 @@ export default function BaseFabricStockPage() {
       doc.setTextColor(128, 128, 128);
       doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
 
-      // ===== STOCK TABLE =====
+      // ===== SUMMARY BY FABRIC =====
       doc.addPage();
       pageNumber++;
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(0, 0, 0);
-      doc.text("Stock Overview", margin, 20);
+      doc.text("Summary by Fabric", margin, 20);
+
+      const summaryTableData = summaryByFabric.map((group) => [
+        group.fabricName,
+        group.rolls.length.toString(),
+        group.totalMetres.toFixed(3),
+        `R ${(group.totalValuation || 0).toFixed(2)}`,
+      ]);
+
+      autoTable(doc, {
+        head: [["Fabric Name", "Roll Count", "Total (m)", "Valuation (ZAR)"]],
+        body: summaryTableData,
+        startY: 30,
+        margin: { left: margin, right: margin },
+        styles: { fontSize: 9 },
+        headStyles: {
+          fillColor: [16, 185, 129],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251],
+        },
+        columnStyles: {
+          1: { halign: "right" },
+          2: { halign: "right" },
+          3: { halign: "right" },
+        },
+        didDrawPage: function (data: any) {
+          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
+          if (currentPage > 1) {
+            doc.setFontSize(8);
+            doc.setTextColor(100, 100, 100);
+            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
+            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
+          }
+        },
+      });
+
+      // ===== STOCK TABLE (ROLL DETAIL) =====
+      doc.addPage();
+      pageNumber++;
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("Stock Overview (Roll Detail)", margin, 20);
 
       const tableData = inStockRolls.map((roll) => [
         roll.roll_no || roll.qr_code || "N/A",
@@ -578,70 +671,160 @@ export default function BaseFabricStockPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50">
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Roll No
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            QR Code
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Fabric Name
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Order No
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Loom</th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                            Length (m)
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredInStockRolls.map((roll) => (
-                          <tr
-                            key={roll.id}
-                            className="border-b border-slate-100 hover:bg-slate-50"
-                          >
-                            <td className="px-4 py-3 font-medium text-slate-900">
-                              {roll.roll_no || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.qr_code || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.fabric_name || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.order_no || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.loom_no ? `Loom ${roll.loom_no}` : "—"}
-                            </td>
-                            <td className="px-4 py-3 text-right font-medium text-slate-900">
-                              {roll.length_m.toFixed(3)}
-                            </td>
-                            <td className="px-4 py-3">
-                              {roll.qr_code && (
-                                <button
-                                  onClick={() => setSelectedRoll(roll)}
-                                  className="inline-block rounded-md bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-teal-800"
+                  <>
+                    <div className="mb-4 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setViewMode("summary")}
+                        className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                          viewMode === "summary"
+                            ? "bg-teal-700 text-white"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        Summary by fabric
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewMode("detail")}
+                        className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                          viewMode === "detail"
+                            ? "bg-teal-700 text-white"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        All rolls
+                      </button>
+                    </div>
+
+                    {viewMode === "summary" ? (
+                      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50">
+                              <th className="px-4 py-3 w-8"></th>
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric name</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Rolls</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Total (m)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Valuation (ZAR)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {summaryByFabric.map((group) => (
+                              <React.Fragment key={group.fabricName}>
+                                <tr
+                                  onClick={() => setExpandedFabric((prev) => (prev === group.fabricName ? null : group.fabricName))}
+                                  className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
                                 >
-                                  View QR Code
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                                  <td className="px-4 py-3 text-slate-500">
+                                    {expandedFabric === group.fabricName ? "▼" : "▶"}
+                                  </td>
+                                  <td className="px-4 py-3 font-medium text-slate-900">{group.fabricName}</td>
+                                  <td className="px-4 py-3 text-right text-slate-900">{group.rolls.length}</td>
+                                  <td className="px-4 py-3 text-right font-medium text-slate-900">{group.totalMetres.toFixed(3)}</td>
+                                  <td className="px-4 py-3 text-right font-medium text-slate-900">
+                                    R {(group.totalValuation || 0).toFixed(2)}
+                                  </td>
+                                </tr>
+                                {expandedFabric === group.fabricName && (
+                                  <tr key={`${group.fabricName}-rolls`}>
+                                    <td colSpan={5} className="px-0 py-0 bg-slate-50">
+                                      <div className="px-4 py-2 border-b border-slate-200">
+                                        <table className="min-w-full text-sm">
+                                          <thead>
+                                            <tr className="border-b border-slate-200">
+                                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Roll No</th>
+                                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Order No</th>
+                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">Length (m)</th>
+                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">Cost/m (ZAR)</th>
+                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">Valuation (ZAR)</th>
+                                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Actions</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {group.rolls.map((roll) => (
+                                              <tr key={roll.id} className="border-b border-slate-100">
+                                                <td className="px-3 py-2 font-medium text-slate-900">{roll.roll_no || "—"}</td>
+                                                <td className="px-3 py-2 text-slate-600">{roll.order_no || "—"}</td>
+                                                <td className="px-3 py-2 text-right text-slate-900">{roll.length_m.toFixed(3)}</td>
+                                                <td className="px-3 py-2 text-right text-slate-900">
+                                                  {roll.yarn_cost_per_m != null ? `R ${Number(roll.yarn_cost_per_m).toFixed(2)}` : "—"}
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-medium text-slate-900">
+                                                  {roll.valuation_zar != null && roll.valuation_zar > 0 ? `R ${roll.valuation_zar.toFixed(2)}` : "—"}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                  {roll.qr_code && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(e) => { e.stopPropagation(); setSelectedRoll(roll); }}
+                                                      className="text-teal-700 text-xs font-semibold hover:underline"
+                                                    >
+                                                      View QR Code
+                                                    </button>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50">
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">QR Code</th>
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric Name</th>
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">Order No</th>
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">Loom</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Cost/m (ZAR)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Valuation (ZAR)</th>
+                              <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredInStockRolls.map((roll) => (
+                              <tr key={roll.id} className="border-b border-slate-100 hover:bg-slate-50">
+                                <td className="px-4 py-3 font-medium text-slate-900">{roll.roll_no || "—"}</td>
+                                <td className="px-4 py-3 text-slate-600">{roll.qr_code || "—"}</td>
+                                <td className="px-4 py-3 text-slate-600">{roll.fabric_name || "—"}</td>
+                                <td className="px-4 py-3 text-slate-600">{roll.order_no || "—"}</td>
+                                <td className="px-4 py-3 text-slate-600">{roll.loom_no ? `Loom ${roll.loom_no}` : "—"}</td>
+                                <td className="px-4 py-3 text-right font-medium text-slate-900">{roll.length_m.toFixed(3)}</td>
+                                <td className="px-4 py-3 text-right text-slate-900">
+                                  {roll.yarn_cost_per_m != null ? `R ${Number(roll.yarn_cost_per_m).toFixed(2)}` : "—"}
+                                </td>
+                                <td className="px-4 py-3 text-right font-medium text-slate-900">
+                                  {roll.valuation_zar != null && roll.valuation_zar > 0 ? `R ${roll.valuation_zar.toFixed(2)}` : "—"}
+                                </td>
+                                <td className="px-4 py-3">
+                                  {roll.qr_code && (
+                                    <button
+                                      onClick={() => setSelectedRoll(roll)}
+                                      className="inline-block rounded-md bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-teal-800"
+                                    >
+                                      View QR Code
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

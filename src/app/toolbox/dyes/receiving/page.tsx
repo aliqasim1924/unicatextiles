@@ -21,6 +21,7 @@ interface ReceiptRow {
   quantity: number;
   uom: string;
   batch_no: string | null;
+  invoice_no: string | null;
   destination: string | null;
   dye_items: {
     name: string;
@@ -34,6 +35,7 @@ const defaultForm = {
   dye_item_id: "",
   supplier_id: "",
   batch_no: "",
+  invoice_no: "",
   quantity: "",
   uom: "kg",
   source: "SUPPLIER",
@@ -80,6 +82,7 @@ export default function DyesReceivingPage() {
           quantity,
           uom,
           batch_no,
+          invoice_no,
           destination,
           dye_items:dye_item_id ( name ),
           suppliers:supplier_id ( name )
@@ -136,6 +139,7 @@ export default function DyesReceivingPage() {
         source: form.source || null,
         destination: form.destination || null,
         batch_no: form.batch_no || null,
+        invoice_no: form.invoice_no?.trim() || null,
         notes: form.notes || null,
       });
 
@@ -213,6 +217,17 @@ export default function DyesReceivingPage() {
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
               placeholder="Batch / Lot number"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-2">Invoice Number</label>
+            <input
+              name="invoice_no"
+              value={form.invoice_no}
+              onChange={handleChange}
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+              placeholder="e.g. INV-2026-001"
             />
           </div>
 
@@ -305,6 +320,7 @@ export default function DyesReceivingPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Supplier</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Quantity</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Invoice</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Destination</th>
                 </tr>
               </thead>
@@ -328,6 +344,7 @@ export default function DyesReceivingPage() {
                       {row.quantity.toFixed(3)} {row.uom}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{row.batch_no || "-"}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.invoice_no || "-"}</td>
                     <td className="px-4 py-3 text-slate-600">{row.destination || "-"}</td>
                   </tr>
                 ))}
