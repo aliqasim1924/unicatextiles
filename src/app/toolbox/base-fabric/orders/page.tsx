@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
+import { Button } from "@/components/ui/Button";
 
 interface OrderRow {
   id: string;
@@ -118,12 +119,17 @@ export default function BaseFabricOrdersPage() {
           <h1 className="text-3xl font-semibold text-slate-900">Base Fabric Orders</h1>
           <p className="mt-1 text-slate-600">View and manage production orders.</p>
         </div>
-        <Link
-          href="/toolbox/base-fabric"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-        >
-          ← Back to Base Fabric
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link href="/toolbox/base-fabric/orders/new">
+            <Button variant="primary">New Production Order</Button>
+          </Link>
+          <Link
+            href="/toolbox/base-fabric"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          >
+            ← Back to Base Fabric
+          </Link>
+        </div>
       </div>
 
       {/* Filter */}

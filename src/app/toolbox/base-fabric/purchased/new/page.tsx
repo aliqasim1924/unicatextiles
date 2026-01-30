@@ -18,18 +18,26 @@ interface RollRow {
   length_m: string;
 }
 
+interface LineItem {
+  id: string;
+  base_fabric_item_id: string;
+  cost_per_m_zar: string;
+  rolls: RollRow[];
+}
+
 export default function NewPurchasedBaseFabricPage() {
   const router = useRouter();
   const [fabricItems, setFabricItems] = useState<BaseFabricItem[]>([]);
-  const [form, setForm] = useState({
-    base_fabric_item_id: "",
-    invoice_no: "",
-    invoice_date: "",
-    purchased_from: "",
-    cost_per_m_zar: "",
-  });
-  const [rolls, setRolls] = useState<RollRow[]>([
-    { id: "1", roll_no: "", length_m: "" },
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
+  const [purchasedFrom, setPurchasedFrom] = useState("");
+  const [lineItems, setLineItems] = useState<LineItem[]>([
+    {
+      id: crypto.randomUUID(),
+      base_fabric_item_id: "",
+      cost_per_m_zar: "",
+      rolls: [{ id: crypto.randomUUID(), roll_no: "", length_m: "" }],
+    },
   ]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -53,28 +61,80 @@ export default function NewPurchasedBaseFabricPage() {
     }
   }
 
-  function handleFormChange(
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  }
-
-  function addRoll() {
-    setRolls((prev) => [
+  function addLineItem() {
+    setLineItems((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), roll_no: "", length_m: "" },
+      {
+        id: crypto.randomUUID(),
+        base_fabric_item_id: "",
+        cost_per_m_zar: "",
+        rolls: [{ id: crypto.randomUUID(), roll_no: "", length_m: "" }],
+      },
     ]);
   }
 
-  function removeRoll(id: string) {
-    if (rolls.length <= 1) return;
-    setRolls((prev) => prev.filter((r) => r.id !== id));
+  function removeLineItem(lineId: string) {
+    if (lineItems.length <= 1) return;
+    setLineItems((prev) => prev.filter((li) => li.id !== lineId));
   }
 
-  function updateRoll(id: string, field: "roll_no" | "length_m", value: string) {
-    setRolls((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+  function updateLineItem(
+    lineId: string,
+    field: "base_fabric_item_id" | "cost_per_m_zar",
+    value: string
+  ) {
+    setLineItems((prev) =>
+      prev.map((li) =>
+        li.id === lineId ? { ...li, [field]: value } : li
+      )
+    );
+  }
+
+  function addRoll(lineId: string) {
+    setLineItems((prev) =>
+      prev.map((li) =>
+        li.id === lineId
+          ? {
+              ...li,
+              rolls: [
+                ...li.rolls,
+                { id: crypto.randomUUID(), roll_no: "", length_m: "" },
+              ],
+            }
+          : li
+      )
+    );
+  }
+
+  function removeRoll(lineId: string, rollId: string) {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.id !== lineId) return li;
+        if (li.rolls.length <= 1) return li;
+        return {
+          ...li,
+          rolls: li.rolls.filter((r) => r.id !== rollId),
+        };
+      })
+    );
+  }
+
+  function updateRoll(
+    lineId: string,
+    rollId: string,
+    field: "roll_no" | "length_m",
+    value: string
+  ) {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.id !== lineId) return li;
+        return {
+          ...li,
+          rolls: li.rolls.map((r) =>
+            r.id === rollId ? { ...r, [field]: value } : r
+          ),
+        };
+      })
     );
   }
 
@@ -82,66 +142,85 @@ export default function NewPurchasedBaseFabricPage() {
     e.preventDefault();
     setError(null);
 
-    if (!form.base_fabric_item_id) {
-      setError("Please select a base fabric item.");
-      return;
+    const validLineItems: LineItem[] = [];
+    for (const li of lineItems) {
+      if (!li.base_fabric_item_id) continue;
+      const costPerM = li.cost_per_m_zar.trim()
+        ? parseFloat(li.cost_per_m_zar)
+        : null;
+      if (costPerM != null && (isNaN(costPerM) || costPerM < 0)) {
+        setError(`Cost per metre must be a non-negative number for "${fabricItems.find((f) => f.id === li.base_fabric_item_id)?.name ?? "line item"}".`);
+        return;
+      }
+      const validRolls = li.rolls.filter(
+        (r) =>
+          r.roll_no.trim() !== "" &&
+          r.length_m.trim() !== "" &&
+          !isNaN(parseFloat(r.length_m)) &&
+          parseFloat(r.length_m) > 0
+      );
+      if (validRolls.length === 0) continue;
+      validLineItems.push({
+        ...li,
+        cost_per_m_zar: li.cost_per_m_zar,
+        rolls: validRolls,
+      });
     }
 
-    const costPerM = form.cost_per_m_zar ? parseFloat(form.cost_per_m_zar) : null;
-    if (costPerM != null && (isNaN(costPerM) || costPerM < 0)) {
-      setError("Cost per metre must be a non-negative number.");
+    if (validLineItems.length === 0) {
+      setError("Add at least one line item with a fabric, cost per metre, and at least one roll.");
       return;
     }
-
-    const validRolls = rolls.filter(
-      (r) => r.roll_no.trim() !== "" && r.length_m.trim() !== "" && !isNaN(parseFloat(r.length_m)) && parseFloat(r.length_m) > 0
-    );
-    if (validRolls.length === 0) {
-      setError("Add at least one roll with roll number and length (m).");
-      return;
-    }
-
-    const totalMetres = validRolls.reduce(
-      (sum, r) => sum + parseFloat(r.length_m),
-      0
-    );
 
     setIsSubmitting(true);
     try {
-      const { data: orderData, error: orderError } = await supabaseBrowserClient
-        .from("base_fabric_orders")
-        .insert({
-          base_fabric_item_id: form.base_fabric_item_id,
-          planned_qty_m: totalMetres,
-          status: "COMPLETED",
-          is_outsourced: true,
-          beam_weft_not_required: true,
-          purchased_cost_per_m_zar: costPerM,
-          invoice_no: form.invoice_no.trim() || null,
-          invoice_date: form.invoice_date || null,
-          purchased_from: form.purchased_from.trim() || null,
-          notes: "Purchased (outsourced) base fabric",
-          actual_completion_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
+      let firstOrderId: string | null = null;
+      for (const li of validLineItems) {
+        const totalMetres = li.rolls.reduce(
+          (sum, r) => sum + parseFloat(r.length_m),
+          0
+        );
+        const costPerM = li.cost_per_m_zar.trim()
+          ? parseFloat(li.cost_per_m_zar)
+          : null;
 
-      if (orderError) throw orderError;
-
-      const orderId = orderData.id;
-      for (const r of validRolls) {
-        const { error: rollError } = await supabaseBrowserClient
-          .from("base_fabric_rolls")
+        const { data: orderData, error: orderError } = await supabaseBrowserClient
+          .from("base_fabric_orders")
           .insert({
-            base_fabric_order_id: orderId,
-            roll_no: r.roll_no.trim(),
-            length_m: parseFloat(r.length_m),
-            cut_at: new Date().toISOString(),
-          });
-        if (rollError) throw rollError;
+            base_fabric_item_id: li.base_fabric_item_id,
+            planned_qty_m: totalMetres,
+            status: "COMPLETED",
+            is_outsourced: true,
+            beam_weft_not_required: true,
+            purchased_cost_per_m_zar: costPerM,
+            invoice_no: invoiceNo.trim() || null,
+            invoice_date: invoiceDate || null,
+            purchased_from: purchasedFrom.trim() || null,
+            notes: "Purchased (outsourced) base fabric",
+            actual_completion_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single();
+
+        if (orderError) throw orderError;
+
+        const orderId = orderData.id;
+        if (!firstOrderId) firstOrderId = orderId;
+
+        for (const r of li.rolls) {
+          const { error: rollError } = await supabaseBrowserClient
+            .from("base_fabric_rolls")
+            .insert({
+              base_fabric_order_id: orderId,
+              roll_no: r.roll_no.trim(),
+              length_m: parseFloat(r.length_m),
+              cut_at: new Date().toISOString(),
+            });
+          if (rollError) throw rollError;
+        }
       }
 
-      router.push(`/toolbox/base-fabric/orders/${orderId}`);
+      router.push(firstOrderId ? `/toolbox/base-fabric/orders/${firstOrderId}` : "/toolbox/base-fabric");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to record purchased base fabric.");
     } finally {
@@ -155,7 +234,7 @@ export default function NewPurchasedBaseFabricPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Record Purchased (Outsourced) Base Fabric</h1>
           <p className="mt-1 text-slate-600">
-            Enter invoice details and rolls for base fabric bought from an external supplier.
+            Enter invoice details and line items (fabric, cost per metre, rolls). Multiple fabrics can be on one invoice.
           </p>
         </div>
         <Link
@@ -176,122 +255,163 @@ export default function NewPurchasedBaseFabricPage() {
 
         {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 
-        <form onSubmit={handleSubmit} className="grid gap-6">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">Base Fabric Item *</label>
-              <select
-                name="base_fabric_item_id"
-                value={form.base_fabric_item_id}
-                onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                required
-              >
-                <option value="">Select item</option>
-                {fabricItems.map((item) => (
-                  <option key={item.id} value={item.id}>{item.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">Invoice Number</label>
-              <input
-                name="invoice_no"
-                value={form.invoice_no}
-                onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                placeholder="e.g. INV-2026-001"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">Invoice Date</label>
-              <input
-                name="invoice_date"
-                type="date"
-                value={form.invoice_date}
-                onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">Supplier / Purchased From</label>
-              <input
-                name="purchased_from"
-                value={form.purchased_from}
-                onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                placeholder="e.g. Cape Coaters"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">Cost per Metre (ZAR)</label>
-              <input
-                name="cost_per_m_zar"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.cost_per_m_zar}
-                onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                placeholder="e.g. 5.50"
-              />
+        <form onSubmit={handleSubmit} className="grid gap-8">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 mb-3">Invoice (shared)</h3>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Invoice Number</label>
+                <input
+                  value={invoiceNo}
+                  onChange={(e) => setInvoiceNo(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  placeholder="e.g. INV-2026-001"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Invoice Date</label>
+                <input
+                  type="date"
+                  value={invoiceDate}
+                  onChange={(e) => setInvoiceDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Supplier / Purchased From</label>
+                <input
+                  value={purchasedFrom}
+                  onChange={(e) => setPurchasedFrom(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  placeholder="e.g. Cape Coaters"
+                />
+              </div>
             </div>
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-semibold text-slate-900">Rolls *</label>
-              <Button type="button" variant="secondary" onClick={addRoll}>
-                Add roll
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-900">Line items (fabric + cost + rolls)</h3>
+              <Button type="button" variant="secondary" onClick={addLineItem}>
+                Add line item
               </Button>
             </div>
-            <div className="overflow-x-auto border border-slate-200 rounded-lg">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-100 border-b border-slate-200">
-                    <th className="px-4 py-2 text-left font-semibold text-slate-900">Roll No</th>
-                    <th className="px-4 py-2 text-left font-semibold text-slate-900">Length (m)</th>
-                    <th className="px-4 py-2 w-24"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rolls.map((r) => (
-                    <tr key={r.id} className="border-b border-slate-100">
-                      <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          value={r.roll_no}
-                          onChange={(e) => updateRoll(r.id, "roll_no", e.target.value)}
-                          className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                          placeholder="e.g. TF1"
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.001"
-                          value={r.length_m}
-                          onChange={(e) => updateRoll(r.id, "length_m", e.target.value)}
-                          className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                          placeholder="e.g. 1035"
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <button
-                          type="button"
-                          onClick={() => removeRoll(r.id)}
-                          disabled={rolls.length <= 1}
-                          className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+            {lineItems.map((li, idx) => (
+              <div
+                key={li.id}
+                className="mb-6 rounded-lg border border-slate-200 bg-slate-50/50 p-4"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-medium text-slate-700">Line item {idx + 1}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeLineItem(li.id)}
+                    disabled={lineItems.length <= 1}
+                    className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Remove line
+                  </button>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Base Fabric *</label>
+                    <select
+                      value={li.base_fabric_item_id}
+                      onChange={(e) =>
+                        updateLineItem(li.id, "base_fabric_item_id", e.target.value)
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    >
+                      <option value="">Select fabric</option>
+                      {fabricItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Cost per Metre (ZAR)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={li.cost_per_m_zar}
+                      onChange={(e) =>
+                        updateLineItem(li.id, "cost_per_m_zar", e.target.value)
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                      placeholder="e.g. 5.50"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-slate-700">Rolls *</label>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => addRoll(li.id)}
+                      className="!py-1.5 !text-xs"
+                    >
+                      Add roll
+                    </Button>
+                  </div>
+                  <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-100 border-b border-slate-200">
+                          <th className="px-3 py-2 text-left font-semibold text-slate-900">Roll No</th>
+                          <th className="px-3 py-2 text-left font-semibold text-slate-900">Length (m)</th>
+                          <th className="px-3 py-2 w-20"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {li.rolls.map((r) => (
+                          <tr key={r.id} className="border-b border-slate-100 last:border-0">
+                            <td className="px-3 py-2">
+                              <input
+                                type="text"
+                                value={r.roll_no}
+                                onChange={(e) =>
+                                  updateRoll(li.id, r.id, "roll_no", e.target.value)
+                                }
+                                className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                                placeholder="e.g. TF1"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                value={r.length_m}
+                                onChange={(e) =>
+                                  updateRoll(li.id, r.id, "length_m", e.target.value)
+                                }
+                                className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                                placeholder="e.g. 1035"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => removeRoll(li.id, r.id)}
+                                disabled={li.rolls.length <= 1}
+                                className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="flex justify-end">

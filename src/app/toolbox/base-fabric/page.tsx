@@ -26,19 +26,14 @@ export default function BaseFabricPage() {
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Link href="/toolbox/base-fabric/orders/new" className="w-full">
-            <Button variant="primary" className="w-full">
-              New Production Order
-            </Button>
-          </Link>
           <Link href="/toolbox/base-fabric/orders" className="w-full">
             <Button variant="secondary" className="w-full">
-              View Orders
+              Production Orders
             </Button>
           </Link>
           <Link href="/toolbox/base-fabric/purchased/new" className="w-full">
             <Button variant="secondary" className="w-full">
-              Record Purchased (Outsourced)
+              Record Purchased (OS)
             </Button>
           </Link>
           <Link href="/toolbox/base-fabric/issuing" className="w-full">
