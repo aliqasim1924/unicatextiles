@@ -109,10 +109,15 @@ export default function OrderBookPage() {
 
     setIsGenerating(true);
     try {
-      const doc = new jsPDF();
+      // Landscape and small margins to use as much page as possible (avoid table cut-off)
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+      });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 20;
+      const margin = 8;
       const templateName = "Order Book Report";
       let pageNumber = 1;
 
@@ -220,7 +225,7 @@ export default function OrderBookPage() {
         (o) => o.status === "COMPLETED" || o.status === "CANCELLED"
       );
 
-      // Calculate full available width for tables (same for all tables)
+      // Full available width (landscape + small margins to avoid cut-off)
       const availableWidth = pageWidth - 2 * margin;
 
       // ===== OPEN/IN PRODUCTION ORDERS TABLE =====
@@ -442,29 +447,27 @@ export default function OrderBookPage() {
         totalsRow.push(grandTotal.toFixed(2));
         pivotTableData.push(totalsRow);
 
-        // Create table headers
-        const pivotHeaders = ["Customer", ...sortedColors, "Total"];
+        // Create table headers: Customer, colour columns, then Row total (column totals are in last row)
+        const pivotHeaders = ["Customer", ...sortedColors, "Row total"];
 
-        // Calculate column widths dynamically based on available space (use same availableWidth)
-        const customerColWidth = 40;
-        const totalColWidth = 25;
+        // Use full available width; small margins so table is not cut off
+        const customerColWidth = 38;
+        const rowTotalColWidth = 28;
         const colorColWidth = Math.max(
-          15,
-          (availableWidth - customerColWidth - totalColWidth) / sortedColors.length
+          12,
+          (availableWidth - customerColWidth - rowTotalColWidth) / sortedColors.length
         );
 
         const columnStyles: Record<number, any> = {
           0: { cellWidth: customerColWidth, fontStyle: "bold" }, // Customer name
         };
 
-        // Set widths for color columns (right-align both header and data)
         for (let i = 1; i <= sortedColors.length; i++) {
           columnStyles[i] = { cellWidth: colorColWidth, halign: "right" };
         }
 
-        // Set width for total column
         columnStyles[pivotHeaders.length - 1] = {
-          cellWidth: totalColWidth,
+          cellWidth: rowTotalColWidth,
           halign: "right",
           fontStyle: "bold",
         };
