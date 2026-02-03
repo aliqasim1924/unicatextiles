@@ -963,7 +963,7 @@ export default function BaseFabricStockPage() {
                 <p className="font-medium text-slate-900">
                   Roll No: {selectedRoll.roll_no || "—"}
                 </p>
-                <p className="text-slate-600">QR Code: {selectedRoll.qr_code || "—"}</p>
+                <b><p className="text-slate-600">Loom Number: {selectedRoll.loom_no || "—"}</p></b>
                 <p className="text-slate-600">Fabric: {selectedRoll.fabric_name || "—"}</p>
                 <p className="text-slate-600">Length: {selectedRoll.length_m.toFixed(3)} m</p>
               </div>
