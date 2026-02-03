@@ -12,6 +12,7 @@ interface QRData {
   length_m?: number;
   order_no?: string | null;
   fabric_name?: string | null;
+  loom_no?: number | string | null;
 }
 
 export default function QRPrintPage() {
@@ -52,6 +53,7 @@ export default function QRPrintPage() {
               length_m,
               base_fabric_orders:base_fabric_order_id (
                 order_no,
+                loom_no,
                 base_fabric_items:base_fabric_item_id (
                   name
                 )
@@ -79,6 +81,7 @@ export default function QRPrintPage() {
               length_m: row.length_m,
               order_no: order?.order_no || null,
               fabric_name: item?.name || null,
+              loom_no: order?.loom_no ?? null,
             };
           });
 
@@ -244,9 +247,17 @@ export default function QRPrintPage() {
                 <div className="mb-1 text-lg font-bold text-slate-900 print:text-base">
                   {data.roll_no || data.qr_code}
                 </div>
-                <div className="text-sm font-semibold text-slate-700 print:text-xs">
-                  {data.qr_code}
-                </div>
+                {data.type === "base_fabric" ? (
+                  data.loom_no != null && data.loom_no !== "" ? (
+                    <div className="text-sm font-semibold text-slate-700 print:text-xs">
+                      Loom Number: {String(data.loom_no)}
+                    </div>
+                  ) : null
+                ) : (
+                  <div className="text-sm font-semibold text-slate-700 print:text-xs">
+                    {data.qr_code}
+                  </div>
+                )}
                 {data.length_m && (
                   <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
                     Length: {data.length_m.toFixed(2)} m
