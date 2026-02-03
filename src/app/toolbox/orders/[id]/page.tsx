@@ -743,7 +743,7 @@ export default function CustomerOrderDetailPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     Quantity (m)
                   </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Price (R)</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Unit price (R/m excl. VAT)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
                 </tr>
               </thead>
@@ -878,7 +878,7 @@ export default function CustomerOrderDetailPage() {
         )}
         <div className="mt-4 text-sm text-slate-700">
           <div>Total ordered: {formatQuantity(totalOrdered)} m</div>
-          <div>Order value: R {lines.reduce((sum, l) => sum + (l.price_rand ?? 0), 0).toFixed(2)}</div>
+          <div>Order value: R {lines.reduce((sum, l) => sum + (l.quantity_m ?? 0) * (l.price_rand ?? 0), 0).toFixed(2)}</div>
           {remaining !== null && (
             <div className="text-slate-600">Remaining vs issued: {formatQuantity(remaining)} m</div>
           )}

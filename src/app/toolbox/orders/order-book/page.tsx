@@ -83,7 +83,7 @@ export default function OrderBookPage() {
             0
           );
           const totalRand = lines.reduce(
-            (sum: number, l: any) => sum + Number(l.price_rand ?? 0),
+            (sum: number, l: any) => sum + Number(l.quantity_m || 0) * Number(l.price_rand ?? 0),
             0
           );
 
