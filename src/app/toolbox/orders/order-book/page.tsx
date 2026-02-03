@@ -15,6 +15,7 @@ interface OrderLine {
   quantity_m: number;
   coating_type: string | null;
   gsm: string | null;
+  price_rand?: number;
 }
 
 interface CustomerOrder {
@@ -25,6 +26,7 @@ interface CustomerOrder {
   status: string;
   created_at: string;
   total_m: number;
+  total_rand: number;
   order_lines: OrderLine[];
 }
 
@@ -63,7 +65,8 @@ export default function OrderBookPage() {
             color,
             quantity_m,
             coating_type,
-            gsm
+            gsm,
+            price_rand
           )
         `
         )
@@ -79,6 +82,10 @@ export default function OrderBookPage() {
             (sum: number, l: any) => sum + Number(l.quantity_m || 0),
             0
           );
+          const totalRand = lines.reduce(
+            (sum: number, l: any) => sum + Number(l.price_rand ?? 0),
+            0
+          );
 
           return {
             id: row.id,
@@ -88,6 +95,7 @@ export default function OrderBookPage() {
             status: row.status || "OPEN",
             created_at: row.created_at,
             total_m: total,
+            total_rand: totalRand,
             order_lines: lines,
           };
         }) || [];
@@ -238,7 +246,7 @@ export default function OrderBookPage() {
         doc.setTextColor(0, 0, 0);
         doc.text("Open & In Production Orders", margin, 20);
 
-        // Prepare table data
+        // Prepare table data: add Total (R) at end of each row (customer order value)
         const openOrdersTableData = openOrders.map((order) => [
           order.order_ref,
           order.customer_name,
@@ -250,25 +258,45 @@ export default function OrderBookPage() {
             day: "numeric",
           }),
           order.total_m.toFixed(2),
+          order.total_rand.toFixed(2),
         ]);
 
-        // Calculate column widths to fill full width
-        const orderRefWidth = 30;
-        const customerWidth = 50;
-        const pastelCodeWidth = 25;
-        const statusWidth = 30;
-        const createdWidth = 30;
-        const totalWidth = 25;
-        // Adjust if total doesn't match available width
-        const totalCalculated = orderRefWidth + customerWidth + pastelCodeWidth + statusWidth + createdWidth + totalWidth;
+        // Add totals row for Total (m) and Total (R)
+        const openOrdersTotalM = openOrders.reduce(
+          (sum, order) => sum + order.total_m,
+          0
+        );
+        const openOrdersTotalR = openOrders.reduce(
+          (sum, order) => sum + order.total_rand,
+          0
+        );
+        openOrdersTableData.push([
+          "TOTAL",
+          "",
+          "",
+          "",
+          "",
+          openOrdersTotalM.toFixed(2),
+          openOrdersTotalR.toFixed(2),
+        ]);
+
+        // Column widths: fit within available width so nothing is cut off
+        const orderRefWidth = 26;
+        const customerWidth = 42;
+        const pastelCodeWidth = 22;
+        const statusWidth = 26;
+        const createdWidth = 26;
+        const totalMWidth = 22;
+        const totalRWidth = 24;
+        const totalCalculated = orderRefWidth + customerWidth + pastelCodeWidth + statusWidth + createdWidth + totalMWidth + totalRWidth;
         const adjustmentFactor = availableWidth / totalCalculated;
         
         autoTable(doc, {
-          head: [["Order Ref", "Customer", "Pastel Code", "Status", "Created", "Total (m)"]],
+          head: [["Order Ref", "Customer", "Pastel Code", "Status", "Created", "Total (m)", "Total (R)"]],
           body: openOrdersTableData,
           startY: 30,
           margin: { left: margin, right: margin },
-          styles: { fontSize: 8 },
+          styles: { fontSize: 7 },
           headStyles: {
             fillColor: [16, 185, 129], // teal-500
             textColor: [255, 255, 255],
@@ -278,12 +306,23 @@ export default function OrderBookPage() {
             fillColor: [249, 250, 251], // slate-50
           },
           columnStyles: {
-            0: { cellWidth: orderRefWidth * adjustmentFactor }, // Order Ref
-            1: { cellWidth: customerWidth * adjustmentFactor }, // Customer
-            2: { cellWidth: pastelCodeWidth * adjustmentFactor }, // Pastel Code
-            3: { cellWidth: statusWidth * adjustmentFactor }, // Status
-            4: { cellWidth: createdWidth * adjustmentFactor }, // Created
-            5: { cellWidth: totalWidth * adjustmentFactor, halign: "right" }, // Total
+            0: { cellWidth: orderRefWidth * adjustmentFactor },
+            1: { cellWidth: customerWidth * adjustmentFactor },
+            2: { cellWidth: pastelCodeWidth * adjustmentFactor },
+            3: { cellWidth: statusWidth * adjustmentFactor },
+            4: { cellWidth: createdWidth * adjustmentFactor },
+            5: { cellWidth: totalMWidth * adjustmentFactor, halign: "right" },
+            6: { cellWidth: totalRWidth * adjustmentFactor, halign: "right" },
+          },
+          // Highlight totals row
+          didParseCell: function (data: any) {
+            if (
+              data.section === "body" &&
+              data.row.index === openOrdersTableData.length - 1
+            ) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249]; // slate-100
+            }
           },
           // Add footer on each page of the table
           didDrawPage: function (data: any) {
@@ -313,7 +352,7 @@ export default function OrderBookPage() {
         doc.setTextColor(0, 0, 0);
         doc.text("Completed & Dispatched Orders", margin, 20);
 
-        // Prepare table data
+        // Prepare table data: add Total (R) at end of each row (customer order value)
         const completedOrdersTableData = completedOrders.map((order) => [
           order.order_ref,
           order.customer_name,
@@ -325,24 +364,45 @@ export default function OrderBookPage() {
             day: "numeric",
           }),
           order.total_m.toFixed(2),
+          order.total_rand.toFixed(2),
         ]);
 
-        // Calculate column widths to fill full width (same as open orders table)
-        const orderRefWidth = 30;
-        const customerWidth = 50;
-        const pastelCodeWidth = 25;
-        const statusWidth = 30;
-        const createdWidth = 30;
-        const totalWidth = 25;
-        const totalCalculated = orderRefWidth + customerWidth + pastelCodeWidth + statusWidth + createdWidth + totalWidth;
+        // Add totals row
+        const completedTotalM = completedOrders.reduce(
+          (sum, order) => sum + order.total_m,
+          0
+        );
+        const completedTotalR = completedOrders.reduce(
+          (sum, order) => sum + order.total_rand,
+          0
+        );
+        completedOrdersTableData.push([
+          "TOTAL",
+          "",
+          "",
+          "",
+          "",
+          completedTotalM.toFixed(2),
+          completedTotalR.toFixed(2),
+        ]);
+
+        // Column widths: same as open orders so nothing is cut off
+        const orderRefWidth = 26;
+        const customerWidth = 42;
+        const pastelCodeWidth = 22;
+        const statusWidth = 26;
+        const createdWidth = 26;
+        const totalMWidth = 22;
+        const totalRWidth = 24;
+        const totalCalculated = orderRefWidth + customerWidth + pastelCodeWidth + statusWidth + createdWidth + totalMWidth + totalRWidth;
         const adjustmentFactor = availableWidth / totalCalculated;
 
         autoTable(doc, {
-          head: [["Order Ref", "Customer", "Pastel Code", "Status", "Created", "Total (m)"]],
+          head: [["Order Ref", "Customer", "Pastel Code", "Status", "Created", "Total (m)", "Total (R)"]],
           body: completedOrdersTableData,
           startY: 30,
           margin: { left: margin, right: margin },
-          styles: { fontSize: 8 },
+          styles: { fontSize: 7 },
           headStyles: {
             fillColor: [107, 114, 128], // slate-500 (different color for completed)
             textColor: [255, 255, 255],
@@ -352,12 +412,22 @@ export default function OrderBookPage() {
             fillColor: [249, 250, 251], // slate-50
           },
           columnStyles: {
-            0: { cellWidth: orderRefWidth * adjustmentFactor }, // Order Ref
-            1: { cellWidth: customerWidth * adjustmentFactor }, // Customer
-            2: { cellWidth: pastelCodeWidth * adjustmentFactor }, // Pastel Code
-            3: { cellWidth: statusWidth * adjustmentFactor }, // Status
-            4: { cellWidth: createdWidth * adjustmentFactor }, // Created
-            5: { cellWidth: totalWidth * adjustmentFactor, halign: "right" }, // Total
+            0: { cellWidth: orderRefWidth * adjustmentFactor },
+            1: { cellWidth: customerWidth * adjustmentFactor },
+            2: { cellWidth: pastelCodeWidth * adjustmentFactor },
+            3: { cellWidth: statusWidth * adjustmentFactor },
+            4: { cellWidth: createdWidth * adjustmentFactor },
+            5: { cellWidth: totalMWidth * adjustmentFactor, halign: "right" },
+            6: { cellWidth: totalRWidth * adjustmentFactor, halign: "right" },
+          },
+          didParseCell: function (data: any) {
+            if (
+              data.section === "body" &&
+              data.row.index === completedOrdersTableData.length - 1
+            ) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
           },
           // Add footer on each page of the table
           didDrawPage: function (data: any) {
@@ -376,6 +446,22 @@ export default function OrderBookPage() {
         // Update page number after table is drawn
         pageNumber = doc.internal.pages.length - 1;
       }
+
+      // Helper to filter orders by coating type (e.g. PVC, Ripstop)
+      const filterOrdersByCoating = (
+        ordersToProcess: CustomerOrder[],
+        coatingCode: string
+      ) => {
+        const target = coatingCode.toUpperCase();
+        return ordersToProcess
+          .map((order) => {
+            const filteredLines = order.order_lines.filter(
+              (line) => (line.coating_type || "").toUpperCase() === target
+            );
+            return { ...order, order_lines: filteredLines };
+          })
+          .filter((order) => order.order_lines.length > 0);
+      };
 
       // Helper function to build pivot table
       const buildPivotTable = (
@@ -532,10 +618,38 @@ export default function OrderBookPage() {
         [16, 185, 129] // teal-500
       );
 
+      // Open/In Production Orders Pivot - PVC only
+      buildPivotTable(
+        filterOrdersByCoating(openOrders, "PVC"),
+        "Open & In Production Orders by Customer and Colour – PVC only",
+        [16, 185, 129] // teal-500
+      );
+
+      // Open/In Production Orders Pivot - Ripstop only
+      buildPivotTable(
+        filterOrdersByCoating(openOrders, "RIPSTOP"),
+        "Open & In Production Orders by Customer and Colour – Ripstop only",
+        [16, 185, 129] // teal-500
+      );
+
       // Completed/Dispatched Orders Pivot
       buildPivotTable(
         completedOrders,
         "Completed & Dispatched Orders by Customer and Colour",
+        [107, 114, 128] // slate-500
+      );
+
+      // Completed/Dispatched Orders Pivot - PVC only
+      buildPivotTable(
+        filterOrdersByCoating(completedOrders, "PVC"),
+        "Completed & Dispatched Orders by Customer and Colour – PVC only",
+        [107, 114, 128] // slate-500
+      );
+
+      // Completed/Dispatched Orders Pivot - Ripstop only
+      buildPivotTable(
+        filterOrdersByCoating(completedOrders, "RIPSTOP"),
+        "Completed & Dispatched Orders by Customer and Colour – Ripstop only",
         [107, 114, 128] // slate-500
       );
 

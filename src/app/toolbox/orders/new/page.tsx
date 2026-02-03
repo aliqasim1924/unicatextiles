@@ -295,6 +295,7 @@ export default function NewOrderPage() {
             gsm: gsmOpt?.gsm?.toString() || null,
             quantity_m: parseFloat(l.quantity_m),
             notes: l.notes.trim() || null,
+            price_rand: 0,
           };
         })
       );

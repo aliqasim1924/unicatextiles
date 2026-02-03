@@ -47,7 +47,7 @@ interface OrderLine {
   color: string;
   gsm: string | null;
   quantity_m: number;
-  notes: string | null;
+  price_rand: number;
 }
 
 interface FabricType {
@@ -221,7 +221,7 @@ export default function CustomerOrderDetailPage() {
               color,
               gsm,
               quantity_m,
-              notes,
+              price_rand,
               created_at
             )
           `
@@ -260,7 +260,7 @@ export default function CustomerOrderDetailPage() {
                 color,
                 gsm,
                 quantity_m,
-                notes,
+                price_rand,
                 created_at
               )
             `
@@ -342,7 +342,7 @@ export default function CustomerOrderDetailPage() {
           color: l.color || "",
           gsm: l.gsm,
           quantity_m: Number(l.quantity_m || 0),
-          notes: l.notes ?? null,
+          price_rand: Number(l.price_rand ?? 0),
         })) || [];
       setLines(mappedLines);
 
@@ -489,7 +489,7 @@ export default function CustomerOrderDetailPage() {
           color: "",
           gsm: null,
           quantity_m: 0,
-          notes: null,
+          price_rand: 0,
         })
         .select("*")
         .single();
@@ -506,7 +506,7 @@ export default function CustomerOrderDetailPage() {
           color: data.color,
           gsm: data.gsm,
           quantity_m: Number(data.quantity_m || 0),
-          notes: data.notes,
+          price_rand: Number(data.price_rand ?? 0),
         },
       ]);
     } catch (err: any) {
@@ -553,7 +553,7 @@ export default function CustomerOrderDetailPage() {
         color: colorOpt?.color_name ?? (merged.color !== undefined && merged.color !== null ? merged.color : ""),
         gsm: gsmOpt?.gsm?.toString() ?? merged.gsm ?? null,
         quantity_m: merged.quantity_m,
-        notes: merged.notes,
+        price_rand: merged.price_rand ?? 0,
       };
 
       // If fabric_type_id changed, clear dependent options
@@ -743,7 +743,7 @@ export default function CustomerOrderDetailPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     Quantity (m)
                   </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Notes</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Price (R)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
                 </tr>
               </thead>
@@ -848,9 +848,15 @@ export default function CustomerOrderDetailPage() {
                     </td>
                     <td className="px-4 py-3">
                       <input
-                        type="text"
-                        value={line.notes || ""}
-                        onChange={(e) => handleUpdateLine(line.id, { notes: e.target.value })}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={line.price_rand}
+                        onChange={(e) =>
+                          handleUpdateLine(line.id, {
+                            price_rand: Number(e.target.value || 0),
+                          })
+                        }
                         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
                       />
                     </td>
@@ -872,6 +878,7 @@ export default function CustomerOrderDetailPage() {
         )}
         <div className="mt-4 text-sm text-slate-700">
           <div>Total ordered: {formatQuantity(totalOrdered)} m</div>
+          <div>Order value: R {lines.reduce((sum, l) => sum + (l.price_rand ?? 0), 0).toFixed(2)}</div>
           {remaining !== null && (
             <div className="text-slate-600">Remaining vs issued: {formatQuantity(remaining)} m</div>
           )}
