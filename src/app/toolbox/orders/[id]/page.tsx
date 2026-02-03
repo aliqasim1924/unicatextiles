@@ -518,14 +518,16 @@ export default function CustomerOrderDetailPage() {
   }
 
   async function handleUpdateLine(id: string, patch: Partial<OrderLine>) {
+    const previousLine = lines.find((l) => l.id === id);
+    if (!previousLine) return;
+
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
 
     setIsSavingLines(true);
     setError(null);
     setSuccess(null);
     try {
-      const line = lines.find((l) => l.id === id);
-      const merged = { ...line, ...patch };
+      const merged = { ...previousLine, ...patch };
 
       // Resolve text values from catalog for backward compatibility
       const fabricType = merged.fabric_type_id
@@ -546,16 +548,16 @@ export default function CustomerOrderDetailPage() {
         gsm_option_id: merged.gsm_option_id || null,
         color_option_id: merged.color_option_id || null,
         width_option_id: merged.width_option_id || null,
-        // Backward compatibility: update text fields
-        coating_type: fabricType?.code || merged.coating_type || null,
-        color: colorOpt?.color_name || merged.color || null,
-        gsm: gsmOpt?.gsm?.toString() || merged.gsm || null,
+        // Backward compatibility: update text fields (use "" not null for NOT NULL columns)
+        coating_type: fabricType?.code ?? merged.coating_type ?? "",
+        color: colorOpt?.color_name ?? (merged.color !== undefined && merged.color !== null ? merged.color : ""),
+        gsm: gsmOpt?.gsm?.toString() ?? merged.gsm ?? null,
         quantity_m: merged.quantity_m,
         notes: merged.notes,
       };
 
       // If fabric_type_id changed, clear dependent options
-      if (patch.fabric_type_id !== undefined && patch.fabric_type_id !== line?.fabric_type_id) {
+      if (patch.fabric_type_id !== undefined && patch.fabric_type_id !== previousLine.fabric_type_id) {
         updatePayload.gsm_option_id = null;
         updatePayload.color_option_id = null;
         updatePayload.width_option_id = null;
@@ -569,7 +571,8 @@ export default function CustomerOrderDetailPage() {
     } catch (err: any) {
       console.error("Failed to update line", err);
       setError(err.message || "Failed to update line.");
-      await fetchData();
+      // Revert optimistic update so dropdown doesn't jump; do not refetch (avoids refresh loop)
+      setLines((prev) => prev.map((l) => (l.id === id ? previousLine : l)));
     } finally {
       setIsSavingLines(false);
     }
