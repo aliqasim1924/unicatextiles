@@ -236,6 +236,14 @@ export default function OrderBookPage() {
       // Full available width (landscape + small margins to avoid cut-off)
       const availableWidth = pageWidth - 2 * margin;
 
+      // Format Rand as "R x xxx xxx.xx" (spaces as thousand separators)
+      const formatRand = (n: number) => {
+        const fixed = n.toFixed(2);
+        const [intPart, decPart] = fixed.split(".");
+        const withSpaces = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+        return `R${withSpaces}.${decPart}`;
+      };
+
       // ===== OPEN/IN PRODUCTION ORDERS TABLE =====
       if (openOrders.length > 0) {
         doc.addPage();
@@ -258,7 +266,7 @@ export default function OrderBookPage() {
             day: "numeric",
           }),
           order.total_m.toFixed(2),
-          order.total_rand.toFixed(2),
+          formatRand(order.total_rand),
         ]);
 
         // Add totals row for Total (m) and Total (R)
@@ -277,7 +285,7 @@ export default function OrderBookPage() {
           "",
           "",
           openOrdersTotalM.toFixed(2),
-          openOrdersTotalR.toFixed(2),
+          formatRand(openOrdersTotalR),
         ]);
 
         // Column widths: fit within available width so nothing is cut off
@@ -364,7 +372,7 @@ export default function OrderBookPage() {
             day: "numeric",
           }),
           order.total_m.toFixed(2),
-          order.total_rand.toFixed(2),
+          formatRand(order.total_rand),
         ]);
 
         // Add totals row
@@ -383,7 +391,7 @@ export default function OrderBookPage() {
           "",
           "",
           completedTotalM.toFixed(2),
-          completedTotalR.toFixed(2),
+          formatRand(completedTotalR),
         ]);
 
         // Column widths: same as open orders so nothing is cut off
