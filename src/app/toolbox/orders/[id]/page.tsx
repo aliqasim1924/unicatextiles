@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +27,14 @@ interface CustomerOrder {
   gate_pass_no?: string | null;
   completed_at?: string | null;
   created_at?: string | null;
+  parent_order_id?: string | null;
+  is_back_order?: boolean;
+}
+
+interface BackOrderSummary {
+  id: string;
+  order_ref: string;
+  status: string;
 }
 
 interface OrderLine {
@@ -83,6 +92,8 @@ export default function CustomerOrderDetailPage() {
   const [order, setOrder] = useState<CustomerOrder | null>(null);
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [issues, setIssues] = useState<IssueSummary[]>([]);
+  const [backOrders, setBackOrders] = useState<BackOrderSummary[]>([]);
+  const [parentOrderRef, setParentOrderRef] = useState<string | null>(null);
   const [invoiceNo, setInvoiceNo] = useState("");
   const [gatePassNo, setGatePassNo] = useState("");
   const [status, setStatus] = useState<OrderStatus>("OPEN");
@@ -193,6 +204,8 @@ export default function CustomerOrderDetailPage() {
             gate_pass_no,
             completed_at,
             created_at,
+            parent_order_id,
+            is_back_order,
             customers:customer_id (
               id,
               name,
@@ -234,6 +247,8 @@ export default function CustomerOrderDetailPage() {
               gate_pass_no,
               completed_at,
               created_at,
+              parent_order_id,
+              is_back_order,
               customers:customer_id (
                 id,
                 name,
@@ -260,6 +275,9 @@ export default function CustomerOrderDetailPage() {
       }
       if (orderError) throw orderError;
 
+      const hasBackOrderColumns =
+        orderData.parent_order_id !== undefined || orderData.is_back_order !== undefined;
+
       const normalizedOrder: CustomerOrder = {
         id: orderData.id,
         order_ref: orderData.order_ref,
@@ -278,9 +296,35 @@ export default function CustomerOrderDetailPage() {
         gate_pass_no: orderData.gate_pass_no ?? null,
         completed_at: orderData.completed_at ?? null,
         created_at: orderData.created_at ?? null,
+        parent_order_id: hasBackOrderColumns ? (orderData.parent_order_id ?? null) : null,
+        is_back_order: hasBackOrderColumns ? (orderData.is_back_order === true) : false,
       };
 
       setOrder(normalizedOrder);
+
+      // Fetch back orders and parent ref only when back order columns exist (after migration)
+      if (hasBackOrderColumns) {
+        const { data: backOrdersData } = await supabaseBrowserClient
+          .from("customer_orders")
+          .select("id, order_ref, status")
+          .eq("parent_order_id", orderId)
+          .order("created_at", { ascending: true });
+        setBackOrders((backOrdersData as BackOrderSummary[]) || []);
+
+        if (orderData.parent_order_id) {
+          const { data: parentData } = await supabaseBrowserClient
+            .from("customer_orders")
+            .select("order_ref")
+            .eq("id", orderData.parent_order_id)
+            .single();
+          setParentOrderRef(parentData?.order_ref ?? null);
+        } else {
+          setParentOrderRef(null);
+        }
+      } else {
+        setBackOrders([]);
+        setParentOrderRef(null);
+      }
       setInvoiceNo(normalizedOrder.invoice_no || "");
       setGatePassNo(normalizedOrder.gate_pass_no || "");
       setStatus(normalizedOrder.status || "OPEN");
@@ -591,6 +635,39 @@ export default function CustomerOrderDetailPage() {
         </div>
       )}
 
+      {/* Parent order / Back orders */}
+      {(order?.is_back_order && order?.parent_order_id) || backOrders.length > 0 ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap gap-4 text-sm">
+            {order?.is_back_order && order?.parent_order_id && (
+              <div>
+                <span className="text-slate-500">Parent order: </span>
+                <Link
+                  href={`/toolbox/orders/${order.parent_order_id}`}
+                  className="font-semibold text-teal-700 hover:text-teal-900 underline"
+                >
+                  {parentOrderRef ?? order.parent_order_id}
+                </Link>
+              </div>
+            )}
+            {backOrders.length > 0 && (
+              <div>
+                <span className="text-slate-500">Back orders: </span>
+                {backOrders.map((bo) => (
+                  <Link
+                    key={bo.id}
+                    href={`/toolbox/orders/${bo.id}`}
+                    className="font-semibold text-teal-700 hover:text-teal-900 underline mr-2"
+                  >
+                    {bo.order_ref}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       {/* Header */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 md:grid-cols-2">
@@ -607,7 +684,14 @@ export default function CustomerOrderDetailPage() {
           </div>
           <div>
             <p className="text-sm text-slate-500">Order Ref</p>
-            <p className="text-lg font-semibold text-slate-900">{order.order_ref}</p>
+            <p className="text-lg font-semibold text-slate-900">
+              {order.order_ref}
+              {order.is_back_order && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                  Back order
+                </span>
+              )}
+            </p>
           </div>
           <div>
             <p className="text-sm text-slate-500">Status</p>

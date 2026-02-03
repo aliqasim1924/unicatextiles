@@ -13,6 +13,8 @@ interface CustomerOrderRow {
   order_ref: string;
   status: OrderStatus;
   created_at: string;
+  parent_order_id: string | null;
+  is_back_order: boolean;
   customers: {
     id: string;
     name: string;
@@ -29,6 +31,8 @@ interface CustomerOrder {
   customer_name: string;
   customer_pastel_code: string | null;
   total_m: number | null;
+  parent_order_id: string | null;
+  is_back_order: boolean;
 }
 
 export default function OrdersPage() {
@@ -36,7 +40,7 @@ export default function OrdersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | OrderStatus>("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | OrderStatus | "BACK_ORDER">("ALL");
 
   useEffect(() => {
     fetchOrders();
@@ -47,7 +51,11 @@ export default function OrdersPage() {
       setIsLoading(true);
       setError(null);
 
-      const { data, error: fetchError } = await supabaseBrowserClient
+      let data: any[] | null = null;
+      let fetchError: any = null;
+      let hasBackOrderColumns = false;
+
+      const result = await supabaseBrowserClient
         .from("customer_orders")
         .select(
           `
@@ -57,6 +65,8 @@ export default function OrdersPage() {
           created_at,
           customer_name,
           customer_id,
+          parent_order_id,
+          is_back_order,
           customers:customer_id (
             id,
             name,
@@ -68,6 +78,36 @@ export default function OrdersPage() {
         `
         )
         .order("created_at", { ascending: false });
+
+      if (result.error?.code === "42703" || result.error?.message?.includes("does not exist")) {
+        const fallback = await supabaseBrowserClient
+          .from("customer_orders")
+          .select(
+            `
+            id,
+            order_ref,
+            status,
+            created_at,
+            customer_name,
+            customer_id,
+            customers:customer_id (
+              id,
+              name,
+              pastel_code
+            ),
+            customer_order_lines (
+              quantity_m
+            )
+          `
+          )
+          .order("created_at", { ascending: false });
+        data = fallback.data;
+        fetchError = fallback.error;
+      } else {
+        data = result.data;
+        fetchError = result.error;
+        hasBackOrderColumns = true;
+      }
 
       if (fetchError) throw fetchError;
 
@@ -88,6 +128,8 @@ export default function OrdersPage() {
             customer_name: cust?.name || row.customer_name || "—",
             customer_pastel_code: cust?.pastel_code ?? null,
             total_m: total,
+            parent_order_id: hasBackOrderColumns ? (row.parent_order_id ?? null) : null,
+            is_back_order: hasBackOrderColumns ? (row.is_back_order === true) : false,
           };
         }) || [];
 
@@ -106,7 +148,12 @@ export default function OrdersPage() {
         !search ||
         o.order_ref.toLowerCase().includes(search.toLowerCase()) ||
         o.customer_name.toLowerCase().includes(search.toLowerCase());
-      const matchesStatus = statusFilter === "ALL" || o.status === statusFilter;
+      const matchesStatus =
+        statusFilter === "ALL"
+          ? true
+          : statusFilter === "BACK_ORDER"
+            ? o.is_back_order
+            : o.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
   }, [orders, search, statusFilter]);
@@ -136,6 +183,9 @@ export default function OrdersPage() {
           <Link href="/toolbox/orders/order-book">
             <Button variant="outline">Order Book Report</Button>
           </Link>
+          <Link href="/toolbox/orders/returns">
+            <Button variant="outline">Returns</Button>
+          </Link>
           <Link href="/toolbox/orders/customers">
             <Button variant="outline">Customers</Button>
           </Link>
@@ -161,10 +211,11 @@ export default function OrdersPage() {
             <label className="block text-sm font-semibold text-slate-900 mb-2">Status</label>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
               className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
             >
               <option value="ALL">All</option>
+              <option value="BACK_ORDER">Back orders only</option>
               <option value="OPEN">Open</option>
               <option value="PARTIALLY_FULFILLED">Partially Fulfilled</option>
               <option value="COMPLETED">Completed</option>
@@ -203,7 +254,14 @@ export default function OrdersPage() {
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
                     onClick={() => (window.location.href = `/toolbox/orders/${order.id}`)}
                   >
-                    <td className="px-4 py-3 font-medium text-slate-900">{order.order_ref}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {order.order_ref}
+                      {order.is_back_order && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                          Back order
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-slate-900">{order.customer_name}</td>
                     <td className="px-4 py-3 text-slate-900">
                           {order.total_m !== null && order.total_m !== undefined

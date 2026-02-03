@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
@@ -28,7 +29,9 @@ interface IssueHeader {
 
 export default function FinishedFabricStoreIssueDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const issueId = params.id as string;
+  const backOrderId = searchParams.get("back_order");
 
   const [header, setHeader] = useState<IssueHeader | null>(null);
   const [items, setItems] = useState<IssueItem[]>([]);
@@ -147,8 +150,20 @@ export default function FinishedFabricStoreIssueDetailPage() {
   return (
     <div className="min-h-screen bg-slate-100 print:bg-white print:p-0">
       {/* Screen-only actions */}
-      <div className="print:hidden mx-auto max-w-[900px] px-4 py-6 flex items-center justify-between">
-        <BackButton href="/toolbox/finished-fabric/store" label="Back to Store" />
+      <div className="print:hidden mx-auto max-w-[900px] px-4 py-6 space-y-3">
+        {backOrderId && (
+          <div className="rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
+            A back order was created for the remaining quantity.{" "}
+            <Link
+              href={`/toolbox/orders/${backOrderId}`}
+              className="font-semibold text-teal-700 underline hover:text-teal-900"
+            >
+              Open back order →
+            </Link>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <BackButton href="/toolbox/finished-fabric/store" label="Back to Store" />
         <div className="flex gap-2">
           <Button
             variant="secondary"
@@ -163,6 +178,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
           <Button variant="primary" onClick={() => window.print()}>
             Print Issue Slip
           </Button>
+        </div>
         </div>
       </div>
 

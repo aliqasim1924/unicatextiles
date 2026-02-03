@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
@@ -60,6 +60,7 @@ interface CustomerOrder {
   id: string;
   order_ref: string;
   status: string | null;
+  customer_id: string | null;
   customers?: {
     id: string;
     name: string;
@@ -68,6 +69,7 @@ interface CustomerOrder {
 
 export default function FinishedFabricStoreIssuePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [stockRolls, setStockRolls] = useState<StoreRoll[]>([]);
   const [selectedRollIds, setSelectedRollIds] = useState<Set<string>>(new Set());
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>("ALL");
@@ -90,6 +92,11 @@ export default function FinishedFabricStoreIssuePage() {
   useEffect(() => {
     fetchStock();
   }, []);
+
+  useEffect(() => {
+    const ref = searchParams.get("reference");
+    if (ref) setReference(ref);
+  }, [searchParams]);
 
   useEffect(() => {
     if (destination === "CUSTOMER") {
@@ -600,6 +607,76 @@ export default function FinishedFabricStoreIssuePage() {
           })
           .eq("id", selectedOrderId)
           .in("status", ["OPEN", "PARTIALLY_FULFILLED"]);
+
+        // Create or update back order for remaining quantity (shortfall)
+        const shortfallReqs = requirementsWithSelected.filter((req) => req.remaining_m > 0);
+        if (shortfallReqs.length > 0) {
+          const originalOrder = customerOrders.find((o) => o.id === selectedOrderId);
+          const customerId = (originalOrder as CustomerOrder & { customer_id?: string | null })?.customer_id ?? null;
+          const orderRef = originalOrder?.order_ref ?? "ORD";
+
+          const { data: existingBackOrder } = await supabaseBrowserClient
+            .from("customer_orders")
+            .select("id")
+            .eq("parent_order_id", selectedOrderId)
+            .eq("is_back_order", true)
+            .in("status", ["OPEN", "PARTIALLY_FULFILLED"])
+            .maybeSingle();
+
+          let backOrderId: string;
+          let backOrderRef: string;
+
+          if (existingBackOrder) {
+            backOrderId = existingBackOrder.id;
+            const { data: bo } = await supabaseBrowserClient
+              .from("customer_orders")
+              .select("order_ref")
+              .eq("id", backOrderId)
+              .single();
+            backOrderRef = bo?.order_ref ?? "BO";
+
+            await supabaseBrowserClient
+              .from("customer_order_lines")
+              .delete()
+              .eq("order_id", backOrderId);
+          } else {
+            const { data: newBackOrder, error: boError } = await supabaseBrowserClient
+              .from("customer_orders")
+              .insert({
+                customer_id: customerId,
+                parent_order_id: selectedOrderId,
+                is_back_order: true,
+                order_ref: `BO-${orderRef}`,
+                status: "OPEN",
+              })
+              .select("id, order_ref")
+              .single();
+            if (boError) throw boError;
+            backOrderId = newBackOrder!.id;
+            backOrderRef = newBackOrder!.order_ref ?? "BO";
+          }
+
+          const backOrderLines = shortfallReqs.map((req) => ({
+            order_id: backOrderId,
+            fabric_type_id: req.fabric_type_id,
+            color_option_id: req.color_option_id,
+            gsm_option_id: req.gsm_option_id,
+            width_option_id: req.width_option_id,
+            coating_type: req.coating_type,
+            color: req.color,
+            gsm: req.gsm,
+            quantity_m: req.remaining_m,
+          }));
+
+          const { error: linesErr } = await supabaseBrowserClient
+            .from("customer_order_lines")
+            .insert(backOrderLines);
+          if (linesErr) throw linesErr;
+
+          setSuccess(`Store issue created. Back order ${backOrderRef} created for remaining quantity.`);
+          router.push(`/toolbox/finished-fabric/store/issues/${issue.id}?back_order=${backOrderId}`);
+          return;
+        }
       }
 
       setSuccess("Store issue created.");
