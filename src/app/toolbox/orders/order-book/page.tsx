@@ -345,6 +345,58 @@ export default function OrderBookPage() {
             }
           },
         });
+
+        // Two summary blocks below the table: Total Ripstop Canvas, Total PVC (meters + value)
+        const finalY = (doc as any).lastAutoTable?.finalY ?? 30;
+        let blockStartY = finalY + 10;
+        const blockHeight = 22;
+        const blockGap = 8;
+        const halfWidth = (pageWidth - 2 * margin - blockGap) / 2;
+        const leftBlockX = margin;
+        const rightBlockX = margin + halfWidth + blockGap;
+
+        const ripstopLines = openOrders.flatMap((o) =>
+          (o.order_lines || []).filter(
+            (l: OrderLine) => (l.coating_type || "").toUpperCase().includes("RIPSTOP")
+          )
+        );
+        const pvcLines = openOrders.flatMap((o) =>
+          (o.order_lines || []).filter(
+            (l: OrderLine) => (l.coating_type || "").toUpperCase() === "PVC"
+          )
+        );
+        const totalRipstopM = ripstopLines.reduce(
+          (sum: number, l: any) => sum + Number(l.quantity_m || 0),
+          0
+        );
+        const totalRipstopR = ripstopLines.reduce(
+          (sum: number, l: any) => sum + Number(l.quantity_m || 0) * Number(l.price_rand ?? 0),
+          0
+        );
+        const totalPVCM = pvcLines.reduce(
+          (sum: number, l: any) => sum + Number(l.quantity_m || 0),
+          0
+        );
+        const totalPVCR = pvcLines.reduce(
+          (sum: number, l: any) => sum + Number(l.quantity_m || 0) * Number(l.price_rand ?? 0),
+          0
+        );
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(0, 0, 0);
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.3);
+        doc.rect(leftBlockX, blockStartY, halfWidth, blockHeight);
+        doc.rect(rightBlockX, blockStartY, halfWidth, blockHeight);
+        doc.text("Total Ripstop Canvas", leftBlockX + 4, blockStartY + 6);
+        doc.text("Total PVC", rightBlockX + 4, blockStartY + 6);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text(`Orders to supply: ${totalRipstopM.toFixed(2)} m`, leftBlockX + 4, blockStartY + 13);
+        doc.text(`Value: ${formatRand(totalRipstopR)}`, leftBlockX + 4, blockStartY + 19);
+        doc.text(`Orders to supply: ${totalPVCM.toFixed(2)} m`, rightBlockX + 4, blockStartY + 13);
+        doc.text(`Value: ${formatRand(totalPVCR)}`, rightBlockX + 4, blockStartY + 19);
         
         // Update page number after table is drawn
         pageNumber = doc.internal.pages.length - 1;

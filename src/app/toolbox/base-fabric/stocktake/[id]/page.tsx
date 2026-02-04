@@ -661,6 +661,7 @@ export default function BaseFabricStocktakeDetailPage() {
         // ignore logo load failures
       }
 
+      // Header with details (only drawn on first page). Returns bottom Y position.
       const addHeader = () => {
         let y = headerTopOffset;
 
@@ -676,8 +677,9 @@ export default function BaseFabricStocktakeDetailPage() {
         doc.text(templateName, pageWidth / 2, y, {
           align: "center",
         });
-        y += 6;
+        y += 8;
 
+        // 2x2 details layout to save vertical space
         doc.setFontSize(9);
         const generatedAt = new Date().toLocaleString("en-ZA", {
           year: "numeric",
@@ -687,41 +689,49 @@ export default function BaseFabricStocktakeDetailPage() {
           minute: "2-digit",
         });
 
-        doc.text(
-          `Stocktake Date: ${new Date(
-            session.stocktake_date,
-          ).toLocaleDateString("en-ZA", {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          })}`,
-          marginLeft,
-          y,
-        );
-        doc.text(`Generated: ${generatedAt}`, marginLeft, y + 6);
-        doc.text(
-          `Performed By: ${session.performed_by}`,
-          marginLeft,
-          y + 12,
-        );
+        const stocktakeDate = new Date(
+          session.stocktake_date,
+        ).toLocaleDateString("en-ZA", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
 
+        const colWidth = (pageWidth - marginLeft - marginRight) / 2;
+        const leftX = marginLeft;
+        const rightX = marginLeft + colWidth;
+        const rowY1 = y;
+        const rowY2 = y + 6;
+
+        // Row 1
+        doc.text(`Stocktake Date: ${stocktakeDate}`, leftX, rowY1);
+        doc.text(`Generated: ${generatedAt}`, rightX, rowY1, {
+          maxWidth: colWidth - 4,
+        });
+
+        // Row 2
+        doc.text(`Performed By: ${session.performed_by}`, leftX, rowY2);
         if (session.notes) {
-          doc.text(`Notes: ${session.notes}`, marginLeft, y + 18, {
-            maxWidth: pageWidth - marginLeft - marginRight,
+          doc.text(`Notes: ${session.notes}`, rightX, rowY2, {
+            maxWidth: colWidth - 4,
           });
         }
+
+        // Return bottom Y of the header/details block
+        return rowY2 + (session.notes ? 8 : 6);
       };
 
-      const addFooterAndSignatures = (data: any) => {
-        const pageNumber = data.pageNumber;
+      const addFooter = (pageNumber: number) => {
         doc.setFontSize(8);
         doc.setTextColor(100, 100, 100);
         doc.text(`Page ${pageNumber}`, marginLeft, pageHeight - 7);
         doc.text(templateName, pageWidth - marginRight, pageHeight - 7, {
           align: "right",
         });
+      };
 
-        // Signature area
+      const addSignatures = () => {
+        // Signature area on last page only
         doc.setTextColor(0, 0, 0);
         const sigTop = pageHeight - 35;
         const colWidth = (pageWidth - marginLeft - marginRight) / 4;
@@ -743,7 +753,7 @@ export default function BaseFabricStocktakeDetailPage() {
         });
       };
 
-      addHeader();
+      const headerBottomY = addHeader();
 
       const body = lines.map((line) => {
         const roll = line.base_fabric_rolls;
@@ -775,7 +785,7 @@ export default function BaseFabricStocktakeDetailPage() {
           ],
         ],
         body,
-        startY: session.notes ? headerTopOffset + 30 : headerTopOffset + 24,
+        startY: headerBottomY + 4,
         margin: {
           left: marginLeft,
           right: marginRight,
@@ -794,10 +804,14 @@ export default function BaseFabricStocktakeDetailPage() {
           6: { halign: "right" },
         },
         didDrawPage: (data: any) => {
-          addHeader();
-          addFooterAndSignatures(data);
+          addFooter(data.pageNumber);
         },
       });
+
+      // Add signatures only on the last page
+      const lastPageNumber = (doc as any).internal.getNumberOfPages?.() ?? 1;
+      (doc as any).setPage(lastPageNumber);
+      addSignatures();
 
       doc.save(
         `base-fabric-stocktake-${session.stocktake_date}-${new Date()
