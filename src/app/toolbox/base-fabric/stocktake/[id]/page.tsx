@@ -462,8 +462,9 @@ export default function BaseFabricStocktakeDetailPage() {
           length_m: lengthM,
           qr_code: qrCode,
           cut_at: new Date().toISOString(),
+          // Do not treat as in-stock until stocktake is posted
           current_location: LOCATION_WEAVING,
-          status: STATUS_AVAILABLE,
+          status: "PENDING_STOCKTAKE",
         })
         .select("id")
         .single();
@@ -549,8 +550,17 @@ export default function BaseFabricStocktakeDetailPage() {
             ? `${baseNotes} - Reason: ${reasonText}`
             : baseNotes;
 
+          // New extra roll (unrecorded roll added during stocktake: system = 0, counted > 0)
+          if ((line.system_qty ?? 0) === 0 && (line.counted_qty ?? 0) > 0) {
+            rollUpdates.push({
+              id: line.base_fabric_roll_id,
+              status: STATUS_AVAILABLE,
+              current_location: LOCATION_WEAVING,
+              notes: fullNotes,
+            });
+          }
           // If counted is 0 or significantly less, mark as missing/lost
-          if (line.counted_qty === 0 || (line.counted_qty ?? 0) < line.system_qty * 0.5) {
+          else if (line.counted_qty === 0 || (line.counted_qty ?? 0) < line.system_qty * 0.5) {
             rollUpdates.push({
               id: line.base_fabric_roll_id,
               status: "LOST",
