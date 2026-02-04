@@ -92,6 +92,7 @@ export default function BaseFabricStocktakeDetailPage() {
   const [addRollForm, setAddRollForm] = useState({
     base_fabric_item_id: "",
     roll_no: "",
+    loom_no: "",
     length_m: "",
     reason: "",
     note: "",
@@ -440,6 +441,7 @@ export default function BaseFabricStocktakeDetailPage() {
         .insert({
           base_fabric_item_id: addRollForm.base_fabric_item_id.trim(),
           planned_qty_m: lengthM,
+          loom_no: addRollForm.loom_no.trim() || null,
           status: "COMPLETED",
           is_outsourced: isOutsourced,
           beam_weft_not_required: true,
@@ -487,6 +489,7 @@ export default function BaseFabricStocktakeDetailPage() {
       setAddRollForm({
         base_fabric_item_id: "",
         roll_no: "",
+        loom_no: "",
         length_m: "",
         reason: "",
         note: "",
@@ -1125,6 +1128,20 @@ export default function BaseFabricStocktakeDetailPage() {
                     }
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
                     placeholder="e.g. R-001"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Loom number (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addRollForm.loom_no}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({ ...prev, loom_no: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 5"
                   />
                 </div>
                 <div>
