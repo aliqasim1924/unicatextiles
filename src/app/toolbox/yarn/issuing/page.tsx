@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, FormEvent, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -27,6 +27,7 @@ interface IssueTransaction {
 
 export default function YarnIssuingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [yarnItemId, setYarnItemId] = useState("");
   const [batchNo, setBatchNo] = useState("");
   const [quantity, setQuantity] = useState("");
@@ -44,6 +45,12 @@ export default function YarnIssuingPage() {
   const [baseFabricOrders, setBaseFabricOrders] = useState<BaseFabricOrderOption[]>([]);
   const [selectedBaseFabricOrderId, setSelectedBaseFabricOrderId] = useState<string>("");
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  // Department allocation
+  const [deptAvailableQty, setDeptAvailableQty] = useState<number | null>(null);
+  const [deptWithDeptTotal, setDeptWithDeptTotal] = useState<number | null>(null);
+  const [deptAllocatedTotal, setDeptAllocatedTotal] = useState<number | null>(null);
+  const [deptAllocQty, setDeptAllocQty] = useState<string>("");
+  const [isLoadingDept, setIsLoadingDept] = useState(false);
   
   // Stock tracking
   const [stockMap, setStockMap] = useState<Map<string, number>>(new Map());
@@ -54,6 +61,26 @@ export default function YarnIssuingPage() {
     fetchStockData();
     fetchRunningBaseFabricOrders();
   }, []);
+
+  // Pre-select base fabric order when opened with ?order=<id> (e.g. from order detail page)
+  useEffect(() => {
+    const orderId = searchParams.get("order");
+    if (!orderId || !baseFabricOrders.length) return;
+    const exists = baseFabricOrders.some((o) => o.id === orderId);
+    if (exists) setSelectedBaseFabricOrderId(orderId);
+  }, [searchParams, baseFabricOrders]);
+
+  // Refresh department availability when yarn item changes
+  useEffect(() => {
+    if (!yarnItemId) {
+      setDeptAvailableQty(null);
+      setDeptWithDeptTotal(null);
+      setDeptAllocatedTotal(null);
+      setDeptAllocQty("");
+      return;
+    }
+    fetchDeptAvailability(yarnItemId);
+  }, [yarnItemId]);
 
   async function fetchStockData() {
     try {
@@ -113,7 +140,6 @@ export default function YarnIssuingPage() {
         }) as BaseFabricOrderOption[];
 
       setBaseFabricOrders(options);
-      console.log("Base fabric orders (active):", options);
     } catch (err) {
       console.error("Error fetching base fabric orders:", err);
     } finally {
@@ -151,6 +177,92 @@ export default function YarnIssuingPage() {
       console.error("Error fetching recent issues:", err);
     } finally {
       setIsLoadingIssues(false);
+    }
+  }
+
+  // Fetch yarn available in department for allocation (per yarn item)
+  async function fetchDeptAvailability(yarnId: string) {
+    try {
+      setIsLoadingDept(true);
+
+      const [
+        { data: issueRows, error: issueError },
+        { data: beamsData, error: beamsError },
+        { data: weftData, error: weftError },
+        { data: allocRows, error: allocError },
+      ] = await Promise.all([
+        supabaseBrowserClient
+          .from("yarn_transactions")
+          .select("quantity")
+          .eq("yarn_item_id", yarnId)
+          .eq("transaction_type", "ISSUE"),
+        supabaseBrowserClient
+          .from("base_fabric_order_beams")
+          .select("yarn_item_id, weight_ready_kg, weaving_beams:beam_id(tare_weight_kg)")
+          .eq("yarn_item_id", yarnId),
+        supabaseBrowserClient
+          .from("base_fabric_order_weft")
+          .select("yarn_item_id, kg_start, kg_end")
+          .eq("yarn_item_id", yarnId)
+          .not("kg_end", "is", null),
+        supabaseBrowserClient
+          .from("yarn_transactions")
+          .select("quantity")
+          .eq("yarn_item_id", yarnId)
+          .eq("transaction_type", "DEPT_TO_ORDER"),
+      ]);
+
+      if (issueError) throw issueError;
+      if (beamsError) throw beamsError;
+      if (weftError) throw weftError;
+      if (allocError) throw allocError;
+
+      const totalIssued =
+        (issueRows || []).reduce(
+          (sum: number, row: any) => sum + Number(row.quantity || 0),
+          0,
+        ) ?? 0;
+
+      let totalConsumed = 0;
+      (beamsData || []).forEach((row: any) => {
+        const tare =
+          row.weaving_beams != null
+            ? Array.isArray(row.weaving_beams)
+              ? row.weaving_beams[0]?.tare_weight_kg
+              : row.weaving_beams?.tare_weight_kg
+            : 0;
+        const kg = Number(row.weight_ready_kg || 0) - Number(tare || 0);
+        if (kg > 0) {
+          totalConsumed += kg;
+        }
+      });
+      (weftData || []).forEach((row: any) => {
+        const kg = Number(row.kg_start || 0) - Number(row.kg_end || 0);
+        if (kg > 0) {
+          totalConsumed += kg;
+        }
+      });
+
+      const totalDeptIssuedMinusConsumed = Math.max(0, totalIssued - totalConsumed);
+
+      const totalAllocatedFromDept =
+        (allocRows || []).reduce(
+          (sum: number, row: any) => sum + Number(row.quantity || 0),
+          0,
+        ) ?? 0;
+
+      const available = Math.max(0, totalDeptIssuedMinusConsumed - totalAllocatedFromDept);
+
+      setDeptWithDeptTotal(totalDeptIssuedMinusConsumed);
+      setDeptAllocatedTotal(totalAllocatedFromDept);
+      setDeptAvailableQty(available);
+    } catch (err) {
+      console.error("Error fetching department availability:", err);
+      setDeptWithDeptTotal(null);
+      setDeptAllocatedTotal(null);
+      setDeptAvailableQty(null);
+    } finally {
+      setIsLoadingDept(false);
     }
   }
 
@@ -226,6 +338,79 @@ export default function YarnIssuingPage() {
       await Promise.all([fetchRecentIssues(), fetchStockData(), fetchRunningBaseFabricOrders()]);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to record yarn issue. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleDeptAllocate(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setCreatedIssueId(null);
+    setCreatedSlipNo(null);
+
+    if (!yarnItemId) {
+      setErrorMessage("Select a yarn item first.");
+      return;
+    }
+    if (!selectedBaseFabricOrderId) {
+      setErrorMessage("Select a base fabric order to allocate to.");
+      return;
+    }
+    const available = deptAvailableQty ?? 0;
+    const qty = parseFloat(deptAllocQty || "0");
+    if (!qty || qty <= 0) {
+      setErrorMessage("Enter a valid quantity to allocate from department.");
+      return;
+    }
+    if (qty > available) {
+      setErrorMessage(
+        `Cannot allocate ${qty.toFixed(3)} ${uom} from department. Available unallocated in department: ${available.toFixed(3)} ${uom}.`,
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { data, error } = await supabaseBrowserClient
+        .from("yarn_transactions")
+        .insert({
+          yarn_item_id: yarnItemId,
+          transaction_type: "DEPT_TO_ORDER",
+          quantity: qty,
+          uom: uom,
+          source: "DEPARTMENT",
+          destination: destination || null,
+          batch_no: batchNo || null,
+          notes:
+            notes ||
+            `Allocated from department stock to base fabric order ${selectedBaseFabricOrderId}`,
+          base_fabric_order_id: selectedBaseFabricOrderId,
+        })
+        .select("id, slip_no")
+        .single();
+
+      if (error) throw error;
+
+      setSuccessMessage(
+        `Allocated ${qty.toFixed(3)} ${uom} from department to order. Ref: ${
+          data.slip_no || "N/A"
+        }`,
+      );
+      setCreatedIssueId(data.id);
+      setCreatedSlipNo(data.slip_no);
+      setDeptAllocQty("");
+
+      await Promise.all([
+        fetchDeptAvailability(yarnItemId),
+        fetchRunningBaseFabricOrders(),
+      ]);
+    } catch (err: any) {
+      console.error("Failed to allocate from department", err);
+      setErrorMessage(
+        err.message || "Failed to allocate yarn from department. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -435,6 +620,98 @@ export default function YarnIssuingPage() {
             )}
           </div>
         </form>
+      </motion.section>
+
+      {/* Department allocation section */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.05 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
+          Allocate Yarn from Department to Order
+        </h2>
+        <p className="mb-3 text-sm text-slate-600">
+          Use this when yarn is already in the department (issued from store) and you now
+          want to link part of it to a specific base fabric order. This does not change
+          store stock, only the allocation from department.
+        </p>
+
+        {!yarnItemId && (
+          <p className="text-sm text-slate-500">
+            Select a yarn item above to see department availability.
+          </p>
+        )}
+
+        {yarnItemId && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              {isLoadingDept ? (
+                <p className="text-sm text-slate-600">Loading department balances...</p>
+              ) : deptWithDeptTotal === null ? (
+                <p className="text-sm text-red-600">
+                  Could not load department balances for this yarn.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-slate-900">
+                    <span className="font-semibold">With department (total):</span>{" "}
+                    <span className="text-teal-700">
+                      {deptWithDeptTotal.toFixed(3)} {uom}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-sm text-slate-900">
+                    <span className="font-semibold">Already allocated to orders:</span>{" "}
+                    <span className="text-slate-700">
+                      {(deptAllocatedTotal ?? 0).toFixed(3)} {uom}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-sm text-slate-900">
+                    <span className="font-semibold">Available to allocate:</span>{" "}
+                    <span className="text-emerald-700">
+                      {(deptAvailableQty ?? 0).toFixed(3)} {uom}
+                    </span>
+                  </p>
+                </>
+              )}
+            </div>
+
+            <form onSubmit={handleDeptAllocate} className="grid gap-3">
+              <Input
+                label="Quantity to allocate from department"
+                type="number"
+                step="0.001"
+                value={deptAllocQty}
+                onChange={(e) => setDeptAllocQty(e.target.value)}
+                placeholder="0.000"
+                disabled={isSubmitting || isLoadingDept || !yarnItemId}
+              />
+              <p className="text-xs text-slate-500">
+                Base Fabric Order above will be used as the allocation target. Leave the
+                main issue form empty if you are not issuing new yarn from store.
+              </p>
+              <Button
+                type="submit"
+                variant="secondary"
+                disabled={
+                  isSubmitting ||
+                  isLoadingDept ||
+                  !yarnItemId ||
+                  !selectedBaseFabricOrderId ||
+                  (deptAvailableQty ?? 0) <= 0
+                }
+              >
+                Allocate from Department
+              </Button>
+              {!selectedBaseFabricOrderId && (
+                <p className="text-xs text-amber-700">
+                  Select a Base Fabric Order above before allocating from department.
+                </p>
+              )}
+            </form>
+          </div>
+        )}
       </motion.section>
 
       {/* Recent Issues Table */}

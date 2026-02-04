@@ -15,6 +15,8 @@ interface YarnStockItem {
   issued_qty: number;
   consumed_qty: number;
   with_department_qty: number;
+  allocated_to_orders_qty: number;
+  available_in_dept_qty: number;
   yarn_items: {
     name: string;
     denier: number | null;
@@ -35,7 +37,7 @@ export default function YarnStockPage() {
   useEffect(() => {
     async function fetchStock() {
       try {
-        const [stockResult, issuedResult, beamsResult, weftResult] = await Promise.all([
+        const [stockResult, issuedResult, deptAllocResult, beamsResult, weftResult] = await Promise.all([
           supabaseBrowserClient
             .from("yarn_stock")
             .select(
@@ -54,6 +56,10 @@ export default function YarnStockPage() {
             .select("yarn_item_id, quantity")
             .eq("transaction_type", "ISSUE"),
           supabaseBrowserClient
+            .from("yarn_transactions")
+            .select("yarn_item_id, quantity")
+            .eq("transaction_type", "DEPT_TO_ORDER"),
+          supabaseBrowserClient
             .from("base_fabric_order_beams")
             .select("yarn_item_id, weight_ready_kg, weaving_beams:beam_id(tare_weight_kg)"),
           supabaseBrowserClient
@@ -64,6 +70,7 @@ export default function YarnStockPage() {
 
         const { data, error } = stockResult;
         const { data: issuedData } = issuedResult;
+        const { data: deptAllocData } = deptAllocResult;
         const { data: beamsData } = beamsResult;
         const { data: weftData } = weftResult;
 
@@ -74,6 +81,13 @@ export default function YarnStockPage() {
           const id = row.yarn_item_id;
           const qty = Number(row.quantity || 0);
           issuedByItem[id] = (issuedByItem[id] || 0) + qty;
+        });
+
+        const allocatedByItem: Record<string, number> = {};
+        (deptAllocData || []).forEach((row: { yarn_item_id: string; quantity: number }) => {
+          const id = row.yarn_item_id;
+          const qty = Number(row.quantity || 0);
+          allocatedByItem[id] = (allocatedByItem[id] || 0) + qty;
         });
 
         const consumedByItem: Record<string, number> = {};
@@ -97,12 +111,16 @@ export default function YarnStockPage() {
           const issued = issuedByItem[item.yarn_item_id] ?? 0;
           const consumed = consumedByItem[item.yarn_item_id] ?? 0;
           const withDept = Math.max(0, issued - consumed);
+          const allocated = allocatedByItem[item.yarn_item_id] ?? 0;
+          const availableInDept = Math.max(0, withDept - allocated);
           return {
             ...item,
             stock_qty: Number(item.stock_qty || 0),
             issued_qty: issued,
             consumed_qty: consumed,
             with_department_qty: withDept,
+            allocated_to_orders_qty: allocated,
+            available_in_dept_qty: availableInDept,
             yarn_items: Array.isArray(item.yarn_items) ? item.yarn_items[0] : item.yarn_items,
           };
         }) as YarnStockItem[];
@@ -255,14 +273,18 @@ export default function YarnStockPage() {
       const totalIssued = stockItems.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
       const totalConsumed = stockItems.reduce((sum, item) => sum + (item.consumed_qty ?? 0), 0);
       const totalWithDept = stockItems.reduce((sum, item) => sum + (item.with_department_qty ?? 0), 0);
+      const totalAllocated = stockItems.reduce((sum, item) => sum + (item.allocated_to_orders_qty ?? 0), 0);
+      const totalAvailableInDept = stockItems.reduce((sum, item) => sum + (item.available_in_dept_qty ?? 0), 0);
       const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
 
       doc.text(`Total Items: ${totalItems}`, pageWidth / 2, metadataY + 15, { align: "center" });
       doc.text(`Total In Store: ${totalInStore.toFixed(3)}`, pageWidth / 2, metadataY + 30, { align: "center" });
       doc.text(`Total Issued: ${totalIssued.toFixed(3)}`, pageWidth / 2, metadataY + 45, { align: "center" });
       doc.text(`Total Consumed: ${totalConsumed.toFixed(3)}`, pageWidth / 2, metadataY + 60, { align: "center" });
-      doc.text(`Total With Dept: ${totalWithDept.toFixed(3)}`, pageWidth / 2, metadataY + 75, { align: "center" });
-      doc.text(`Total Valuation: R ${totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 90, { align: "center" });
+      doc.text(`Total In Dept: ${totalWithDept.toFixed(3)}`, pageWidth / 2, metadataY + 75, { align: "center" });
+      doc.text(`Allocated to Orders: ${totalAllocated.toFixed(3)}`, pageWidth / 2, metadataY + 90, { align: "center" });
+      doc.text(`Available in Dept: ${totalAvailableInDept.toFixed(3)}`, pageWidth / 2, metadataY + 105, { align: "center" });
+      doc.text(`Total Valuation: R ${totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 120, { align: "center" });
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
@@ -283,6 +305,8 @@ export default function YarnStockPage() {
         (item.issued_qty ?? 0).toFixed(3),
         (item.consumed_qty ?? 0).toFixed(3),
         (item.with_department_qty ?? 0).toFixed(3),
+        (item.allocated_to_orders_qty ?? 0).toFixed(3),
+        (item.available_in_dept_qty ?? 0).toFixed(3),
         item.yarn_items?.uom || "kg",
         item.avg_price_zar && item.avg_price_zar > 0 ? `R ${item.avg_price_zar.toFixed(4)}` : "-",
         item.valuation_zar && item.valuation_zar > 0 ? `R ${item.valuation_zar.toFixed(2)}` : "-",
@@ -290,7 +314,7 @@ export default function YarnStockPage() {
 
       const availableWidth = pageWidth - 2 * margin;
       autoTable(doc, {
-        head: [["Yarn Name", "Denier", "In Store", "Issued", "Consumed", "With Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
+        head: [["Yarn Name", "Denier", "In Store", "Issued", "Consumed", "In Dept", "Alloc'd", "Avail Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
@@ -308,8 +332,10 @@ export default function YarnStockPage() {
           3: { halign: "right" },
           4: { halign: "right" },
           5: { halign: "right" },
+          6: { halign: "right" },
           7: { halign: "right" },
-          8: { halign: "right" },
+          9: { halign: "right" },
+          10: { halign: "right" },
         },
         didDrawPage: function (data: any) {
           const currentPage = data.pageNumber || doc.internal.pages.length - 1;
@@ -408,7 +434,7 @@ export default function YarnStockPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Stock</h1>
           <p className="mt-1 text-slate-600">
-            In-store, issued, consumed (beams + cones), and with department.
+            In-store, issued, consumed (beams + cones), total in department, allocated to orders, and available in department.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -491,7 +517,13 @@ export default function YarnStockPage() {
                     Consumed
                   </th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    With Dept
+                    Total in Dept
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                    Allocated to Orders
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                    Available in Dept
                   </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     UoM
@@ -536,6 +568,12 @@ export default function YarnStockPage() {
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
                       {(item.with_department_qty ?? 0).toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {(item.allocated_to_orders_qty ?? 0).toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-slate-900">
+                      {(item.available_in_dept_qty ?? 0).toFixed(3)}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {item.yarn_items?.uom || "kg"}

@@ -104,7 +104,7 @@ export default function YarnLedgerPage() {
     }
   }
 
-  // Compute signed quantity for a transaction
+  // Compute signed quantity for a transaction (store balance; DEPT_TO_ORDER is internal allocation only)
   function getSignedQuantity(txn: YarnTransaction): number {
     if (txn.transaction_type === "RECEIPT" || txn.transaction_type === "RETURN") {
       return txn.quantity;
@@ -113,6 +113,7 @@ export default function YarnLedgerPage() {
     } else if (txn.transaction_type === "ADJUSTMENT") {
       return txn.quantity; // Can be positive or negative
     }
+    // DEPT_TO_ORDER does not change store stock
     return 0;
   }
 
@@ -475,6 +476,7 @@ export default function YarnLedgerPage() {
           <option value="ALL">All Types</option>
           <option value="RECEIPT">Receipt</option>
           <option value="ISSUE">Issue</option>
+          <option value="DEPT_TO_ORDER">Allocated from dept</option>
           <option value="ADJUSTMENT">Adjustment</option>
           <option value="RETURN">Return</option>
           <option value="SCRAP">Scrap</option>
@@ -581,7 +583,9 @@ export default function YarnLedgerPage() {
                               ? "bg-green-100 text-green-800"
                               : txn.transaction_type === "ISSUE" || txn.transaction_type === "SCRAP"
                                 ? "bg-red-100 text-red-800"
-                                : "bg-blue-100 text-blue-800"
+                                : txn.transaction_type === "DEPT_TO_ORDER"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-blue-100 text-blue-800"
                           }`}
                         >
                           {txn.transaction_type}

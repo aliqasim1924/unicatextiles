@@ -76,6 +76,7 @@ interface YarnIssue {
   id: string;
   slip_no: string | null;
   txn_time: string;
+  transaction_type: string;
   quantity: number;
   yarn_item_id: string;
   uom: string;
@@ -89,6 +90,12 @@ interface YarnPriceSample {
   yarn_item_id: string;
   quantity: number;
   unit_price_zar: number;
+}
+
+interface DeptAllocOption {
+  id: string;
+  name: string;
+  available: number;
 }
 
 export default function BaseFabricOrderDetailPage() {
@@ -117,6 +124,10 @@ export default function BaseFabricOrderDetailPage() {
   const [weftKgEndEdit, setWeftKgEndEdit] = useState<{ id: string; value: string } | null>(null);
   const [beamFormError, setBeamFormError] = useState<string | null>(null);
   const [weftFormError, setWeftFormError] = useState<string | null>(null);
+  const [deptAllocOptions, setDeptAllocOptions] = useState<DeptAllocOption[]>([]);
+  const [deptAllocForm, setDeptAllocForm] = useState({ yarn_item_id: "", quantity: "" });
+  const [deptAllocError, setDeptAllocError] = useState<string | null>(null);
+  const [deptAllocSubmitting, setDeptAllocSubmitting] = useState(false);
 
   useEffect(() => {
     if (orderId) {
@@ -176,7 +187,7 @@ export default function BaseFabricOrderDetailPage() {
       if (rollsError) throw rollsError;
       setRolls((rollsData as Roll[]) || []);
 
-      // Fetch yarn issues linked to this order
+      // Fetch yarn issues and department allocations linked to this order
       const { data: issuesData, error: issuesError } = await supabaseBrowserClient
         .from("yarn_transactions")
         .select(
@@ -185,6 +196,7 @@ export default function BaseFabricOrderDetailPage() {
           yarn_item_id,
           slip_no,
           txn_time,
+          transaction_type,
           quantity,
           uom,
           unit_price_zar,
@@ -192,7 +204,7 @@ export default function BaseFabricOrderDetailPage() {
         `
         )
         .eq("base_fabric_order_id", orderId)
-        .eq("transaction_type", "ISSUE")
+        .in("transaction_type", ["ISSUE", "DEPT_TO_ORDER"])
         .order("txn_time", { ascending: true });
 
       if (issuesError) throw issuesError;
@@ -275,6 +287,97 @@ export default function BaseFabricOrderDetailPage() {
           unit_price_zar: row.unit_price_zar,
         })) as YarnPriceSample[]
       );
+
+      // Department yarn available to allocate (issued to dept minus consumed minus already allocated)
+      const [
+        { data: issueTxns },
+        { data: allocTxns },
+        { data: allBeams },
+        { data: allWeft },
+      ] = await Promise.all([
+        supabaseBrowserClient
+          .from("yarn_transactions")
+          .select("yarn_item_id, quantity")
+          .eq("transaction_type", "ISSUE"),
+        supabaseBrowserClient
+          .from("yarn_transactions")
+          .select("yarn_item_id, quantity")
+          .eq("transaction_type", "DEPT_TO_ORDER"),
+        supabaseBrowserClient
+          .from("base_fabric_order_beams")
+          .select("yarn_item_id, weight_ready_kg, weaving_beams:beam_id(tare_weight_kg)"),
+        supabaseBrowserClient
+          .from("base_fabric_order_weft")
+          .select("yarn_item_id, kg_start, kg_end")
+          .not("kg_end", "is", null),
+      ]);
+
+      const issuedByItem = new Map<string, number>();
+      (issueTxns || []).forEach((r: any) => {
+        const id = r.yarn_item_id;
+        const q = Number(r.quantity || 0);
+        issuedByItem.set(id, (issuedByItem.get(id) || 0) + q);
+      });
+      const allocatedByItem = new Map<string, number>();
+      (allocTxns || []).forEach((r: any) => {
+        const id = r.yarn_item_id;
+        const q = Number(r.quantity || 0);
+        allocatedByItem.set(id, (allocatedByItem.get(id) || 0) + q);
+      });
+      const consumedByItem = new Map<string, number>();
+      (allBeams || []).forEach((row: any) => {
+        const tare = row.weaving_beams != null
+          ? (Array.isArray(row.weaving_beams) ? row.weaving_beams[0]?.tare_weight_kg : row.weaving_beams?.tare_weight_kg)
+          : 0;
+        const kg = Number(row.weight_ready_kg || 0) - Number(tare || 0);
+        if (kg > 0 && row.yarn_item_id) {
+          consumedByItem.set(
+            row.yarn_item_id,
+            (consumedByItem.get(row.yarn_item_id) || 0) + kg
+          );
+        }
+      });
+      (allWeft || []).forEach((row: any) => {
+        const kg = Number(row.kg_start || 0) - Number(row.kg_end || 0);
+        if (kg > 0 && row.yarn_item_id) {
+          consumedByItem.set(
+            row.yarn_item_id,
+            (consumedByItem.get(row.yarn_item_id) || 0) + kg
+          );
+        }
+      });
+
+      const availableByItem = new Map<string, number>();
+      const allYarnIds = new Set<string>([
+        ...issuedByItem.keys(),
+        ...allocatedByItem.keys(),
+        ...consumedByItem.keys(),
+      ]);
+      allYarnIds.forEach((id) => {
+        const issued = issuedByItem.get(id) || 0;
+        const allocated = allocatedByItem.get(id) || 0;
+        const consumed = consumedByItem.get(id) || 0;
+        const available = Math.max(0, issued - consumed - allocated);
+        if (available > 0) availableByItem.set(id, available);
+      });
+
+      if (availableByItem.size > 0) {
+        const { data: yarnItemsData } = await supabaseBrowserClient
+          .from("yarn_items")
+          .select("id, name")
+          .in("id", Array.from(availableByItem.keys()));
+        const items = (yarnItemsData || []) as { id: string; name: string }[];
+        const options: DeptAllocOption[] = items
+          .map((item) => ({
+            id: item.id,
+            name: item.name || "N/A",
+            available: availableByItem.get(item.id) ?? 0,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setDeptAllocOptions(options);
+      } else {
+        setDeptAllocOptions([]);
+      }
     } catch (err: any) {
       setError(err.message || "Failed to load order.");
     } finally {
@@ -587,6 +690,49 @@ export default function BaseFabricOrderDetailPage() {
       fetchOrderData();
     } catch (err: any) {
       setError((err as Error).message || "Failed to remove.");
+    }
+  }
+
+  async function handleAllocateFromDept(e: React.FormEvent) {
+    e.preventDefault();
+    setDeptAllocError(null);
+    const yarnItemId = deptAllocForm.yarn_item_id.trim();
+    const qty = deptAllocForm.quantity ? parseFloat(deptAllocForm.quantity) : NaN;
+    if (!yarnItemId) {
+      setDeptAllocError("Select a yarn.");
+      return;
+    }
+    if (isNaN(qty) || qty <= 0) {
+      setDeptAllocError("Enter a valid quantity (kg).");
+      return;
+    }
+    const option = deptAllocOptions.find((o) => o.id === yarnItemId);
+    if (option && qty > option.available) {
+      setDeptAllocError(
+        `Available in department: ${option.available.toFixed(3)} kg. Enter at most ${option.available.toFixed(3)}.`
+      );
+      return;
+    }
+    setDeptAllocSubmitting(true);
+    try {
+      const { error } = await supabaseBrowserClient
+        .from("yarn_transactions")
+        .insert({
+          yarn_item_id: yarnItemId,
+          transaction_type: "DEPT_TO_ORDER",
+          quantity: qty,
+          uom: "kg",
+          source: "DEPARTMENT",
+          base_fabric_order_id: orderId,
+          notes: `Allocated from department to order ${orderId}`,
+        });
+      if (error) throw error;
+      setDeptAllocForm({ yarn_item_id: "", quantity: "" });
+      fetchOrderData();
+    } catch (err: any) {
+      setDeptAllocError(err.message || "Failed to allocate from department.");
+    } finally {
+      setDeptAllocSubmitting(false);
     }
   }
 
@@ -1267,7 +1413,7 @@ export default function BaseFabricOrderDetailPage() {
       </motion.section>
       )}
 
-      {/* Linked Yarn Issuings – hidden for outsourced */}
+      {/* Yarn issued / allocated to this order – hidden for outsourced */}
       {!order.is_outsourced && (
       <motion.section
         initial={{ opacity: 0, y: 20 }}
@@ -1277,24 +1423,30 @@ export default function BaseFabricOrderDetailPage() {
       >
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">Linked Yarn Issuings</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Yarn issued / allocated to this order</h2>
             <p className="text-sm text-slate-600">
-              Yarn issuing slips linked to this production order.
+              Issues from store and allocations from department linked to this production order.
             </p>
           </div>
         </div>
 
         {yarnIssues.length === 0 ? (
-          <p className="text-sm text-slate-600">No yarn issuings linked to this order.</p>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">No yarn issued or allocated to this order yet.</p>
+            <p className="text-sm text-slate-700">
+              Allocate yarn that is already in the department below, or issue from store via Yarn Issuing.
+            </p>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Type</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Yarn</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Quantity</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Issued At</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Date</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Action</th>
                 </tr>
               </thead>
@@ -1303,8 +1455,25 @@ export default function BaseFabricOrderDetailPage() {
                   <tr
                     key={issue.id}
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
-                    onClick={() => router.push(`/toolbox/yarn/issuing/slip/${issue.id}`)}
+                    onClick={() =>
+                      issue.transaction_type === "DEPT_TO_ORDER"
+                        ? router.push(`/toolbox/yarn/transaction/${issue.id}`)
+                        : router.push(`/toolbox/yarn/issuing/slip/${issue.id}`)
+                    }
                   >
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          issue.transaction_type === "DEPT_TO_ORDER"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-teal-100 text-teal-800"
+                        }`}
+                      >
+                        {issue.transaction_type === "DEPT_TO_ORDER"
+                          ? "Allocated from dept"
+                          : "Issue"}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 font-medium text-slate-900">
                       {issue.slip_no || "—"}
                     </td>
@@ -1328,11 +1497,15 @@ export default function BaseFabricOrderDetailPage() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          router.push(`/toolbox/yarn/issuing/slip/${issue.id}`);
+                          if (issue.transaction_type === "DEPT_TO_ORDER") {
+                            router.push(`/toolbox/yarn/transaction/${issue.id}`);
+                          } else {
+                            router.push(`/toolbox/yarn/issuing/slip/${issue.id}`);
+                          }
                         }}
                         className="text-sm font-semibold hover:underline"
                       >
-                        View slip
+                        {issue.transaction_type === "DEPT_TO_ORDER" ? "View" : "View slip"}
                       </button>
                     </td>
                   </tr>
@@ -1342,6 +1515,65 @@ export default function BaseFabricOrderDetailPage() {
           </div>
         )}
       </motion.section>
+      )}
+
+      {/* Allocate yarn from department – inline so user can select department-held yarn (store may be 0) */}
+      {order && !order.is_outsourced && (order.status === "PLANNED" || order.status === "RUNNING") && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.065 }}
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+        >
+          <h2 className="mb-2 text-xl font-semibold text-slate-900">Allocate yarn from department</h2>
+          <p className="mb-4 text-sm text-slate-600">
+            Yarn already issued to the department (store stock can be 0). Select a yarn and quantity to allocate to this order.
+          </p>
+          {deptAllocOptions.length === 0 ? (
+            <p className="text-sm text-slate-600">
+              No yarn available in department to allocate. Issue yarn from store to department first (Yarn Issuing), then return here.
+            </p>
+          ) : (
+            <form onSubmit={handleAllocateFromDept} className="flex flex-wrap items-end gap-4">
+              <div className="min-w-[200px]">
+                <label className="block text-sm font-semibold text-slate-900 mb-1">Yarn (in department)</label>
+                <select
+                  value={deptAllocForm.yarn_item_id}
+                  onChange={(e) => setDeptAllocForm((p) => ({ ...p, yarn_item_id: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                >
+                  <option value="">Select yarn</option>
+                  {deptAllocOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name} — {o.available.toFixed(3)} kg available
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-32">
+                <label className="block text-sm font-semibold text-slate-900 mb-1">Quantity (kg)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={deptAllocForm.quantity}
+                  onChange={(e) => setDeptAllocForm((p) => ({ ...p, quantity: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  placeholder="0"
+                />
+              </div>
+              <Button type="submit" variant="primary" disabled={deptAllocSubmitting}>
+                {deptAllocSubmitting ? "Allocating…" : "Allocate to this order"}
+              </Button>
+              {deptAllocError && <p className="w-full text-sm text-red-600">{deptAllocError}</p>}
+            </form>
+          )}
+          {deptAllocOptions.length === 0 && (
+            <Link href={`/toolbox/yarn/issuing?order=${orderId}`} className="mt-3 inline-block">
+              <Button variant="secondary">Open Yarn Issuing (issue from store)</Button>
+            </Link>
+          )}
+        </motion.section>
       )}
 
       {/* Beam loading (warp) – only issued yarn selectable; hidden for outsourced */}
@@ -1362,7 +1594,7 @@ export default function BaseFabricOrderDetailPage() {
           </div>
           {issuedYarnItems.length === 0 ? (
             <p className="text-sm text-amber-700">
-              No yarn has been issued to this order. Issue yarn first before recording beam loading.
+              No yarn has been issued to this order. Use the &quot;Allocate yarn from department&quot; section above, or issue from store via Yarn Issuing.
             </p>
           ) : (
             <>
@@ -1491,7 +1723,7 @@ export default function BaseFabricOrderDetailPage() {
           </div>
           {issuedYarnItems.length === 0 ? (
             <p className="text-sm text-amber-700">
-              No yarn has been issued to this order. Issue yarn first before recording weft usage.
+              No yarn has been issued to this order. Use the &quot;Allocate yarn from department&quot; section above, or issue from store via Yarn Issuing.
             </p>
           ) : (
             <>
