@@ -14,6 +14,7 @@ const STATUS_AVAILABLE = "AVAILABLE";
 const STATUS_ISSUED = "ISSUED";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
 const STATUS_IN_TRANSIT = "IN_TRANSIT";
+const STATUS_COATING_IN_PROGRESS = "COATING_IN_PROGRESS";
 
 interface BaseFabricRoll {
   id: string;
@@ -54,7 +55,11 @@ export default function BaseFabricStockPage() {
       setIsLoading(true);
       setError(null);
 
-      // Fetch in-stock rolls (available at weaving)
+      // Fetch in-stock rolls:
+      // - Manufactured at weaving (AVAILABLE)
+      // - Issued / in transit to coating (IN_TRANSIT)
+      // - Received at coating, ready to coat (READY_FOR_COATING)
+      // Rolls in coating batches (COATING_IN_PROGRESS) are excluded.
       const { data: inStockData, error: inStockError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
         .select(
@@ -77,13 +82,12 @@ export default function BaseFabricStockPage() {
           )
         `
         )
-        .eq("current_location", LOCATION_WEAVING)
-        .eq("status", STATUS_AVAILABLE)
+        .in("status", [STATUS_AVAILABLE, STATUS_IN_TRANSIT, STATUS_READY_FOR_COATING])
         .order("cut_at", { ascending: false });
 
       if (inStockError) throw inStockError;
 
-      // Fetch history rolls (issued, consumed, or dispatched)
+      // Fetch history rolls (consumed, dispatched, or in coating batches)
       const { data: historyData, error: historyError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
         .select(
@@ -104,7 +108,7 @@ export default function BaseFabricStockPage() {
           )
         `
         )
-        .in("status", [STATUS_ISSUED, STATUS_READY_FOR_COATING, STATUS_IN_TRANSIT])
+        .in("status", [STATUS_ISSUED, STATUS_COATING_IN_PROGRESS])
         .order("cut_at", { ascending: false })
         .limit(500); // Limit history to recent 500 rolls
 

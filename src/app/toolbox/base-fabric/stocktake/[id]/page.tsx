@@ -11,7 +11,10 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 const LOCATION_WEAVING = "WEAVING";
+const LOCATION_COATING = "COATING";
 const STATUS_AVAILABLE = "AVAILABLE";
+const STATUS_IN_TRANSIT = "IN_TRANSIT";
+const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
 
 /** Predefined reasons for variances (including add/remove for balancing). */
 const VARIANCE_REASONS = [
@@ -224,10 +227,17 @@ export default function BaseFabricStocktakeDetailPage() {
               name
             )
           )
-        `,
+        `
         )
-        .eq("current_location", LOCATION_WEAVING)
-        .eq("status", STATUS_AVAILABLE)
+        // Base fabric stock on hand:
+        // - Manufactured at weaving (AVAILABLE at WEAVING)
+        // - Issued / in transit to coating (IN_TRANSIT at COATING)
+        // - Received at coating, ready to coat (READY_FOR_COATING at COATING)
+        .or(
+          `and(current_location.eq.${LOCATION_WEAVING},status.eq.${STATUS_AVAILABLE}),` +
+            `and(current_location.eq.${LOCATION_COATING},status.eq.${STATUS_IN_TRANSIT}),` +
+            `and(current_location.eq.${LOCATION_COATING},status.eq.${STATUS_READY_FOR_COATING})`
+        )
         .order("cut_at", { ascending: false });
 
       if (stockError) throw stockError;
