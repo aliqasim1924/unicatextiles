@@ -1,11 +1,12 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { ToolboxSidebar } from "./ToolboxSidebar";
 import { ToolboxMobileNav } from "./ToolboxMobileNav";
 import { logout } from "@/app/actions/auth";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 interface ToolboxShellProps {
   email: string;
@@ -15,6 +16,7 @@ interface ToolboxShellProps {
 
 export function ToolboxShell({ email, version, children }: ToolboxShellProps) {
   const pathname = usePathname();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -43,11 +45,30 @@ export function ToolboxShell({ email, version, children }: ToolboxShellProps) {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-7xl gap-4 px-4 pb-10 pt-6 md:px-8 md:pt-8">
-        <aside className="hidden w-56 shrink-0 md:block print:hidden">
-          <ToolboxSidebar currentPath={pathname} />
+      <div className="mx-auto flex max-w-[1920px] gap-0 px-4 pb-10 pt-6 md:px-6 md:pt-8">
+        <aside
+          className={`hidden shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 print:hidden md:block md:transition-[width] md:duration-200 md:ease-out ${
+            sidebarCollapsed ? "md:w-14" : "md:w-56"
+          }`}
+          onMouseEnter={() => setSidebarCollapsed(false)}
+        >
+          <div className="flex h-full flex-col p-2">
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((c) => !c)}
+              className="flex items-center justify-center rounded-lg p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="h-5 w-5" />
+              ) : (
+                <PanelLeftClose className="h-5 w-5" />
+              )}
+            </button>
+            <ToolboxSidebar currentPath={pathname} collapsed={sidebarCollapsed} />
+          </div>
         </aside>
-        <main className="flex-1 min-w-0">{children}</main>
+        <main className="min-w-0 flex-1 pl-4 md:pl-6">{children}</main>
       </div>
     </div>
   );

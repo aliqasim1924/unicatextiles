@@ -38,12 +38,11 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
 
     setIsGenerating(true);
     try {
-      const doc = new jsPDF();
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 20;
+      const margin = 12;
       const templateName = "Dyes & Chemicals Stock Report";
-      let pageNumber = 1;
 
       // ===== COVER PAGE =====
       let logoLoaded = false;
@@ -51,7 +50,7 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
         const logoImg = new Image();
         logoImg.crossOrigin = "anonymous";
         logoImg.src = "/Logo.png";
-        
+
         await Promise.race([
           new Promise<void>((resolve) => {
             logoImg.onload = () => {
@@ -78,35 +77,45 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
       doc.setFontSize(24);
       doc.setFont("helvetica", "bold");
       doc.text("UNICA TEXTILES", pageWidth / 2, titleY, { align: "center" });
-      
+
       doc.setFontSize(16);
       doc.setFont("helvetica", "normal");
       doc.text("Dyes & Chemicals Stock Report", pageWidth / 2, titleY + 15, { align: "center" });
 
-      doc.setFontSize(12);
       const reportDate = new Date().toLocaleDateString("en-ZA", {
         year: "numeric",
         month: "long",
         day: "numeric",
       });
-      const metadataY = titleY + 35;
-      doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
-      
       const totalItems = initialStock.length;
       const totalInStore = initialStock.reduce((sum, item) => sum + item.stock_qty, 0);
       const totalIssued = initialStock.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
 
-      doc.text(`Total Items: ${totalItems}`, pageWidth / 2, metadataY + 15, { align: "center" });
-      doc.text(`Total In Store: ${totalInStore.toFixed(3)}`, pageWidth / 2, metadataY + 30, { align: "center" });
-      doc.text(`Total Issued: ${totalIssued.toFixed(3)}`, pageWidth / 2, metadataY + 45, { align: "center" });
+      // Cover page: 2-column summary table spanning the page
+      const summaryTableWidth = pageWidth - 2 * margin;
+      const summaryStartY = titleY + 28;
+      autoTable(doc, {
+        body: [
+          [`Generated: ${reportDate}`, `Total Items: ${totalItems}`],
+          [`Total In Store: ${totalInStore.toFixed(3)}`, `Total Issued: ${totalIssued.toFixed(3)}`],
+        ],
+        startY: summaryStartY,
+        margin: { left: margin, right: margin },
+        tableWidth: summaryTableWidth,
+        styles: { fontSize: 10, cellPadding: 6 },
+        columnStyles: {
+          0: { cellWidth: summaryTableWidth / 2 },
+          1: { cellWidth: summaryTableWidth / 2 },
+        },
+      });
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
-      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
+      const confidentialY = Math.min((doc as any).lastAutoTable?.finalY ?? summaryStartY + 50, pageHeight - 25);
+      doc.text("Confidential - For Internal Use Only", pageWidth / 2, confidentialY + 12, { align: "center" });
 
-      // ===== STOCK TABLE =====
-      doc.addPage();
-      pageNumber++;
+      // ===== STOCK TABLE (landscape, full width) =====
+      doc.addPage("a4", "landscape");
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(0, 0, 0);
@@ -127,29 +136,45 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
-        styles: { fontSize: 8 },
+        tableWidth: availableWidth,
+        theme: "grid",
+        styles: {
+          fontSize: 7,
+          cellPadding: 1.5,
+          overflow: "ellipsize",
+          lineWidth: 0.1,
+          lineColor: [226, 232, 240],
+        },
         headStyles: {
           fillColor: [16, 185, 129],
           textColor: [255, 255, 255],
           fontStyle: "bold",
+          fontSize: 7,
         },
         alternateRowStyles: {
           fillColor: [249, 250, 251],
         },
         columnStyles: {
-          3: { halign: "right" },
-          4: { halign: "right" },
-        },
-        didDrawPage: function (data: any) {
-          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
-          if (currentPage > 1) {
-            doc.setFontSize(8);
-            doc.setTextColor(100, 100, 100);
-            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
-            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
-          }
+          0: { cellWidth: availableWidth * 0.35 },
+          1: { cellWidth: availableWidth * 0.2 },
+          2: { cellWidth: availableWidth * 0.15 },
+          // Quantities left-aligned to match headers
+          3: { cellWidth: availableWidth * 0.12 },
+          4: { cellWidth: availableWidth * 0.12 },
+          5: { cellWidth: availableWidth * 0.06 },
         },
       });
+
+      // Add footer to every page (template name left, Page X of Y right)
+      const totalPages = doc.getNumberOfPages();
+      const templateLabel = `1. ${templateName}`;
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.text(templateLabel, margin, pageHeight - 10);
+        doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+      }
 
       doc.save(`dyes-stock-report-${new Date().toISOString().split("T")[0]}.pdf`);
     } catch (err: any) {

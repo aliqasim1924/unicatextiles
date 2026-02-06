@@ -304,7 +304,14 @@ export default function OrderBookPage() {
           body: openOrdersTableData,
           startY: 30,
           margin: { left: margin, right: margin },
-          styles: { fontSize: 7 },
+          tableWidth: availableWidth,
+          theme: "grid",
+          styles: {
+            fontSize: 7,
+            cellPadding: 1.5,
+            lineWidth: 0.1,
+            lineColor: [226, 232, 240],
+          },
           headStyles: {
             fillColor: [16, 185, 129], // teal-500
             textColor: [255, 255, 255],
@@ -462,7 +469,14 @@ export default function OrderBookPage() {
           body: completedOrdersTableData,
           startY: 30,
           margin: { left: margin, right: margin },
-          styles: { fontSize: 7 },
+          tableWidth: availableWidth,
+          theme: "grid",
+          styles: {
+            fontSize: 7,
+            cellPadding: 1.5,
+            lineWidth: 0.1,
+            lineColor: [226, 232, 240],
+          },
           headStyles: {
             fillColor: [107, 114, 128], // slate-500 (different color for completed)
             textColor: [255, 255, 255],
@@ -623,7 +637,14 @@ export default function OrderBookPage() {
           body: pivotTableData,
           startY: 30,
           margin: { left: margin, right: margin },
-          styles: { fontSize: 7 },
+          tableWidth: availableWidth,
+          theme: "grid",
+          styles: {
+            fontSize: 7,
+            cellPadding: 1.5,
+            lineWidth: 0.1,
+            lineColor: [226, 232, 240],
+          },
           headStyles: {
             fillColor: headerColor,
             textColor: [255, 255, 255],

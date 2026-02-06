@@ -214,10 +214,10 @@ export default function YarnStockPage() {
 
     setIsGenerating(true);
     try {
-      const doc = new jsPDF();
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 20;
+      const margin = 12;
       const templateName = "Yarn Stock Report";
       let pageNumber = 1;
 
@@ -259,15 +259,11 @@ export default function YarnStockPage() {
       doc.setFont("helvetica", "normal");
       doc.text("Yarn Stock Report", pageWidth / 2, titleY + 15, { align: "center" });
 
-      doc.setFontSize(12);
       const reportDate = new Date().toLocaleDateString("en-ZA", {
         year: "numeric",
         month: "long",
         day: "numeric",
       });
-      const metadataY = titleY + 35;
-      doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
-      
       const totalItems = stockItems.length;
       const totalInStore = stockItems.reduce((sum, item) => sum + item.stock_qty, 0);
       const totalIssued = stockItems.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
@@ -277,21 +273,34 @@ export default function YarnStockPage() {
       const totalAvailableInDept = stockItems.reduce((sum, item) => sum + (item.available_in_dept_qty ?? 0), 0);
       const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
 
-      doc.text(`Total Items: ${totalItems}`, pageWidth / 2, metadataY + 15, { align: "center" });
-      doc.text(`Total In Store: ${totalInStore.toFixed(3)}`, pageWidth / 2, metadataY + 30, { align: "center" });
-      doc.text(`Total Issued: ${totalIssued.toFixed(3)}`, pageWidth / 2, metadataY + 45, { align: "center" });
-      doc.text(`Total Consumed: ${totalConsumed.toFixed(3)}`, pageWidth / 2, metadataY + 60, { align: "center" });
-      doc.text(`Total In Dept: ${totalWithDept.toFixed(3)}`, pageWidth / 2, metadataY + 75, { align: "center" });
-      doc.text(`Allocated to Orders: ${totalAllocated.toFixed(3)}`, pageWidth / 2, metadataY + 90, { align: "center" });
-      doc.text(`Available in Dept: ${totalAvailableInDept.toFixed(3)}`, pageWidth / 2, metadataY + 105, { align: "center" });
-      doc.text(`Total Valuation: R ${totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 120, { align: "center" });
+      // Cover page: 2-column summary table spanning the page
+      const summaryTableWidth = pageWidth - 2 * margin;
+      const summaryStartY = titleY + 28;
+      autoTable(doc, {
+        body: [
+          [`Generated: ${reportDate}`, `Total Items: ${totalItems}`],
+          [`Total In Store: ${totalInStore.toFixed(3)}`, `Total Issued: ${totalIssued.toFixed(3)}`],
+          [`Total Consumed: ${totalConsumed.toFixed(3)}`, `Total In Dept: ${totalWithDept.toFixed(3)}`],
+          [`Allocated to Orders: ${totalAllocated.toFixed(3)}`, `Available in Dept: ${totalAvailableInDept.toFixed(3)}`],
+          [`Total Valuation: R ${totalValuation.toFixed(2)}`, ""],
+        ],
+        startY: summaryStartY,
+        margin: { left: margin, right: margin },
+        tableWidth: summaryTableWidth,
+        styles: { fontSize: 10, cellPadding: 6 },
+        columnStyles: {
+          0: { cellWidth: summaryTableWidth / 2 },
+          1: { cellWidth: summaryTableWidth / 2 },
+        },
+      });
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
-      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
+      const confidentialY = Math.min((doc as any).lastAutoTable?.finalY ?? summaryStartY + 80, pageHeight - 25);
+      doc.text("Confidential - For Internal Use Only", pageWidth / 2, confidentialY + 12, { align: "center" });
 
-      // ===== STOCK TABLE =====
-      doc.addPage();
+      // ===== STOCK TABLE (landscape, full width) =====
+      doc.addPage("a4", "landscape");
       pageNumber++;
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
@@ -313,43 +322,57 @@ export default function YarnStockPage() {
       ]);
 
       const availableWidth = pageWidth - 2 * margin;
+      // Column width distribution (11 cols) so table fits page width without overflow
+      const colWidths: Record<number, number> = {
+        0: 38,
+        1: 14,
+        2: 18,
+        3: 18,
+        4: 22,
+        5: 18,
+        6: 18,
+        7: 20,
+        8: 12,
+        9: 28,
+        10: 28,
+      };
+      const totalColWidth = Object.values(colWidths).reduce((a, b) => a + b, 0);
+      const scale = availableWidth / totalColWidth;
+      const columnStyles: Record<number, { halign?: string; cellWidth?: number }> = {};
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach((i) => {
+        columnStyles[i] = { cellWidth: Math.round((colWidths[i] ?? 20) * scale) };
+        if ([2, 3, 4, 5, 6, 7, 9, 10].includes(i)) columnStyles[i].halign = "right";
+      });
+
       autoTable(doc, {
         head: [["Yarn Name", "Denier", "In Store", "Issued", "Consumed", "In Dept", "Alloc'd", "Avail Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
-        styles: { fontSize: 8 },
+        tableWidth: availableWidth,
+        theme: "grid",
+        styles: {
+          fontSize: 7,
+          cellPadding: 1.5,
+          overflow: "ellipsize",
+          lineWidth: 0.1,
+          lineColor: [226, 232, 240],
+        },
         headStyles: {
           fillColor: [16, 185, 129],
           textColor: [255, 255, 255],
           fontStyle: "bold",
+          fontSize: 7,
         },
         alternateRowStyles: {
           fillColor: [249, 250, 251],
         },
-        columnStyles: {
-          2: { halign: "right" },
-          3: { halign: "right" },
-          4: { halign: "right" },
-          5: { halign: "right" },
-          6: { halign: "right" },
-          7: { halign: "right" },
-          9: { halign: "right" },
-          10: { halign: "right" },
-        },
-        didDrawPage: function (data: any) {
-          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
-          if (currentPage > 1) {
-            doc.setFontSize(8);
-            doc.setTextColor(100, 100, 100);
-            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
-            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
-          }
-        },
+        // Quantities left-aligned to line up with headings
+        columnStyles,
       });
 
-      // ===== VALUATION SUMMARY =====
-      doc.addPage();
+      // ===== VALUATION SUMMARY (landscape) =====
+      doc.addPage("a4", "landscape");
       pageNumber++;
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
@@ -377,28 +400,30 @@ export default function YarnStockPage() {
           body: valuationData,
           startY: 30,
           margin: { left: margin, right: margin },
-          styles: { fontSize: 8 },
+          tableWidth: availableWidth,
+          theme: "grid",
+          styles: {
+            fontSize: 7,
+            cellPadding: 1.5,
+            overflow: "ellipsize",
+            lineWidth: 0.1,
+            lineColor: [226, 232, 240],
+          },
           headStyles: {
             fillColor: [16, 185, 129],
             textColor: [255, 255, 255],
             fontStyle: "bold",
+            fontSize: 7,
           },
           alternateRowStyles: {
             fillColor: [249, 250, 251],
           },
           columnStyles: {
-            1: { halign: "right" },
-            3: { halign: "right" },
-            4: { halign: "right" },
-          },
-          didDrawPage: function (data: any) {
-            const currentPage = data.pageNumber || doc.internal.pages.length - 1;
-            if (currentPage > 1) {
-              doc.setFontSize(8);
-              doc.setTextColor(100, 100, 100);
-              doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
-              doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
-            }
+            0: { cellWidth: availableWidth * 0.35 },
+            1: { cellWidth: availableWidth * 0.15 },
+            2: { cellWidth: availableWidth * 0.1 },
+            3: { cellWidth: availableWidth * 0.2 },
+            4: { cellWidth: availableWidth * 0.2 },
           },
         });
 
@@ -416,6 +441,17 @@ export default function YarnStockPage() {
         doc.setFontSize(10);
         doc.setTextColor(100, 100, 100);
         doc.text("No valuation data available (no pricing information found)", margin, 40);
+      }
+
+      // Add footer to every page (template name left, Page X of Y right)
+      const totalPages = doc.getNumberOfPages();
+      const templateLabel = `1. ${templateName}`;
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.text(templateLabel, margin, pageHeight - 10);
+        doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 10, { align: "right" });
       }
 
       doc.save(`yarn-stock-report-${new Date().toISOString().split("T")[0]}.pdf`);
