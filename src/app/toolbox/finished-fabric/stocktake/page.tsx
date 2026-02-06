@@ -357,7 +357,6 @@ export default function FinishedFabricStocktakeListPage() {
                         <Button
                           type="button"
                           variant="outline"
-                          size="sm"
                           onClick={() =>
                             router.push(
                               `/toolbox/finished-fabric/stocktake/${s.id}`,
@@ -369,7 +368,6 @@ export default function FinishedFabricStocktakeListPage() {
                         <Button
                           type="button"
                           variant="ghost"
-                          size="sm"
                           className="text-red-600 hover:text-red-700"
                           onClick={() => handleDelete(s)}
                           disabled={deletingId === s.id}
