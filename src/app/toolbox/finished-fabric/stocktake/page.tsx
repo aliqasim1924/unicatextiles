@@ -367,7 +367,7 @@ export default function FinishedFabricStocktakeListPage() {
                         </Button>
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           className="text-red-600 hover:text-red-700"
                           onClick={() => handleDelete(s)}
                           disabled={deletingId === s.id}
