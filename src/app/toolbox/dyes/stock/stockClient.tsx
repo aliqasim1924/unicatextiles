@@ -166,7 +166,7 @@ export default function StockClient({ initialStock }: { initialStock: StockRow[]
       });
 
       // Add footer to every page (template name left, Page X of Y right)
-      const totalPages = doc.getNumberOfPages();
+      const totalPages = (doc as any).getNumberOfPages?.() ?? (doc as any).internal?.getNumberOfPages?.() ?? 1;
       const templateLabel = `1. ${templateName}`;
       for (let i = 1; i <= totalPages; i++) {
         doc.setPage(i);

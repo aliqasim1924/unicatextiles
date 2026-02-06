@@ -338,7 +338,7 @@ export default function YarnStockPage() {
       };
       const totalColWidth = Object.values(colWidths).reduce((a, b) => a + b, 0);
       const scale = availableWidth / totalColWidth;
-      const columnStyles: Record<number, { halign?: string; cellWidth?: number }> = {};
+      const columnStyles: Record<number, { halign?: "left" | "right" | "center"; cellWidth?: number }> = {};
       [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach((i) => {
         columnStyles[i] = { cellWidth: Math.round((colWidths[i] ?? 20) * scale) };
         if ([2, 3, 4, 5, 6, 7, 9, 10].includes(i)) columnStyles[i].halign = "right";
@@ -444,7 +444,7 @@ export default function YarnStockPage() {
       }
 
       // Add footer to every page (template name left, Page X of Y right)
-      const totalPages = doc.getNumberOfPages();
+      const totalPages = (doc as any).getNumberOfPages?.() ?? (doc as any).internal?.getNumberOfPages?.() ?? 1;
       const templateLabel = `1. ${templateName}`;
       for (let i = 1; i <= totalPages; i++) {
         doc.setPage(i);
