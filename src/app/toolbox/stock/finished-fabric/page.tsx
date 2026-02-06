@@ -406,6 +406,11 @@ export default function FinishedFabricStockPage() {
               Store Management
             </Button>
           </Link>
+          <Link href="/toolbox/finished-fabric/stocktake">
+            <Button variant="primary" className="text-sm">
+              Month-end Stocktake
+            </Button>
+          </Link>
           <Button 
             variant="secondary" 
             onClick={generatePDF} 

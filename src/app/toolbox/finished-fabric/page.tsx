@@ -41,6 +41,11 @@ export default function FinishedFabricPage() {
               New Coating Batch
             </Button>
           </Link>
+          <Link href="/toolbox/finished-fabric/stocktake" className="w-full">
+            <Button variant="primary" className="w-full">
+              Finished Fabric Stocktakes
+            </Button>
+          </Link>
         </div>
       </motion.section>
     </div>
