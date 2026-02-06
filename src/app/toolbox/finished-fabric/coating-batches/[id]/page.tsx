@@ -81,7 +81,7 @@ export default function CoatingBatchDetailPage() {
 
   // Add finished roll form state
   const [newRollLength, setNewRollLength] = useState("50");
-  const [newRollGrade, setNewRollGrade] = useState("");
+  const [newRollGrade, setNewRollGrade] = useState("A");
   const [newRollNotes, setNewRollNotes] = useState("");
   const [isAddingRoll, setIsAddingRoll] = useState(false);
 
@@ -327,7 +327,7 @@ export default function CoatingBatchDetailPage() {
 
       setSuccess("Finished roll added successfully.");
       setNewRollLength("50");
-      setNewRollGrade("");
+      setNewRollGrade("A");
       setNewRollNotes("");
     } catch (err: any) {
       console.error("Failed to add finished roll", err);
