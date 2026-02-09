@@ -98,6 +98,11 @@ export default function CoatingBatchDetailPage() {
   const [shortageReason, setShortageReason] = useState("");
   const [showShortageModal, setShowShortageModal] = useState(false);
   const [pendingCoatedMeters, setPendingCoatedMeters] = useState<number | null>(null);
+  
+  // Chemical editing state
+  const [editingChemicalId, setEditingChemicalId] = useState<string | null>(null);
+  const [editingQuantity, setEditingQuantity] = useState<string>("");
+  const [isUpdatingChemical, setIsUpdatingChemical] = useState(false);
 
   useEffect(() => {
     if (batchId) {
@@ -556,6 +561,74 @@ export default function CoatingBatchDetailPage() {
     }
   }
 
+  async function handleUpdateChemicalQuantity(chemicalId: string, newQuantity: number) {
+    if (isNaN(newQuantity) || newQuantity <= 0) {
+      setError("Please enter a valid quantity");
+      return;
+    }
+
+    setIsUpdatingChemical(true);
+    setError(null);
+    setSuccess(null);
+
+    // Find the chemical to get its details for updating available quantity
+    const chemicalToUpdate = batchChemicals.find((c) => c.id === chemicalId);
+    const chemicalItemId = chemicalToUpdate?.chemical_item_id;
+    const oldQuantity = chemicalToUpdate?.quantity || 0;
+    const quantityDiff = newQuantity - oldQuantity;
+
+    try {
+      const { error: updateError } = await supabaseBrowserClient
+        .from("coating_batch_chemicals")
+        .update({ quantity: newQuantity })
+        .eq("id", chemicalId);
+
+      if (updateError) throw updateError;
+
+      // Update local state
+      setBatchChemicals(
+        batchChemicals.map((c) =>
+          c.id === chemicalId ? { ...c, quantity: newQuantity } : c
+        )
+      );
+
+      // Update available chemicals if it was linked to a chemical item
+      if (chemicalItemId && quantityDiff !== 0) {
+        setAvailableChemicals((prev) =>
+          prev.map((chem) => {
+            if (chem.chemical_item_id === chemicalItemId) {
+              return {
+                ...chem,
+                total_allocated_to_batches: chem.total_allocated_to_batches + quantityDiff,
+                remaining_for_batches: chem.remaining_for_batches - quantityDiff,
+              };
+            }
+            return chem;
+          })
+        );
+      }
+
+      setSuccess("Chemical quantity updated successfully.");
+      setEditingChemicalId(null);
+      setEditingQuantity("");
+    } catch (err: any) {
+      console.error("Failed to update chemical quantity", err);
+      setError(err.message || "Failed to update chemical quantity.");
+    } finally {
+      setIsUpdatingChemical(false);
+    }
+  }
+
+  function handleStartEditChemical(chemical: BatchChemical) {
+    setEditingChemicalId(chemical.id);
+    setEditingQuantity(chemical.quantity?.toString() || "");
+  }
+
+  function handleCancelEditChemical() {
+    setEditingChemicalId(null);
+    setEditingQuantity("");
+  }
+
   async function handleDeleteChemical(chemicalId: string) {
     if (!confirm("Are you sure you want to remove this chemical from the batch?")) {
       return;
@@ -577,24 +650,8 @@ export default function CoatingBatchDetailPage() {
 
       if (deleteError) throw deleteError;
 
-      // Remove from local state
-      setBatchChemicals(batchChemicals.filter((c) => c.id !== chemicalId));
-
-      // Restore available quantity if it was linked to a chemical item
-      if (chemicalItemId) {
-        setAvailableChemicals((prev) =>
-          prev.map((chem) => {
-            if (chem.chemical_item_id === chemicalItemId) {
-              return {
-                ...chem,
-                total_allocated_to_batches: chem.total_allocated_to_batches - quantityToRestore,
-                remaining_for_batches: chem.remaining_for_batches + quantityToRestore,
-              };
-            }
-            return chem;
-          })
-        );
-      }
+      // Refresh data to ensure consistency
+      await fetchData();
 
       setSuccess("Chemical removed successfully.");
     } catch (err: any) {
@@ -1156,27 +1213,85 @@ export default function CoatingBatchDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {batchChemicals.map((chem) => (
-                  <tr key={chem.id}>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
-                      {chem.chemical_name ?? "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
-                      {chem.quantity !== null ? chem.quantity.toFixed(3) : "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
-                      {chem.uom ?? "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm">
-                      <button
-                        onClick={() => handleDeleteChemical(chem.id)}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {batchChemicals.map((chem) => {
+                  const isEditing = editingChemicalId === chem.id;
+                  const canEdit = batch?.status !== "COMPLETED";
+                  
+                  return (
+                    <tr key={chem.id}>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
+                        {chem.chemical_name ?? "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                        {isEditing ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              value={editingQuantity}
+                              onChange={(e) => setEditingQuantity(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity));
+                                } else if (e.key === "Escape") {
+                                  handleCancelEditChemical();
+                                }
+                              }}
+                              className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                              autoFocus
+                              disabled={isUpdatingChemical}
+                            />
+                            <button
+                              onClick={() => handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity))}
+                              disabled={isUpdatingChemical}
+                              className="text-green-600 hover:text-green-800 disabled:text-slate-400"
+                              title="Save"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={handleCancelEditChemical}
+                              disabled={isUpdatingChemical}
+                              className="text-red-600 hover:text-red-800 disabled:text-slate-400"
+                              title="Cancel"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-2">
+                            <span>{chem.quantity !== null ? chem.quantity.toFixed(3) : "-"}</span>
+                            {canEdit && (
+                              <button
+                                onClick={() => handleStartEditChemical(chem)}
+                                className="text-blue-600 hover:text-blue-800 text-xs"
+                                title="Edit quantity"
+                              >
+                                ✏️
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                        {chem.uom ?? "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm">
+                        {canEdit ? (
+                          <button
+                            onClick={() => handleDeleteChemical(chem.id)}
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 text-xs">Locked</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
