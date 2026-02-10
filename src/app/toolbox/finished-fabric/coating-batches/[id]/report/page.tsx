@@ -193,8 +193,8 @@ export default function CoatingBatchReportPage() {
         }
       `}</style>
 
-      <div className="mx-auto max-w-5xl px-4 pb-8 print:px-0">
-        <div className="print-slip-card rounded-xl border border-slate-200 bg-white shadow-sm p-6 print:p-4">
+      <div className="print-coating-batch-report mx-auto max-w-5xl px-4 pb-8 print:px-0">
+        <div className="print-slip-card print-coating-batch-report-card rounded-xl border border-slate-200 bg-white shadow-sm p-6 print:p-4">
           {/* Header */}
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -305,7 +305,7 @@ export default function CoatingBatchReportPage() {
           </div>
 
           {/* Signatures */}
-          <div className="mt-10 pt-6 border-t border-slate-200">
+          <div className="print-coating-signatures mt-10 pt-6 border-t border-slate-200">
             <div className="grid grid-cols-2 gap-8 max-w-md">
               <div>
                 <div className="border-b border-slate-400 mb-1 h-10" />

@@ -163,4 +163,26 @@ button {
   .print-production-report .print-production-report-card thead {
     display: table-header-group;
   }
+
+  /* Coating Batch Report: allow multi-page flow so chemicals and signatures are not cut off */
+  .print-coating-batch-report .print-slip-card,
+  .print-coating-batch-report .print-coating-batch-report-card {
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-inside: auto !important;
+    transform: none !important;
+  }
+
+  .print-coating-batch-report table {
+    page-break-inside: auto;
+  }
+
+  .print-coating-batch-report thead {
+    display: table-header-group;
+  }
+
+  .print-coating-batch-report .print-coating-signatures {
+    page-break-inside: avoid;
+  }
 }
