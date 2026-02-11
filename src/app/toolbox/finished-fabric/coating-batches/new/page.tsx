@@ -9,7 +9,6 @@ import { BackButton } from "@/components/navigation/BackButton";
 
 const LOCATION_COATING = "COATING";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
-const STATUS_COATING_IN_PROGRESS = "COATING_IN_PROGRESS";
 
 interface AvailableRoll {
   id: string;
@@ -20,6 +19,8 @@ interface AvailableRoll {
   order_no: string | null;
   loom_no: string | null;
   fabric_name: string | null;
+  total_allocated_to_batches: number;
+  remaining_for_batches: number;
 }
 
 export default function NewCoatingBatchPage() {
@@ -34,6 +35,7 @@ export default function NewCoatingBatchPage() {
   });
   const [availableRolls, setAvailableRolls] = useState<AvailableRoll[]>([]);
   const [selectedRollIds, setSelectedRollIds] = useState<Set<string>>(new Set());
+  const [allocatedLengths, setAllocatedLengths] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +117,7 @@ export default function NewCoatingBatchPage() {
       setError(null);
 
       const { data, error: fetchError } = await supabaseBrowserClient
-        .from("base_fabric_rolls")
+        .from("base_fabric_rolls_available_for_coating")
         .select(
           `
           id,
@@ -123,46 +125,37 @@ export default function NewCoatingBatchPage() {
           roll_no,
           length_m,
           cut_at,
-          current_location,
-          status,
-          base_fabric_orders:base_fabric_order_id (
-            order_no,
-            loom_no,
-            base_fabric_items:base_fabric_item_id (
-              name
-            )
-          )
+          order_no,
+          loom_no,
+          fabric_name,
+          total_allocated_to_batches,
+          remaining_for_batches
         `
         )
         .eq("current_location", LOCATION_COATING)
         .eq("status", STATUS_READY_FOR_COATING)
+        .gt("remaining_for_batches", 0)
         .order("cut_at", { ascending: true });
 
       if (fetchError) throw fetchError;
 
       const mapped =
-        (data || []).map((row: any) => {
-          const order = Array.isArray(row.base_fabric_orders)
-            ? row.base_fabric_orders[0]
-            : row.base_fabric_orders;
-          const item = order?.base_fabric_items
-            ? Array.isArray(order.base_fabric_items)
-              ? order.base_fabric_items[0]
-              : order.base_fabric_items
-            : null;
-          return {
-            id: row.id as string,
-            qr_code: row.qr_code ?? null,
-            roll_no: row.roll_no ?? null,
-            length_m: row.length_m,
-            cut_at: row.cut_at,
-            order_no: order?.order_no ?? null,
-            loom_no: order?.loom_no ?? null,
-            fabric_name: item?.name ?? null,
-          };
-        }) || [];
+        (data || []).map((row: any) => ({
+          id: row.id as string,
+          qr_code: row.qr_code ?? null,
+          roll_no: row.roll_no ?? null,
+          length_m: Number(row.length_m || 0),
+          cut_at: row.cut_at,
+          order_no: row.order_no ?? null,
+          loom_no: row.loom_no ?? null,
+          fabric_name: row.fabric_name ?? null,
+          total_allocated_to_batches: Number(row.total_allocated_to_batches || 0),
+          remaining_for_batches: Number(row.remaining_for_batches || 0),
+        })) || [];
 
       setAvailableRolls(mapped);
+      setAllocatedLengths({});
+      setSelectedRollIds(new Set());
     } catch (err: any) {
       setError(err.message || "Failed to load available rolls");
       console.error("Error fetching rolls:", err);
@@ -173,20 +166,53 @@ export default function NewCoatingBatchPage() {
 
   function toggleRollSelection(rollId: string) {
     const newSelection = new Set(selectedRollIds);
+    const newAllocated = { ...allocatedLengths };
+    const roll = availableRolls.find((r) => r.id === rollId);
+
     if (newSelection.has(rollId)) {
       newSelection.delete(rollId);
+      delete newAllocated[rollId];
     } else {
       newSelection.add(rollId);
+      if (roll && !newAllocated[rollId]) {
+        newAllocated[rollId] = roll.remaining_for_batches.toFixed(2);
+      }
     }
+
     setSelectedRollIds(newSelection);
+    setAllocatedLengths(newAllocated);
   }
 
   function toggleSelectAll() {
     if (selectedRollIds.size === availableRolls.length) {
       setSelectedRollIds(new Set());
+      setAllocatedLengths({});
     } else {
-      setSelectedRollIds(new Set(availableRolls.map((r) => r.id)));
+      const allIds = availableRolls.map((r) => r.id);
+      const newSelection = new Set(allIds);
+      const newAllocated: Record<string, string> = {};
+      availableRolls.forEach((roll) => {
+        newAllocated[roll.id] = roll.remaining_for_batches.toFixed(2);
+      });
+      setSelectedRollIds(newSelection);
+      setAllocatedLengths(newAllocated);
     }
+  }
+
+  function handleAllocatedLengthChange(roll: AvailableRoll, value: string) {
+    const newAllocated = { ...allocatedLengths };
+    newAllocated[roll.id] = value;
+
+    const parsed = parseFloat(value);
+    const newSelection = new Set(selectedRollIds);
+    if (!value || isNaN(parsed) || parsed <= 0) {
+      newSelection.delete(roll.id);
+    } else {
+      newSelection.add(roll.id);
+    }
+
+    setAllocatedLengths(newAllocated);
+    setSelectedRollIds(newSelection);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -205,7 +231,7 @@ export default function NewCoatingBatchPage() {
     }
 
     if (selectedRollIds.size === 0) {
-      setError("Please select at least one base fabric roll");
+      setError("Please select at least one base fabric roll and allocation length.");
       return;
     }
 
@@ -246,12 +272,35 @@ export default function NewCoatingBatchPage() {
       if (batchError) throw batchError;
       if (!batch) throw new Error("Failed to create batch");
 
-      // Create batch base rolls entries
+      // Create batch base rolls entries with allocated lengths
       const selectedRolls = availableRolls.filter((r) => selectedRollIds.has(r.id));
+
+      if (selectedRolls.length === 0) {
+        throw new Error("No valid rolls selected. Please select rolls and enter allocated lengths.");
+      }
+
+      for (const roll of selectedRolls) {
+        const value = allocatedLengths[roll.id];
+        const allocated = parseFloat(value);
+
+        if (!value || isNaN(allocated) || allocated <= 0) {
+          throw new Error(
+            `Please enter a valid allocated length for roll ${roll.roll_no || roll.id}.`
+          );
+        }
+
+        if (allocated > roll.remaining_for_batches) {
+          throw new Error(
+            `Allocated length for roll ${roll.roll_no || roll.id} exceeds remaining available quantity.\n` +
+              `Allocated: ${allocated.toFixed(2)} m, Remaining: ${roll.remaining_for_batches.toFixed(2)} m.`
+          );
+        }
+      }
+
       const batchBaseRolls = selectedRolls.map((roll) => ({
         batch_id: batch.id,
         base_fabric_roll_id: roll.id,
-        input_length_m: roll.length_m,
+        input_length_m: parseFloat(allocatedLengths[roll.id]),
       }));
 
       const { error: baseRollsError } = await supabaseBrowserClient
@@ -259,14 +308,6 @@ export default function NewCoatingBatchPage() {
         .insert(batchBaseRolls);
 
       if (baseRollsError) throw baseRollsError;
-
-      // Update base fabric rolls status
-      const { error: updateError } = await supabaseBrowserClient
-        .from("base_fabric_rolls")
-        .update({ status: STATUS_COATING_IN_PROGRESS })
-        .in("id", Array.from(selectedRollIds));
-
-      if (updateError) throw updateError;
 
       setSuccess(`Batch ${batch.batch_no} created successfully`);
       setTimeout(() => {
@@ -474,19 +515,22 @@ export default function NewCoatingBatchPage() {
                       />
                     </th>
                     <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      QR
-                    </th>
-                    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                       Roll No
                     </th>
                     <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      Order No
+                      Loom No
                     </th>
                     <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                       Base Fabric Name
                     </th>
                     <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      Length (m)
+                      Roll Length (m)
+                    </th>
+                    <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Remaining (m)
+                    </th>
+                    <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Allocate (m)
                     </th>
                     <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                       Cut At
@@ -507,20 +551,31 @@ export default function NewCoatingBatchPage() {
                           className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                         />
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                        {roll.qr_code ?? "-"}
-                      </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-slate-900">
                         {roll.roll_no ?? "-"}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                        {roll.order_no ?? "-"}
+                        {roll.loom_no ?? "-"}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
                         {roll.fabric_name ?? "-"}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
                         {roll.length_m.toFixed(2)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
+                        {roll.remaining_for_batches.toFixed(2)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          max={roll.remaining_for_batches}
+                          value={allocatedLengths[roll.id] ?? ""}
+                          onChange={(e) => handleAllocatedLengthChange(roll, e.target.value)}
+                          className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
                         {formatDate(roll.cut_at)}
