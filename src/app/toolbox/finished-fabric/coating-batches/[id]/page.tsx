@@ -573,9 +573,32 @@ export default function CoatingBatchDetailPage() {
 
     // Find the chemical to get its details for updating available quantity
     const chemicalToUpdate = batchChemicals.find((c) => c.id === chemicalId);
-    const chemicalItemId = chemicalToUpdate?.chemical_item_id;
-    const oldQuantity = chemicalToUpdate?.quantity || 0;
+    if (!chemicalToUpdate) {
+      setIsUpdatingChemical(false);
+      setError("Chemical not found on this batch.");
+      return;
+    }
+
+    const chemicalItemId = chemicalToUpdate.chemical_item_id;
+    const oldQuantity = chemicalToUpdate.quantity ?? 0;
     const quantityDiff = newQuantity - oldQuantity;
+
+    // If increasing quantity, ensure there is enough available stock in coating
+    if (chemicalItemId && quantityDiff > 0) {
+      const stockEntry = availableChemicals.find(
+        (c) => c.chemical_item_id === chemicalItemId
+      );
+      const remaining = stockEntry?.remaining_for_batches ?? 0;
+
+      if (remaining < quantityDiff) {
+        setIsUpdatingChemical(false);
+        setError(
+          `Not enough chemical available in coating to increase quantity.\n` +
+            `Additional required: ${quantityDiff.toFixed(3)}, available: ${remaining.toFixed(3)}.`
+        );
+        return;
+      }
+    }
 
     try {
       const { error: updateError } = await supabaseBrowserClient
@@ -585,28 +608,8 @@ export default function CoatingBatchDetailPage() {
 
       if (updateError) throw updateError;
 
-      // Update local state
-      setBatchChemicals(
-        batchChemicals.map((c) =>
-          c.id === chemicalId ? { ...c, quantity: newQuantity } : c
-        )
-      );
-
-      // Update available chemicals if it was linked to a chemical item
-      if (chemicalItemId && quantityDiff !== 0) {
-        setAvailableChemicals((prev) =>
-          prev.map((chem) => {
-            if (chem.chemical_item_id === chemicalItemId) {
-              return {
-                ...chem,
-                total_allocated_to_batches: chem.total_allocated_to_batches + quantityDiff,
-                remaining_for_batches: chem.remaining_for_batches - quantityDiff,
-              };
-            }
-            return chem;
-          })
-        );
-      }
+      // Refresh data from the database to ensure consistency (including available chemicals)
+      await fetchData();
 
       setSuccess("Chemical quantity updated successfully.");
       setEditingChemicalId(null);
