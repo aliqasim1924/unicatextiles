@@ -42,9 +42,23 @@ export default function BeamsPage() {
       const { data, error } = await supabaseBrowserClient
         .from("weaving_beams")
         .select("id, beam_no, tare_weight_kg, is_active, created_at, updated_at")
+        .eq("is_active", true)
         .order("beam_no", { ascending: true });
       if (error) throw error;
-      setBeams((data as Beam[]) || []);
+      const list = ((data || []) as Beam[]).slice();
+      list.sort((a, b) => {
+        const an = Number(a.beam_no);
+        const bn = Number(b.beam_no);
+        const aIsNum = !isNaN(an);
+        const bIsNum = !isNaN(bn);
+        if (aIsNum && bIsNum) {
+          return an - bn;
+        }
+        if (aIsNum) return -1;
+        if (bIsNum) return 1;
+        return a.beam_no.localeCompare(b.beam_no);
+      });
+      setBeams(list);
     } catch (err: any) {
       setError(err.message || "Failed to load beams.");
     } finally {

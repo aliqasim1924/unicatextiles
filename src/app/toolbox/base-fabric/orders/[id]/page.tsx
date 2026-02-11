@@ -254,7 +254,20 @@ export default function BaseFabricOrderDetailPage() {
       ]);
 
       if (beamsRes.data) {
-        setBeams((beamsRes.data as BeamOption[]) || []);
+        const list = ((beamsRes.data || []) as BeamOption[]).slice();
+        list.sort((a, b) => {
+          const an = Number(a.beam_no);
+          const bn = Number(b.beam_no);
+          const aIsNum = !isNaN(an);
+          const bIsNum = !isNaN(bn);
+          if (aIsNum && bIsNum) {
+            return an - bn;
+          }
+          if (aIsNum) return -1;
+          if (bIsNum) return 1;
+          return a.beam_no.localeCompare(b.beam_no);
+        });
+        setBeams(list);
       }
       const beamsData = orderBeamsRes.data as any[] | null;
       setOrderBeams(
