@@ -565,7 +565,8 @@ export default function CoatingBatchDetailPage() {
   }
 
   async function handleUpdateChemicalQuantity(chemicalId: string, newQuantity: number) {
-    if (isNaN(newQuantity) || newQuantity <= 0) {
+    // Allow zero for "delete" semantics, but disallow negatives
+    if (isNaN(newQuantity) || newQuantity < 0) {
       setError("Please enter a valid quantity");
       return;
     }
@@ -604,12 +605,20 @@ export default function CoatingBatchDetailPage() {
     }
 
     try {
-      const { error: updateError } = await supabaseBrowserClient
+      const { data, error: updateError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
         .update({ quantity: newQuantity })
-        .eq("id", chemicalId);
+        .eq("id", chemicalId)
+        .select("id");
 
       if (updateError) throw updateError;
+
+      // If no rows were updated, treat as a failure (likely due to RLS or missing row)
+      if (!data || data.length === 0) {
+        throw new Error(
+          "Chemical quantity could not be updated. The record may not exist or you might not have permission."
+        );
+      }
 
       // Refresh data from the database to ensure consistency (including available chemicals)
       await fetchData();
@@ -644,14 +653,38 @@ export default function CoatingBatchDetailPage() {
     setSuccess(null);
 
     try {
-      // Instead of hard-deleting, set quantity to 0 so
-      // allocated/available stock stays consistent and views recalculate correctly.
-      const { error: updateError } = await supabaseBrowserClient
-        .from("coating_batch_chemicals")
-        .update({ quantity: 0 })
-        .eq("id", chemicalId);
+      let affectedRows = 0;
 
-      if (updateError) throw updateError;
+      // First try a real delete
+      const { data, error: deleteError } = await supabaseBrowserClient
+        .from("coating_batch_chemicals")
+        .delete()
+        .eq("id", chemicalId)
+        .select("id");
+
+      if (deleteError) throw deleteError;
+
+      affectedRows += data?.length ?? 0;
+
+      // If nothing was deleted (data is empty), fall back to setting quantity = 0
+      if (affectedRows === 0) {
+        const { data: updated, error: updateError } = await supabaseBrowserClient
+          .from("coating_batch_chemicals")
+          .update({ quantity: 0 })
+          .eq("id", chemicalId)
+          .select("id");
+
+        if (updateError) throw updateError;
+
+        affectedRows += updated?.length ?? 0;
+      }
+
+      // If still nothing was changed, surface a clear error instead of a misleading success
+      if (affectedRows === 0) {
+        throw new Error(
+          "Chemical could not be removed. The record may not exist or you might not have permission."
+        );
+      }
 
       // Refresh data to ensure consistency (including available chemicals)
       await fetchData();
