@@ -209,13 +209,16 @@ export default function CoatingBatchDetailPage() {
 
       if (chemError) throw chemError;
       setBatchChemicals(
-        (chemData || []).map((row: any) => ({
-          id: row.id,
-          chemical_name: row.chemical_name ?? null,
-          quantity: row.quantity !== null ? Number(row.quantity) : null,
-          uom: row.uom ?? null,
-          chemical_item_id: row.chemical_item_id ?? null,
-        })) as BatchChemical[]
+        ((chemData || []) as any[])
+          // Hide "removed" chemicals (quantity set to 0 or null)
+          .filter((row) => row.quantity !== null && Number(row.quantity) > 0)
+          .map((row: any) => ({
+            id: row.id,
+            chemical_name: row.chemical_name ?? null,
+            quantity: row.quantity !== null ? Number(row.quantity) : null,
+            uom: row.uom ?? null,
+            chemical_item_id: row.chemical_item_id ?? null,
+          })) as BatchChemical[]
       );
 
       // Fetch available chemicals (issued to coating) with UOM from dye_items
@@ -640,20 +643,17 @@ export default function CoatingBatchDetailPage() {
     setError(null);
     setSuccess(null);
 
-    // Find the chemical to get its details for restoring available quantity
-    const chemicalToDelete = batchChemicals.find((c) => c.id === chemicalId);
-    const chemicalItemId = chemicalToDelete?.chemical_item_id;
-    const quantityToRestore = chemicalToDelete?.quantity || 0;
-
     try {
-      const { error: deleteError } = await supabaseBrowserClient
+      // Instead of hard-deleting, set quantity to 0 so
+      // allocated/available stock stays consistent and views recalculate correctly.
+      const { error: updateError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
-        .delete()
+        .update({ quantity: 0 })
         .eq("id", chemicalId);
 
-      if (deleteError) throw deleteError;
+      if (updateError) throw updateError;
 
-      // Refresh data to ensure consistency
+      // Refresh data to ensure consistency (including available chemicals)
       await fetchData();
 
       setSuccess("Chemical removed successfully.");
