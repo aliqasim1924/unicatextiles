@@ -27,6 +27,7 @@ interface BaseRoll {
     length_m: number;
     base_fabric_orders: {
       order_no: string | null;
+      loom_no: number | null;
       base_fabric_items: {
         name: string | null;
       } | null;
@@ -85,6 +86,7 @@ export default function CoatingBatchReportPage() {
             length_m,
             base_fabric_orders:base_fabric_order_id (
               order_no,
+              loom_no,
               base_fabric_items:base_fabric_item_id ( name )
             )
           )
@@ -178,7 +180,7 @@ export default function CoatingBatchReportPage() {
         @media print {
           @page {
             size: A4;
-            margin: 10mm;
+            margin: 10mm 10mm 20mm 10mm;
           }
           body {
             background: white;
@@ -186,6 +188,29 @@ export default function CoatingBatchReportPage() {
           .print-slip-card {
             box-shadow: none !important;
             border: none !important;
+            position: relative;
+            padding-bottom: 30px !important;
+          }
+          .print-coating-batch-report-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 8px 10mm;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10px;
+            color: #64748b;
+            z-index: 1000;
+          }
+          .print-coating-batch-report-footer.print\\:block span:last-child::after {
+            content: "Page " counter(page) " of " counter(pages);
+          }
+          .print-coating-batch-report-footer.print\\:block span:last-child {
+            display: block;
           }
           .print\\:hidden {
             display: none !important;
@@ -242,7 +267,7 @@ export default function CoatingBatchReportPage() {
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
                     <Th>Roll No</Th>
-                    <Th>QR Code</Th>
+                    <Th>Loom No</Th>
                     <Th>Order No</Th>
                     <Th>Base Fabric Name</Th>
                     <Th className="text-right">Length (m)</Th>
@@ -255,7 +280,7 @@ export default function CoatingBatchReportPage() {
                     return (
                       <tr key={roll.id} className="align-top">
                         <Td>{roll.base_fabric_rolls?.roll_no ?? "-"}</Td>
-                        <Td>{roll.base_fabric_rolls?.qr_code ?? "-"}</Td>
+                          <Td>{order?.loom_no ?? "-"}</Td>
                         <Td>{order?.order_no ?? "-"}</Td>
                         <Td>{item?.name ?? "-"}</Td>
                         <Td className="text-right">{roll.input_length_m?.toFixed(2)}</Td>
@@ -322,12 +347,17 @@ export default function CoatingBatchReportPage() {
             </div>
           </div>
 
-          {/* Footer */}
-          <div className="mt-10 flex items-center justify-between text-xs text-slate-600">
-            <span>Document No: UTM-COAT-BATCH-REP-FT-001</span>
-            <span>Page 1 of 1</span>
-          </div>
         </div>
+      </div>
+      
+      {/* Footer - positioned at bottom in print */}
+      <div className="print-coating-batch-report-footer print:hidden">
+        <span>Document No: UTM-COAT-BATCH-REP-FT-001</span>
+        <span>Page 1 of 1</span>
+      </div>
+      <div className="hidden print:block print-coating-batch-report-footer">
+        <span>Document No: UTM-COAT-BATCH-REP-FT-001</span>
+        <span>Page </span>
       </div>
     </div>
   );

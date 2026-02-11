@@ -157,7 +157,7 @@ export default function RollingReportPage() {
         @media print {
           @page {
             size: A4;
-            margin: 10mm;
+            margin: 10mm 10mm 20mm 10mm;
           }
           body {
             background: white;
@@ -171,26 +171,61 @@ export default function RollingReportPage() {
             padding: 0;
           }
           .print-slip-card {
-            display: flex !important;
-            flex-direction: column !important;
             box-sizing: border-box;
-            min-height: 0;
             box-shadow: none !important;
             border: none !important;
-            transform-origin: top left;
-            transform: scale(0.96);
+            display: block !important;
+            flex-direction: unset !important;
+            min-height: unset !important;
+            height: auto !important;
+            max-height: none !important;
+            page-break-inside: auto;
+            break-inside: auto;
+          }
+          .print-slip-card > * {
+            page-break-inside: auto;
+            break-inside: auto;
+          }
+          .print-slip-card > div:not(.rolling-report-table-wrap) {
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .print-slip-card .rolling-report-table-wrap {
             page-break-inside: auto;
+            break-inside: auto;
+            overflow: visible !important;
+            margin-top: 0;
+          }
+          .print-slip-card .rolling-report-table-wrap h3 {
+            page-break-after: avoid;
+            break-after: avoid;
+          }
+          .print-slip-card .rolling-report-table-wrap > div {
+            overflow: visible !important;
+          }
+          .print-slip-card .rolling-report-table {
+            page-break-inside: auto;
+            border-collapse: collapse;
+            width: 100%;
           }
           .print-slip-card .rolling-report-table thead {
             display: table-header-group;
           }
+          .print-slip-card .rolling-report-table tbody {
+            display: table-row-group;
+            page-break-inside: auto;
+          }
           .print-slip-card .rolling-report-table tr {
             page-break-inside: avoid;
+            page-break-after: auto;
+            break-inside: avoid;
           }
-          footer {
-            margin-top: auto !important;
+          .print-slip-card .rolling-report-table td,
+          .print-slip-card .rolling-report-table th {
+            page-break-inside: avoid;
+          }
+          footer.print\\:block span:last-child::after {
+            content: "Page " counter(page) " of " counter(pages);
           }
           .print\\:hidden {
             display: none !important;
@@ -199,7 +234,7 @@ export default function RollingReportPage() {
       `}</style>
 
       <div className="mx-auto max-w-[900px] px-4 pb-8 print:p-0">
-        <div className="print-slip-card flex flex-col min-h-0 rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4">
+        <div className="print-slip-card flex flex-col min-h-0 rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4 print:pb-20">
           {/* Header */}
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
@@ -272,15 +307,15 @@ export default function RollingReportPage() {
           </div>
 
           {/* Finished Rolls Table */}
-          <div className="mb-6 rolling-report-table-wrap">
-            <h3 className="mb-3 text-lg font-semibold text-slate-900">
+          <div className="mb-6 rolling-report-table-wrap print:mb-0">
+            <h3 className="mb-3 text-lg font-semibold text-slate-900 print:mb-2">
               Finished Rolls (Rolling & Inspection)
             </h3>
             {finishedRolls.length === 0 ? (
               <p className="text-sm text-slate-600">No finished rolls recorded yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm rolling-report-table">
+              <div className="overflow-x-auto print:overflow-visible print:block">
+                <table className="min-w-full text-sm rolling-report-table print:w-full">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50">
                       <Th>Roll No</Th>
@@ -315,13 +350,38 @@ export default function RollingReportPage() {
             )}
           </div>
 
-          {/* Footer */}
-          <footer className="mt-auto pt-4 flex items-center justify-between text-xs text-slate-600 border-t border-slate-200">
-            <span>Document No: UTM-ROLL-REP-FT-001</span>
-            <span>Page 1 of 1</span>
-          </footer>
+          {/* Signatures */}
+          <div className="print-coating-signatures mt-10 pt-6 border-t border-slate-200">
+            <div className="grid grid-cols-2 gap-8 max-w-md">
+              <div>
+                <div className="border-b border-slate-400 mb-1 h-10" />
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Production Manager
+                </p>
+              </div>
+              <div>
+                <div className="border-b border-slate-400 mb-1 h-10" />
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Rolling Supervisor
+                </p>
+              </div>
+            </div>
+          </div>
+
         </div>
+        
+        {/* Footer - positioned at bottom in print */}
+        <footer className="mt-auto pt-4 flex items-center justify-between text-xs text-slate-600 border-t border-slate-200 print:hidden">
+          <span>Document No: UTM-ROLL-REP-FT-001</span>
+          <span>Page 1 of 1</span>
+        </footer>
       </div>
+      
+      {/* Print footer - fixed at bottom */}
+      <footer className="hidden print:block print:fixed print:bottom-0 print:left-0 print:right-0 print:px-[10mm] print:py-2 print:bg-white print:border-t print:border-slate-200 print:flex print:justify-between print:items-center print:text-[10px] print:text-slate-600 print:z-[1000]">
+        <span>Document No: UTM-ROLL-REP-FT-001</span>
+        <span>Page </span>
+      </footer>
     </div>
   );
 }
