@@ -8,11 +8,21 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { generateQRCode } from "@/lib/qr/generateQRCode";
 
 const LOCATION_STORE = "FINISHED_STORE";
 const LOCATION_COATING = "COATING";
 const STATUS_IN_STORE = "IN_STORE";
 const STATUS_AWAITING_RECEIPT = "AWAITING_RECEIPT";
+
+/** Reasons when adding an unrecorded finished roll. Mirrors base fabric stocktake. */
+const UNRECORDED_ROLL_REASONS = [
+  { value: "Manufactured – not recorded in app", label: "Manufactured – not recorded in app" },
+  { value: "Outsourced – not recorded in app", label: "Outsourced – not recorded in app" },
+  { value: "Stock balancing – initial setup", label: "Stock balancing – initial setup" },
+  { value: "Stock balancing – quantity correction", label: "Stock balancing – quantity correction" },
+  { value: "Other", label: "Other" },
+];
 
 interface Session {
   id: string;
@@ -59,6 +69,20 @@ export default function FinishedFabricStocktakeDetailPage() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Unrecorded roll modal state
+  const [showAddRollModal, setShowAddRollModal] = useState(false);
+  const [isAddingRoll, setIsAddingRoll] = useState(false);
+  const [addRollForm, setAddRollForm] = useState({
+    fabric_type: "",
+    color: "",
+    gsm: "",
+    width: "",
+    length_m: "",
+    grade: "",
+    reason: "",
+    note: "",
+  });
 
   useEffect(() => {
     if (!sessionId) return;
@@ -253,6 +277,131 @@ export default function FinishedFabricStocktakeDetailPage() {
       hasMissingReasons: missingReason.length > 0,
     };
   }, [lines]);
+
+  async function addUnrecordedRoll(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (!session) {
+      setError("Missing stocktake session.");
+      return;
+    }
+    if (session.status === "posted") {
+      setError("Cannot add rolls to a posted stocktake.");
+      return;
+    }
+
+    const lengthM = parseFloat(addRollForm.length_m);
+    if (!Number.isFinite(lengthM) || lengthM <= 0) {
+      setError("Enter a valid roll length (m) greater than zero.");
+      return;
+    }
+
+    if (!addRollForm.fabric_type.trim()) {
+      setError("Fabric type is required.");
+      return;
+    }
+    if (!addRollForm.color.trim()) {
+      setError("Colour is required.");
+      return;
+    }
+
+    const gsmValue = addRollForm.gsm.trim()
+      ? Number.parseInt(addRollForm.gsm.trim(), 10)
+      : null;
+    if (addRollForm.gsm.trim() && (!Number.isFinite(gsmValue!) || gsmValue! <= 0)) {
+      setError("Enter a valid GSM (e.g. 280).");
+      return;
+    }
+
+    if (!addRollForm.width.trim()) {
+      setError("Width is required (e.g. 2.76m).");
+      return;
+    }
+
+    const reasonText =
+      addRollForm.reason === "Other" ? addRollForm.note.trim() : addRollForm.reason;
+    if (!reasonText) {
+      setError("Please select or enter a reason for this unrecorded roll.");
+      return;
+    }
+
+    if (addRollForm.reason === "Other" && !addRollForm.note.trim()) {
+      setError("Please enter a reason in the note field when selecting Other.");
+      return;
+    }
+
+    setIsAddingRoll(true);
+    try {
+      const descriptionParts = [
+        `Stocktake – unrecorded roll.`,
+        `Session: ${session.name} (${session.stocktake_date})`,
+        `Reason: ${reasonText}`,
+      ];
+      if (addRollForm.width.trim()) {
+        descriptionParts.push(`Width: ${addRollForm.width.trim()}`);
+      }
+      const rollNotes = descriptionParts.join(" ");
+
+      const qrCode = generateQRCode("finished_fabric");
+      const nowIso = new Date().toISOString();
+
+      const { data: rollData, error: rollError } = await supabaseBrowserClient
+        .from("finished_fabric_rolls")
+        .insert({
+          batch_id: null,
+          roll_no: null,
+          length_m: lengthM,
+          grade: addRollForm.grade.trim() || null,
+          gsm: gsmValue,
+          color: addRollForm.color.trim(),
+          coating_type: addRollForm.fabric_type.trim(),
+          notes: rollNotes,
+          qr_code: qrCode,
+          current_location: LOCATION_STORE,
+          status: STATUS_IN_STORE,
+          received_store_at: nowIso,
+        })
+        .select("id")
+        .single();
+
+      if (rollError) throw rollError;
+
+      const { error: lineError } = await supabaseBrowserClient
+        .from("finished_fabric_stocktake_lines")
+        .insert({
+          session_id: session.id,
+          finished_fabric_roll_id: rollData.id,
+          system_qty: 0,
+          counted_qty: lengthM,
+          variance_qty: lengthM,
+          reason: reasonText,
+          note: addRollForm.note.trim() || null,
+        });
+
+      if (lineError) throw lineError;
+
+      setSuccess("Unrecorded roll added. Reloading list.");
+      setShowAddRollModal(false);
+      setAddRollForm({
+        fabric_type: "",
+        color: "",
+        gsm: "",
+        width: "",
+        length_m: "",
+        grade: "",
+        reason: "",
+        note: "",
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error("Failed to add unrecorded roll", err);
+      setError(err.message || "Failed to add unrecorded roll.");
+    } finally {
+      setIsAddingRoll(false);
+    }
+  }
 
   async function saveLines() {
     setIsSaving(true);
@@ -689,6 +838,10 @@ export default function FinishedFabricStocktakeDetailPage() {
               any variance. Rolls awaiting receipt are included so you can count
               what is physically on hand.
             </p>
+            <p className="text-slate-600 mt-0.5">
+              Use <strong>Add unrecorded roll</strong> to capture finished rolls
+              that exist physically but are not yet on the system.
+            </p>
             {variances.hasMissingReasons && (
               <p className="text-red-600">
                 All variances must have a reason before posting.
@@ -696,6 +849,14 @@ export default function FinishedFabricStocktakeDetailPage() {
             )}
           </div>
           <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowAddRollModal(true)}
+              disabled={isLoading || session?.status === "posted"}
+            >
+              Add unrecorded roll
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -844,8 +1005,212 @@ export default function FinishedFabricStocktakeDetailPage() {
             </table>
           </div>
         )}
+
+        {/* Modal: Add unrecorded finished roll */}
+        {showAddRollModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 overflow-y-auto"
+            onClick={() => !isAddingRoll && setShowAddRollModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="mb-3 text-lg font-semibold text-slate-900">
+                Add unrecorded finished roll
+              </h3>
+              <p className="mb-4 text-sm text-slate-600">
+                Use this when a finished roll is physically in store but was never
+                recorded (e.g. manufactured/outsourced without being logged, or for
+                stock balancing). The roll will be added directly to the Finished
+                Store and included in this stocktake.
+              </p>
+              <form onSubmit={addUnrecordedRoll} className="grid gap-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Fabric type <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addRollForm.fabric_type}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({
+                        ...prev,
+                        fabric_type: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 280GSM Ripstop"
+                    required
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Colour <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addRollForm.color}
+                      onChange={(e) =>
+                        setAddRollForm((prev) => ({
+                          ...prev,
+                          color: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                      placeholder="e.g. Olive"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      GSM <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={addRollForm.gsm}
+                      onChange={(e) =>
+                        setAddRollForm((prev) => ({
+                          ...prev,
+                          gsm: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                      placeholder="e.g. 280"
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Width <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addRollForm.width}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({
+                        ...prev,
+                        width: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 2.76m"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Roll length (m) <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={addRollForm.length_m}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({
+                        ...prev,
+                        length_m: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="e.g. 50.000"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Grade
+                  </label>
+                  <select
+                    value={addRollForm.grade}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({
+                        ...prev,
+                        grade: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  >
+                    <option value="">Select grade (optional)</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="SCRAP">Scrap</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Reason <span className="text-red-600">*</span>
+                  </label>
+                  <select
+                    value={addRollForm.reason}
+                    onChange={(e) =>
+                      setAddRollForm((prev) => ({
+                        ...prev,
+                        reason: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    required
+                  >
+                    <option value="">Select reason</option>
+                    {UNRECORDED_ROLL_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {addRollForm.reason === "Other" && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Reason (free text) <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addRollForm.note}
+                      onChange={(e) =>
+                        setAddRollForm((prev) => ({
+                          ...prev,
+                          note: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                      placeholder="Describe reason"
+                    />
+                  </div>
+                )}
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowAddRollModal(false)}
+                    disabled={isAddingRoll}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={isAddingRoll}
+                    className="flex-1"
+                  >
+                    {isAddingRoll ? "Adding..." : "Add roll"}
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
       </motion.section>
     </div>
   );
 }
-
