@@ -57,12 +57,40 @@ interface Line {
   } | null;
 }
 
+interface FabricTypeOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface ColorOption {
+  id: string;
+  fabric_type_id: string;
+  color_name: string;
+}
+
+interface GsmOption {
+  id: string;
+  fabric_type_id: string;
+  gsm: number;
+}
+
+interface WidthOption {
+  id: string;
+  fabric_type_id: string;
+  width_mm: number;
+}
+
 export default function FinishedFabricStocktakeDetailPage() {
   const params = useParams();
   const sessionId = params?.id as string;
 
   const [session, setSession] = useState<Session | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  const [fabricTypes, setFabricTypes] = useState<FabricTypeOption[]>([]);
+  const [colorOptions, setColorOptions] = useState<Record<string, ColorOption[]>>({});
+  const [gsmOptions, setGsmOptions] = useState<Record<string, GsmOption[]>>({});
+  const [widthOptions, setWidthOptions] = useState<Record<string, WidthOption[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
@@ -74,10 +102,10 @@ export default function FinishedFabricStocktakeDetailPage() {
   const [showAddRollModal, setShowAddRollModal] = useState(false);
   const [isAddingRoll, setIsAddingRoll] = useState(false);
   const [addRollForm, setAddRollForm] = useState({
-    fabric_type: "",
-    color: "",
-    gsm: "",
-    width: "",
+    fabric_type_id: "",
+    color_option_id: "",
+    gsm_option_id: "",
+    width_option_id: "",
     length_m: "",
     grade: "",
     reason: "",
@@ -93,47 +121,112 @@ export default function FinishedFabricStocktakeDetailPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [{ data: sessionData, error: sessionError }, { data: linesData, error: linesError }] =
-        await Promise.all([
-          supabaseBrowserClient
-            .from("finished_fabric_stocktake_sessions")
-            .select("id, name, stocktake_date, performed_by, status, created_at, notes")
-            .eq("id", sessionId)
-            .single(),
-          supabaseBrowserClient
-            .from("finished_fabric_stocktake_lines")
-            .select(
-              `
-              id,
-              finished_fabric_roll_id,
-              system_qty,
-              counted_qty,
-              variance_qty,
-              reason,
-              note,
-              finished_fabric_rolls:finished_fabric_roll_id (
-                roll_no,
-                qr_code,
-                length_m,
-                grade,
-                color,
-                gsm,
-                coating_type,
-                batch_id,
-                coating_batches (
-                  batch_no
-                )
+      const [
+        { data: sessionData, error: sessionError },
+        { data: linesData, error: linesError },
+        { data: typesData, error: typesError },
+        { data: colorData, error: colorError },
+        { data: gsmData, error: gsmError },
+        { data: widthData, error: widthError },
+      ] = await Promise.all([
+        supabaseBrowserClient
+          .from("finished_fabric_stocktake_sessions")
+          .select("id, name, stocktake_date, performed_by, status, created_at, notes")
+          .eq("id", sessionId)
+          .single(),
+        supabaseBrowserClient
+          .from("finished_fabric_stocktake_lines")
+          .select(
+            `
+            id,
+            finished_fabric_roll_id,
+            system_qty,
+            counted_qty,
+            variance_qty,
+            reason,
+            note,
+            finished_fabric_rolls:finished_fabric_roll_id (
+              roll_no,
+              qr_code,
+              length_m,
+              grade,
+              color,
+              gsm,
+              coating_type,
+              batch_id,
+              coating_batches (
+                batch_no
               )
-            `,
             )
-            .eq("session_id", sessionId)
-            .order("id"),
-        ]);
+          `,
+          )
+          .eq("session_id", sessionId)
+          .order("id"),
+        supabaseBrowserClient
+          .from("fabric_types")
+          .select("id, code, name")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
+        supabaseBrowserClient
+          .from("fabric_type_color_options")
+          .select("id, fabric_type_id, color_name")
+          .eq("is_active", true)
+          .order("color_name", { ascending: true }),
+        supabaseBrowserClient
+          .from("fabric_type_gsm_options")
+          .select("id, fabric_type_id, gsm")
+          .eq("is_active", true)
+          .order("gsm", { ascending: true }),
+        supabaseBrowserClient
+          .from("fabric_type_width_options")
+          .select("id, fabric_type_id, width_mm")
+          .eq("is_active", true)
+          .order("width_mm", { ascending: true }),
+      ]);
 
       if (sessionError) throw sessionError;
       if (linesError) throw linesError;
+      if (typesError) throw typesError;
+      if (colorError) throw colorError;
+      if (gsmError) throw gsmError;
+      if (widthError) throw widthError;
 
       setSession(sessionData as Session);
+      setFabricTypes((typesData as FabricTypeOption[]) || []);
+
+      const colorMap: Record<string, ColorOption[]> = {};
+      (colorData as any[] | null | undefined)?.forEach((opt: any) => {
+        if (!colorMap[opt.fabric_type_id]) colorMap[opt.fabric_type_id] = [];
+        colorMap[opt.fabric_type_id].push({
+          id: opt.id,
+          fabric_type_id: opt.fabric_type_id,
+          color_name: opt.color_name,
+        });
+      });
+      setColorOptions(colorMap);
+
+      const gsmMap: Record<string, GsmOption[]> = {};
+      (gsmData as any[] | null | undefined)?.forEach((opt: any) => {
+        if (!gsmMap[opt.fabric_type_id]) gsmMap[opt.fabric_type_id] = [];
+        gsmMap[opt.fabric_type_id].push({
+          id: opt.id,
+          fabric_type_id: opt.fabric_type_id,
+          gsm: Number(opt.gsm),
+        });
+      });
+      setGsmOptions(gsmMap);
+
+      const widthMap: Record<string, WidthOption[]> = {};
+      (widthData as any[] | null | undefined)?.forEach((opt: any) => {
+        if (!widthMap[opt.fabric_type_id]) widthMap[opt.fabric_type_id] = [];
+        widthMap[opt.fabric_type_id].push({
+          id: opt.id,
+          fabric_type_id: opt.fabric_type_id,
+          width_mm: Number(opt.width_mm),
+        });
+      });
+      setWidthOptions(widthMap);
+
       const processed = (linesData as any[])?.map((row) => ({
         ...row,
         finished_fabric_rolls: Array.isArray(row.finished_fabric_rolls)
@@ -298,25 +391,53 @@ export default function FinishedFabricStocktakeDetailPage() {
       return;
     }
 
-    if (!addRollForm.fabric_type.trim()) {
+    if (!addRollForm.fabric_type_id.trim()) {
       setError("Fabric type is required.");
       return;
     }
-    if (!addRollForm.color.trim()) {
+    const selectedType =
+      fabricTypes.find((t) => t.id === addRollForm.fabric_type_id) || null;
+    if (!selectedType) {
+      setError("Please select a valid fabric type.");
+      return;
+    }
+
+    if (!addRollForm.color_option_id.trim()) {
       setError("Colour is required.");
       return;
     }
-
-    const gsmValue = addRollForm.gsm.trim()
-      ? Number.parseInt(addRollForm.gsm.trim(), 10)
-      : null;
-    if (addRollForm.gsm.trim() && (!Number.isFinite(gsmValue!) || gsmValue! <= 0)) {
-      setError("Enter a valid GSM (e.g. 280).");
+    const selectedColor =
+      (colorOptions[addRollForm.fabric_type_id] || []).find(
+        (c) => c.id === addRollForm.color_option_id,
+      ) || null;
+    if (!selectedColor) {
+      setError("Please select a valid colour for this fabric type.");
       return;
     }
 
-    if (!addRollForm.width.trim()) {
-      setError("Width is required (e.g. 2.76m).");
+    if (!addRollForm.gsm_option_id.trim()) {
+      setError("GSM is required.");
+      return;
+    }
+    const selectedGsm =
+      (gsmOptions[addRollForm.fabric_type_id] || []).find(
+        (g) => g.id === addRollForm.gsm_option_id,
+      ) || null;
+    if (!selectedGsm || !Number.isFinite(selectedGsm.gsm) || selectedGsm.gsm <= 0) {
+      setError("Please select a valid GSM for this fabric type.");
+      return;
+    }
+
+    if (!addRollForm.width_option_id.trim()) {
+      setError("Width is required.");
+      return;
+    }
+    const selectedWidth =
+      (widthOptions[addRollForm.fabric_type_id] || []).find(
+        (w) => w.id === addRollForm.width_option_id,
+      ) || null;
+    if (!selectedWidth || !Number.isFinite(selectedWidth.width_mm) || selectedWidth.width_mm <= 0) {
+      setError("Please select a valid width for this fabric type.");
       return;
     }
 
@@ -339,9 +460,7 @@ export default function FinishedFabricStocktakeDetailPage() {
         `Session: ${session.name} (${session.stocktake_date})`,
         `Reason: ${reasonText}`,
       ];
-      if (addRollForm.width.trim()) {
-        descriptionParts.push(`Width: ${addRollForm.width.trim()}`);
-      }
+      descriptionParts.push(`Width: ${selectedWidth.width_mm}mm`);
       const rollNotes = descriptionParts.join(" ");
 
       const qrCode = generateQRCode("finished_fabric");
@@ -354,14 +473,20 @@ export default function FinishedFabricStocktakeDetailPage() {
           roll_no: null,
           length_m: lengthM,
           grade: addRollForm.grade.trim() || null,
-          gsm: gsmValue,
-          color: addRollForm.color.trim(),
-          coating_type: addRollForm.fabric_type.trim(),
+          gsm: selectedGsm.gsm,
+          color: selectedColor.color_name,
+          // Store catalog ID for consistent matching elsewhere (e.g. store issuing)
+          fabric_type_id: selectedType.id,
+          gsm_option_id: selectedGsm.id,
+          color_option_id: selectedColor.id,
+          width_option_id: selectedWidth.id,
+          // Backward compatibility: still store text field
+          coating_type: selectedType.code || selectedType.name,
           notes: rollNotes,
           qr_code: qrCode,
+          // Do not yet treat as in-store stock until stocktake is posted
           current_location: LOCATION_STORE,
-          status: STATUS_IN_STORE,
-          received_store_at: nowIso,
+          status: "PENDING_STOCKTAKE",
         })
         .select("id")
         .single();
@@ -385,10 +510,10 @@ export default function FinishedFabricStocktakeDetailPage() {
       setSuccess("Unrecorded roll added. Reloading list.");
       setShowAddRollModal(false);
       setAddRollForm({
-        fabric_type: "",
-        color: "",
-        gsm: "",
-        width: "",
+        fabric_type_id: "",
+        color_option_id: "",
+        gsm_option_id: "",
+        width_option_id: "",
         length_m: "",
         grade: "",
         reason: "",
@@ -397,7 +522,9 @@ export default function FinishedFabricStocktakeDetailPage() {
       await loadData();
     } catch (err: any) {
       console.error("Failed to add unrecorded roll", err);
-      setError(err.message || "Failed to add unrecorded roll.");
+      const message =
+        err?.message || (typeof err === "string" ? err : JSON.stringify(err)) || "Failed to add unrecorded roll.";
+      setError(message);
     } finally {
       setIsAddingRoll(false);
     }
@@ -452,7 +579,7 @@ export default function FinishedFabricStocktakeDetailPage() {
     }
 
     const confirm = window.confirm(
-      "Posting will lock this stocktake. Variances will be recorded in this report, but finished fabric rolls will not be auto-adjusted. Continue?",
+      "Posting will lock this stocktake. Variances will be recorded in this report, and any unrecorded rolls added here will be brought into store stock. Continue?",
     );
     if (!confirm) return;
 
@@ -461,6 +588,37 @@ export default function FinishedFabricStocktakeDetailPage() {
     setSuccess(null);
 
     try {
+      const {
+        data: { user },
+      } = await supabaseBrowserClient.auth.getUser();
+
+      // Promote any unrecorded rolls (system_qty = 0, counted > 0) into store stock
+      const unrecordedLines = lines.filter(
+        (line) => (line.system_qty ?? 0) === 0 && (line.counted_qty ?? 0) > 0,
+      );
+
+      const rollUpdates = unrecordedLines.map((line) => ({
+        id: line.finished_fabric_roll_id,
+        status: STATUS_IN_STORE,
+        current_location: LOCATION_STORE,
+        received_store_at: new Date().toISOString(),
+        received_store_by: user?.id ?? null,
+      }));
+
+      for (const update of rollUpdates) {
+        const { id, ...updateData } = update;
+        const { error: rollError } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .update(updateData)
+          .eq("id", id);
+        if (rollError) {
+          console.error("Failed to update finished roll status during posting", {
+            rollId: id,
+            error: rollError,
+          });
+        }
+      }
+
       const { error: statusError } = await supabaseBrowserClient
         .from("finished_fabric_stocktake_sessions")
         .update({ status: "posted" })
@@ -1032,77 +1190,101 @@ export default function FinishedFabricStocktakeDetailPage() {
                   <label className="mb-1 block text-sm font-medium text-slate-700">
                     Fabric type <span className="text-red-600">*</span>
                   </label>
-                  <input
-                    type="text"
-                    value={addRollForm.fabric_type}
+                  <select
+                    value={addRollForm.fabric_type_id}
                     onChange={(e) =>
                       setAddRollForm((prev) => ({
                         ...prev,
-                        fabric_type: e.target.value,
+                        fabric_type_id: e.target.value,
+                        color_option_id: "",
+                        gsm_option_id: "",
+                        width_option_id: "",
                       }))
                     }
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                    placeholder="e.g. 280GSM Ripstop"
                     required
-                  />
+                  >
+                    <option value="">Select fabric type</option>
+                    {fabricTypes.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">
                       Colour <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      type="text"
-                      value={addRollForm.color}
+                    <select
+                      value={addRollForm.color_option_id}
                       onChange={(e) =>
                         setAddRollForm((prev) => ({
                           ...prev,
-                          color: e.target.value,
+                          color_option_id: e.target.value,
                         }))
                       }
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                      placeholder="e.g. Olive"
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 disabled:bg-slate-50"
+                      disabled={!addRollForm.fabric_type_id}
                       required
-                    />
+                    >
+                      <option value="">Select colour</option>
+                      {(colorOptions[addRollForm.fabric_type_id] || []).map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.color_name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">
                       GSM <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={addRollForm.gsm}
+                    <select
+                      value={addRollForm.gsm_option_id}
                       onChange={(e) =>
                         setAddRollForm((prev) => ({
                           ...prev,
-                          gsm: e.target.value,
+                          gsm_option_id: e.target.value,
                         }))
                       }
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                      placeholder="e.g. 280"
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 disabled:bg-slate-50"
+                      disabled={!addRollForm.fabric_type_id}
                       required
-                    />
+                    >
+                      <option value="">Select GSM</option>
+                      {(gsmOptions[addRollForm.fabric_type_id] || []).map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.gsm}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">
                     Width <span className="text-red-600">*</span>
                   </label>
-                  <input
-                    type="text"
-                    value={addRollForm.width}
+                  <select
+                    value={addRollForm.width_option_id}
                     onChange={(e) =>
                       setAddRollForm((prev) => ({
                         ...prev,
-                        width: e.target.value,
+                        width_option_id: e.target.value,
                       }))
                     }
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                    placeholder="e.g. 2.76m"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 disabled:bg-slate-50"
+                    disabled={!addRollForm.fabric_type_id}
                     required
-                  />
+                  >
+                    <option value="">Select width</option>
+                    {(widthOptions[addRollForm.fabric_type_id] || []).map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.width_mm} mm
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">
