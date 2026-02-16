@@ -297,8 +297,121 @@ export default function FinishedFabricStockPage() {
       const metadataY = titleY + 35;
       doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
       
-      doc.text(`Total Rolls: ${inStockTotals.rollsCount}`, pageWidth / 2, metadataY + 15, { align: "center" });
-      doc.text(`Total Meters: ${inStockTotals.metersTotal.toFixed(3)} m`, pageWidth / 2, metadataY + 30, { align: "center" });
+      doc.text(
+        `Total Rolls: ${inStockTotals.rollsCount}`,
+        pageWidth / 2,
+        metadataY + 15,
+        { align: "center" },
+      );
+      doc.text(
+        `Total Meters: ${inStockTotals.metersTotal.toFixed(3)} m`,
+        pageWidth / 2,
+        metadataY + 30,
+        { align: "center" },
+      );
+
+      // ===== SUMMARY BY TYPE / GSM / COLOUR =====
+      const ripstopRolls = inStockRolls.filter((r) =>
+        (r.coating_type || "").toLowerCase().includes("ripstop"),
+      );
+      const pvcRolls = inStockRolls.filter((r) =>
+        (r.coating_type || "").toLowerCase().includes("pvc"),
+      );
+
+      type SummaryRow = { rollsCount: number; metersTotal: number };
+      const groupBy = (
+        rolls: FinishedFabricRoll[],
+        keyFn: (r: FinishedFabricRoll) => string,
+      ): Record<string, SummaryRow> => {
+        const grouped: Record<string, SummaryRow> = {};
+        rolls.forEach((roll) => {
+          const key = keyFn(roll);
+          if (!grouped[key]) {
+            grouped[key] = { rollsCount: 0, metersTotal: 0 };
+          }
+          grouped[key].rollsCount += 1;
+          grouped[key].metersTotal += roll.length_m;
+        });
+        return grouped;
+      };
+
+      const ripstopByGsm = groupBy(ripstopRolls, (r) =>
+        r.gsm != null ? `${r.gsm} GSM` : "Unknown",
+      );
+      const ripstopByColor = groupBy(ripstopRolls, (r) => r.color || "Unknown");
+      const pvcByGsm = groupBy(pvcRolls, (r) =>
+        r.gsm != null ? `${r.gsm} GSM` : "Unknown",
+      );
+      const pvcByColor = groupBy(pvcRolls, (r) => r.color || "Unknown");
+
+      const writeSummarySection = (
+        title: string,
+        yStart: number,
+        rolls: FinishedFabricRoll[],
+        byGsm: Record<string, SummaryRow>,
+        byColor: Record<string, SummaryRow>,
+      ) => {
+        if (rolls.length === 0) return yStart;
+        let y = yStart;
+
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text(title, margin, y);
+        y += 6;
+
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        const totalMeters = rolls.reduce((sum, r) => sum + r.length_m, 0);
+        doc.text(
+          `Rolls: ${rolls.length}    Meters: ${totalMeters.toFixed(3)} m`,
+          margin,
+          y,
+        );
+        y += 5;
+
+        const writeGroup = (label: string, groups: Record<string, SummaryRow>) => {
+          const entries = Object.entries(groups);
+          if (entries.length === 0) return;
+          doc.setFont("helvetica", "bold");
+          doc.text(label, margin, y);
+          y += 4;
+          doc.setFont("helvetica", "normal");
+          entries
+            .sort(([a], [b]) => a.localeCompare(b))
+            .forEach(([key, stats]) => {
+              if (y > pageHeight - 30) {
+                // New page for overflow, with simple header
+                doc.addPage();
+                pageNumber++;
+                y = margin;
+                doc.setFontSize(11);
+                doc.setFont("helvetica", "bold");
+                doc.text("Summary (continued)", margin, y);
+                y += 6;
+                doc.setFontSize(9);
+              }
+              doc.text(
+                `• ${key}: ${stats.rollsCount} roll${
+                  stats.rollsCount !== 1 ? "s" : ""
+                }, ${stats.metersTotal.toFixed(3)} m`,
+                margin + 2,
+                y,
+              );
+              y += 4;
+            });
+          y += 2;
+        };
+
+        writeGroup("By GSM:", ripstopRolls === rolls ? ripstopByGsm : pvcByGsm);
+        writeGroup("By Colour:", ripstopRolls === rolls ? ripstopByColor : pvcByColor);
+
+        return y;
+      };
+
+      let summaryY = metadataY + 45;
+      summaryY = writeSummarySection("Ripstop Summary", summaryY, ripstopRolls, ripstopByGsm, ripstopByColor);
+      summaryY = writeSummarySection("PVC Summary", summaryY + 2, pvcRolls, pvcByGsm, pvcByColor);
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
