@@ -21,6 +21,7 @@ export default function NewBaseFabricOrderPage() {
     base_fabric_item_id: "",
     loom_no: "",
     planned_qty_m: "",
+    weaved_width_mm: "",
     estimated_completion_at: "",
     notes: "",
   });
@@ -75,6 +76,7 @@ export default function NewBaseFabricOrderPage() {
           base_fabric_item_id: form.base_fabric_item_id,
           loom_no: form.loom_no || null,
           planned_qty_m: Number(form.planned_qty_m),
+          weaved_width_mm: form.weaved_width_mm ? Number(form.weaved_width_mm) : null,
           estimated_completion_at: form.estimated_completion_at
             ? new Date(form.estimated_completion_at).toISOString()
             : null,
@@ -169,6 +171,20 @@ export default function NewBaseFabricOrderPage() {
               className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
               placeholder="e.g. 1000.00"
               required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-2">Weaved Width (mm)</label>
+            <input
+              name="weaved_width_mm"
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.weaved_width_mm}
+              onChange={handleChange}
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+              placeholder="e.g. 2500.00"
             />
           </div>
 

@@ -15,6 +15,7 @@ interface OrderDetail {
   status: string;
   loom_no: string | null;
   planned_qty_m: number;
+  weaved_width_mm: number | null;
   estimated_completion_at: string | null;
   actual_start_at: string | null;
   actual_completion_at: string | null;
@@ -149,6 +150,7 @@ export default function BaseFabricOrderDetailPage() {
           status,
           loom_no,
           planned_qty_m,
+          weaved_width_mm,
           estimated_completion_at,
           actual_start_at,
           actual_completion_at,
@@ -972,6 +974,12 @@ export default function BaseFabricOrderDetailPage() {
                 <span className="print:text-slate-700">{order.loom_no || "-"}</span>
               </div>
               <div>
+                <span className="print:font-semibold print:text-slate-900">Weaved Width:</span>{" "}
+                <span className="print:text-slate-700">
+                  {order.weaved_width_mm ? `${order.weaved_width_mm.toFixed(2)} mm` : "-"}
+                </span>
+              </div>
+              <div>
                 <span className="print:font-semibold print:text-slate-900">Status:</span>{" "}
                 <span className="print:text-slate-700">{order.status}</span>
               </div>
@@ -1241,6 +1249,12 @@ export default function BaseFabricOrderDetailPage() {
           <div>
             <p className="text-sm font-semibold text-slate-600">Loom</p>
             <p className="mt-1 text-lg text-slate-900">{order.loom_no || "-"}</p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-600">Weaved Width</p>
+            <p className="mt-1 text-lg text-slate-900">
+              {order.weaved_width_mm ? `${order.weaved_width_mm.toFixed(2)} mm` : "-"}
+            </p>
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-600">Status</p>
