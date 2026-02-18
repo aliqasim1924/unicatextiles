@@ -404,7 +404,8 @@ export default function FinishedFabricStockPage() {
               data.cell.styles.halign = "right";
             }
             if (data.section === "body") {
-              const firstCell = data.row.raw[0];
+              const raw = data.row.raw as (string | number)[];
+              const firstCell = raw?.[0];
               const isTotalRow = typeof firstCell === "string" ? !firstCell.startsWith("  ") : true;
               if (isTotalRow) data.cell.styles.fontStyle = "bold";
             }
