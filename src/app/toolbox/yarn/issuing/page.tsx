@@ -251,7 +251,9 @@ export default function YarnIssuingPage() {
           0,
         ) ?? 0;
 
-      const available = Math.max(0, totalDeptIssuedMinusConsumed - totalAllocatedFromDept);
+      // Available in department should reflect physical balance (issued - consumed).
+      // "Allocated to orders" is informational only and should not reduce availability.
+      const available = totalDeptIssuedMinusConsumed;
 
       setDeptWithDeptTotal(totalDeptIssuedMinusConsumed);
       setDeptAllocatedTotal(totalAllocatedFromDept);

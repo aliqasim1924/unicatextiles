@@ -303,7 +303,8 @@ export default function BaseFabricOrderDetailPage() {
         })) as YarnPriceSample[]
       );
 
-      // Department yarn available to allocate (issued to dept minus consumed minus already allocated)
+      // Department yarn available to allocate (issued to dept minus consumed).
+      // Allocations to specific orders are tracked separately and do not reduce physical availability.
       const [
         { data: issueTxns },
         { data: allocTxns },
@@ -333,12 +334,6 @@ export default function BaseFabricOrderDetailPage() {
         const q = Number(r.quantity || 0);
         issuedByItem.set(id, (issuedByItem.get(id) || 0) + q);
       });
-      const allocatedByItem = new Map<string, number>();
-      (allocTxns || []).forEach((r: any) => {
-        const id = r.yarn_item_id;
-        const q = Number(r.quantity || 0);
-        allocatedByItem.set(id, (allocatedByItem.get(id) || 0) + q);
-      });
       const consumedByItem = new Map<string, number>();
       (allBeams || []).forEach((row: any) => {
         const tare = row.weaving_beams != null
@@ -365,14 +360,12 @@ export default function BaseFabricOrderDetailPage() {
       const availableByItem = new Map<string, number>();
       const allYarnIds = new Set<string>([
         ...issuedByItem.keys(),
-        ...allocatedByItem.keys(),
         ...consumedByItem.keys(),
       ]);
       allYarnIds.forEach((id) => {
         const issued = issuedByItem.get(id) || 0;
-        const allocated = allocatedByItem.get(id) || 0;
         const consumed = consumedByItem.get(id) || 0;
-        const available = Math.max(0, issued - consumed - allocated);
+        const available = Math.max(0, issued - consumed);
         if (available > 0) availableByItem.set(id, available);
       });
 
