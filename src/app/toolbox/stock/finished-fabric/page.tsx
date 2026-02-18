@@ -243,10 +243,15 @@ export default function FinishedFabricStockPage() {
 
     setIsGenerating(true);
     try {
-      const doc = new jsPDF();
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+      });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 20;
+      const tableWidth = pageWidth - 2 * margin;
       const templateName = "Finished Fabric Stock Report";
       let pageNumber = 1;
 
@@ -310,7 +315,13 @@ export default function FinishedFabricStockPage() {
         { align: "center" },
       );
 
-      // ===== SUMMARY BY TYPE / GSM / COLOUR =====
+      doc.setFontSize(10);
+      doc.setTextColor(128, 128, 128);
+      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
+
+      // ===== PAGE 2: SUMMARY BY TYPE / GSM / COLOUR (table format) =====
+      doc.addPage("a4", "landscape");
+      pageNumber++;
       const ripstopRolls = inStockRolls.filter((r) =>
         (r.coating_type || "").toLowerCase().includes("ripstop"),
       );
@@ -319,105 +330,94 @@ export default function FinishedFabricStockPage() {
       );
 
       type SummaryRow = { rollsCount: number; metersTotal: number };
-      const groupBy = (
-        rolls: FinishedFabricRoll[],
-        keyFn: (r: FinishedFabricRoll) => string,
-      ): Record<string, SummaryRow> => {
-        const grouped: Record<string, SummaryRow> = {};
+      // Build table body: for each GSM a total row, then indented rows per colour
+      const buildGsmColourTableBody = (rolls: FinishedFabricRoll[]): (string | number)[][] => {
+        if (rolls.length === 0) return [];
+        const byGsm: Record<
+          string,
+          { total: SummaryRow; byColor: Record<string, SummaryRow> }
+        > = {};
         rolls.forEach((roll) => {
-          const key = keyFn(roll);
-          if (!grouped[key]) {
-            grouped[key] = { rollsCount: 0, metersTotal: 0 };
+          const gsmKey = roll.gsm != null ? String(roll.gsm) : "Unknown";
+          if (!byGsm[gsmKey]) {
+            byGsm[gsmKey] = { total: { rollsCount: 0, metersTotal: 0 }, byColor: {} };
           }
-          grouped[key].rollsCount += 1;
-          grouped[key].metersTotal += roll.length_m;
+          byGsm[gsmKey].total.rollsCount += 1;
+          byGsm[gsmKey].total.metersTotal += roll.length_m;
+          const colorKey = (roll.color || "Unknown").trim() || "Unknown";
+          if (!byGsm[gsmKey].byColor[colorKey]) {
+            byGsm[gsmKey].byColor[colorKey] = { rollsCount: 0, metersTotal: 0 };
+          }
+          byGsm[gsmKey].byColor[colorKey].rollsCount += 1;
+          byGsm[gsmKey].byColor[colorKey].metersTotal += roll.length_m;
         });
-        return grouped;
+        const gsmOrder = Object.keys(byGsm).sort((a, b) => {
+          if (a === "Unknown") return 1;
+          if (b === "Unknown") return -1;
+          return Number(a) - Number(b);
+        });
+        const body: (string | number)[][] = [];
+        gsmOrder.forEach((gsmKey) => {
+          const { total, byColor } = byGsm[gsmKey];
+          const gsmLabel = gsmKey === "Unknown" ? "Unknown GSM" : `${gsmKey} GSM`;
+          body.push([gsmLabel, total.rollsCount, total.metersTotal.toFixed(2)]);
+          const colors = Object.entries(byColor).sort(([a], [b]) => a.localeCompare(b));
+          colors.forEach(([color, stats]) => {
+            body.push([`  ${color}`, stats.rollsCount, stats.metersTotal.toFixed(2)]);
+          });
+        });
+        return body;
       };
 
-      const ripstopByGsm = groupBy(ripstopRolls, (r) =>
-        r.gsm != null ? `${r.gsm} GSM` : "Unknown",
-      );
-      const ripstopByColor = groupBy(ripstopRolls, (r) => r.color || "Unknown");
-      const pvcByGsm = groupBy(pvcRolls, (r) =>
-        r.gsm != null ? `${r.gsm} GSM` : "Unknown",
-      );
-      const pvcByColor = groupBy(pvcRolls, (r) => r.color || "Unknown");
-
-      const writeSummarySection = (
+      const drawSummaryTable = (
         title: string,
-        yStart: number,
         rolls: FinishedFabricRoll[],
-        byGsm: Record<string, SummaryRow>,
-        byColor: Record<string, SummaryRow>,
-      ) => {
-        if (rolls.length === 0) return yStart;
-        let y = yStart;
-
+        startY: number,
+      ): number => {
+        if (rolls.length === 0) return startY;
         doc.setFontSize(12);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(0, 0, 0);
-        doc.text(title, margin, y);
-        y += 6;
-
-        doc.setFontSize(9);
-        doc.setFont("helvetica", "normal");
-        const totalMeters = rolls.reduce((sum, r) => sum + r.length_m, 0);
-        doc.text(
-          `Rolls: ${rolls.length}    Meters: ${totalMeters.toFixed(3)} m`,
-          margin,
-          y,
-        );
-        y += 5;
-
-        const writeGroup = (label: string, groups: Record<string, SummaryRow>) => {
-          const entries = Object.entries(groups);
-          if (entries.length === 0) return;
-          doc.setFont("helvetica", "bold");
-          doc.text(label, margin, y);
-          y += 4;
-          doc.setFont("helvetica", "normal");
-          entries
-            .sort(([a], [b]) => a.localeCompare(b))
-            .forEach(([key, stats]) => {
-              if (y > pageHeight - 30) {
-                // New page for overflow, with simple header
-                doc.addPage();
-                pageNumber++;
-                y = margin;
-                doc.setFontSize(11);
-                doc.setFont("helvetica", "bold");
-                doc.text("Summary (continued)", margin, y);
-                y += 6;
-                doc.setFontSize(9);
-              }
-              doc.text(
-                `• ${key}: ${stats.rollsCount} roll${
-                  stats.rollsCount !== 1 ? "s" : ""
-                }, ${stats.metersTotal.toFixed(3)} m`,
-                margin + 2,
-                y,
-              );
-              y += 4;
-            });
-          y += 2;
-        };
-
-        writeGroup("By GSM:", ripstopRolls === rolls ? ripstopByGsm : pvcByGsm);
-        writeGroup("By Colour:", ripstopRolls === rolls ? ripstopByColor : pvcByColor);
-
-        return y;
+        doc.text(title, margin, startY);
+        const body = buildGsmColourTableBody(rolls);
+        if (body.length === 0) return startY + 6;
+        autoTable(doc, {
+          head: [["GSM / Colour", "Rolls", "Meters"]],
+          body,
+          startY: startY + 6,
+          margin: { left: margin, right: margin },
+          tableWidth,
+          theme: "grid",
+          styles: { fontSize: 9 },
+          headStyles: {
+            fillColor: [15, 118, 110],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+          },
+          columnStyles: {
+            0: { cellWidth: tableWidth - 45 - 50, halign: "left" },
+            1: { cellWidth: 45, halign: "right" },
+            2: { cellWidth: 50, halign: "right" },
+          },
+          didParseCell: (data) => {
+            if (data.section === "head" && (data.column.index === 1 || data.column.index === 2)) {
+              data.cell.styles.halign = "right";
+            }
+            if (data.section === "body") {
+              const firstCell = data.row.raw[0];
+              const isTotalRow = typeof firstCell === "string" ? !firstCell.startsWith("  ") : true;
+              if (isTotalRow) data.cell.styles.fontStyle = "bold";
+            }
+          },
+        });
+        return (doc as any).lastAutoTable.finalY + 8;
       };
 
-      let summaryY = metadataY + 45;
-      summaryY = writeSummarySection("Ripstop Summary", summaryY, ripstopRolls, ripstopByGsm, ripstopByColor);
-      summaryY = writeSummarySection("PVC Summary", summaryY + 2, pvcRolls, pvcByGsm, pvcByColor);
+      let summaryY = margin + 10;
+      summaryY = drawSummaryTable("Ripstop summary (by GSM, then colour)", ripstopRolls, summaryY);
+      summaryY = drawSummaryTable("PVC summary (by GSM, then colour)", pvcRolls, summaryY);
 
-      doc.setFontSize(10);
-      doc.setTextColor(128, 128, 128);
-      doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
-
-      // ===== STOCK TABLE =====
+      // ===== PAGE 3: STOCK TABLE =====
       doc.addPage();
       pageNumber++;
       doc.setFontSize(16);
@@ -441,6 +441,7 @@ export default function FinishedFabricStockPage() {
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
+        theme: "grid",
         styles: { fontSize: 8 },
         headStyles: {
           fillColor: [16, 185, 129],
@@ -452,6 +453,11 @@ export default function FinishedFabricStockPage() {
         },
         columnStyles: {
           6: { halign: "right" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "head" && data.column.index === 6) {
+            data.cell.styles.halign = "right";
+          }
         },
         didDrawPage: function (data: any) {
           const currentPage = data.pageNumber || doc.internal.pages.length - 1;
@@ -561,19 +567,32 @@ export default function FinishedFabricStockPage() {
           {inStockByGsm.length > 0 && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
               <h4 className="mb-2 text-sm font-semibold text-slate-700">Breakdown by GSM</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {inStockByGsm.map((item) => (
-                  <div
-                    key={item.gsm}
-                    className="flex items-center justify-between border-b border-slate-200 pb-1 text-xs"
-                  >
-                    <span className="font-medium text-slate-700">{item.gsm} GSM</span>
-                    <span className="text-slate-600">
-                      {item.rollsCount} roll{item.rollsCount !== 1 ? "s" : ""} •{" "}
-                      {item.metersTotal.toFixed(2)}m
-                    </span>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left">
+                      <th className="py-1.5 pr-4 font-semibold text-slate-700">GSM</th>
+                      <th className="py-1.5 pr-4 font-semibold text-slate-700 text-right">Rolls</th>
+                      <th className="py-1.5 font-semibold text-slate-700 text-right">Meters</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inStockByGsm.map((item) => (
+                      <tr
+                        key={item.gsm}
+                        className="border-b border-slate-100 last:border-b-0"
+                      >
+                        <td className="py-1.5 pr-4 font-medium text-slate-700">{item.gsm} GSM</td>
+                        <td className="py-1.5 pr-4 text-slate-600 text-right">
+                          {item.rollsCount} roll{item.rollsCount !== 1 ? "s" : ""}
+                        </td>
+                        <td className="py-1.5 text-slate-600 text-right">
+                          {item.metersTotal.toFixed(2)} m
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
