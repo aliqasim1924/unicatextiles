@@ -61,6 +61,8 @@ interface CustomerOrder {
   order_ref: string;
   status: string | null;
   customer_id: string | null;
+  invoice_no?: string | null;
+  gate_pass_no?: string | null;
   customers?: {
     id: string;
     name: string;
@@ -81,6 +83,7 @@ export default function FinishedFabricStoreIssuePage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [gatePassNo, setGatePassNo] = useState("");
+  const [overAllocationReason, setOverAllocationReason] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +119,17 @@ export default function FinishedFabricStoreIssuePage() {
       setOrderRequirements([]);
     }
   }, [selectedOrderId, destination]);
+
+  // Pre-fill invoice and gate pass from order when selecting an order (carry over from order section)
+  useEffect(() => {
+    if (destination === "CUSTOMER" && selectedOrderId && customerOrders.length > 0) {
+      const sel = customerOrders.find((o) => o.id === selectedOrderId);
+      if (sel) {
+        setInvoiceNo(sel.invoice_no ?? "");
+        setGatePassNo(sel.gate_pass_no ?? "");
+      }
+    }
+  }, [destination, selectedOrderId, customerOrders]);
 
   async function fetchStock() {
     try {
@@ -332,6 +346,8 @@ export default function FinishedFabricStoreIssuePage() {
           order_ref,
           status,
           customer_id,
+          invoice_no,
+          gate_pass_no,
           customers:customer_id (
             id,
             name
@@ -497,18 +513,8 @@ export default function FinishedFabricStoreIssuePage() {
         });
 
         if (requirement) {
-          // Check if adding this roll would exceed remaining
-          const requirementKey = requirement.key;
-          const newSelected = (selectedMetersByKey[requirementKey] || 0) + roll.length_m;
-          const newRemaining = requirement.ordered_m - requirement.issued_m - newSelected;
-
-          if (newRemaining < 0) {
-            setError(
-              `Cannot select more than ordered for ${requirement.color} (${requirement.coating_type}). Remaining: ${requirement.remaining_m.toFixed(3)} m`
-            );
-            setTimeout(() => setError(null), 5000);
-            return;
-          }
+          // Allow over-allocation (e.g. grace allowance 2–10 m per roll). User must provide a reason on submit.
+          // No longer blocking selection when newRemaining < 0.
         } else {
           // Roll doesn't match any order line - warn but allow
           const confirmed = window.confirm(
@@ -541,14 +547,17 @@ export default function FinishedFabricStoreIssuePage() {
       return;
     }
 
-    // Final validation for customer orders
+    // When over-allocated (grace allowance), require a reason
     if (destination === "CUSTOMER" && selectedOrderId) {
-      const invalidRequirements = requirementsWithSelected.filter((req) => req.remaining_m < 0);
-      if (invalidRequirements.length > 0) {
-        setError(
-          `Cannot issue: Selected quantities exceed ordered amounts for: ${invalidRequirements.map((r) => `${r.color} (${r.coating_type})`).join(", ")}`
-        );
-        return;
+      const overAllocatedReqs = requirementsWithSelected.filter((req) => req.remaining_m < 0);
+      if (overAllocatedReqs.length > 0) {
+        const reasonTrimmed = (overAllocationReason || "").trim();
+        if (!reasonTrimmed) {
+          setError(
+            "Selected quantity exceeds order for some lines (over-allocation). Please provide a reason for over-allocation (e.g. grace allowance meters per roll)."
+          );
+          return;
+        }
       }
     }
 
@@ -565,7 +574,14 @@ export default function FinishedFabricStoreIssuePage() {
             destination === "CUSTOMER" && !reference
               ? customerOrders.find((o) => o.id === selectedOrderId)?.order_ref || null
               : reference || null,
-          notes: notes || null,
+          notes:
+            (notes || "") +
+            (destination === "CUSTOMER" &&
+            selectedOrderId &&
+            requirementsWithSelected.some((r) => r.remaining_m < 0) &&
+            (overAllocationReason || "").trim()
+              ? "\nOver-allocation reason: " + (overAllocationReason || "").trim()
+              : ""),
           order_id: destination === "CUSTOMER" ? selectedOrderId : null,
           invoice_no: destination === "CUSTOMER" ? invoiceNo || null : null,
           gate_pass_no: destination === "CUSTOMER" ? gatePassNo || null : null,
@@ -598,6 +614,17 @@ export default function FinishedFabricStoreIssuePage() {
         })
         .in("id", Array.from(selectedRollIds));
       if (updateError) throw updateError;
+
+      // Carry invoice and gate pass to the customer order so they appear on the order section
+      if (destination === "CUSTOMER" && selectedOrderId && (invoiceNo || gatePassNo)) {
+        await supabaseBrowserClient
+          .from("customer_orders")
+          .update({
+            invoice_no: invoiceNo?.trim() || null,
+            gate_pass_no: gatePassNo?.trim() || null,
+          })
+          .eq("id", selectedOrderId);
+      }
 
       if (destination === "CUSTOMER" && selectedOrderId) {
         await supabaseBrowserClient
@@ -766,6 +793,7 @@ export default function FinishedFabricStoreIssuePage() {
                     onChange={(e) => {
                       setSelectedOrderId(e.target.value);
                       setSelectedRollIds(new Set()); // Clear selection when order changes
+                      setOverAllocationReason(""); // Clear over-allocation reason when order changes
                     }}
                     className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
                     required
@@ -817,6 +845,25 @@ export default function FinishedFabricStoreIssuePage() {
                 </p>
               </div>
             </div>
+
+              {/* Over-allocation reason (required when selected quantity exceeds order) */}
+              {requirementsWithSelected.some((r) => r.remaining_m < 0) && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <label className="block text-sm font-semibold text-amber-900 mb-2">
+                    Reason for over-allocation (required)
+                  </label>
+                  <input
+                    type="text"
+                    value={overAllocationReason}
+                    onChange={(e) => setOverAllocationReason(e.target.value)}
+                    className="w-full rounded-lg border border-amber-300 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:border-transparent"
+                    placeholder="e.g. Grace allowance meters per roll (2–10 m)"
+                  />
+                  <p className="mt-1 text-xs text-amber-800">
+                    Selected quantity exceeds order for some lines. Please provide a reason (e.g. grace allowance per roll).
+                  </p>
+                </div>
+              )}
 
               {/* Order Requirements Panel */}
               {selectedOrderId && requirementsWithSelected.length > 0 && (
@@ -938,23 +985,14 @@ export default function FinishedFabricStoreIssuePage() {
                         checked={selectedRollIds.size === filteredRolls.length && filteredRolls.length > 0}
                         onChange={(e) => {
                           if (e.target.checked) {
-                            // For customer orders, only select valid rolls
+                            // For customer orders, select all matching rolls (over-allocation allowed with reason)
                             if (destination === "CUSTOMER" && selectedOrderId) {
                               const validIds = new Set<string>();
                               filteredRolls.forEach((roll) => {
                                 const requirement = requirementsWithSelected.find((req) =>
                                   rollMatchesRequirement(roll, req)
                                 );
-                                if (requirement) {
-                                  const requirementKey = requirement.key;
-                                  const currentSelected = selectedMetersByKey[requirementKey] || 0;
-                                  const newSelected = currentSelected + roll.length_m;
-                                  const newRemaining = requirement.ordered_m - requirement.issued_m - newSelected;
-                                  if (newRemaining >= 0) {
-                                    validIds.add(roll.id);
-                                  }
-                                } else if (rollMatchesOrder[roll.id]?.matches) {
-                                  // Matches order but not in requirements (shouldn't happen, but safe)
+                                if (requirement || rollMatchesOrder[roll.id]?.matches) {
                                   validIds.add(roll.id);
                                 }
                               });

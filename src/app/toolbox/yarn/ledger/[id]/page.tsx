@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
+import { DateRangeFilter, isDateInRange } from "@/components/ui/DateRangeFilter";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -54,6 +55,8 @@ export default function YarnLedgerPage() {
   const [error, setError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     if (yarnItemId) {
@@ -165,11 +168,19 @@ export default function YarnLedgerPage() {
     });
   }, [ledgerData.transactions]);
 
-  // Filter transactions by type
+  // Filter transactions by date range (for both on-screen and PDF)
+  const transactionsInDateRange = useMemo(() => {
+    if (!dateFrom && !dateTo) return transactionsWithBalance;
+    return transactionsWithBalance.filter((t) =>
+      isDateInRange(t.txn_time, dateFrom, dateTo)
+    );
+  }, [transactionsWithBalance, dateFrom, dateTo]);
+
+  // Filter transactions by type (applied after date filter)
   const filteredTransactions = useMemo(() => {
-    if (typeFilter === "ALL") return transactionsWithBalance;
-    return transactionsWithBalance.filter((txn) => txn.transaction_type === typeFilter);
-  }, [transactionsWithBalance, typeFilter]);
+    if (typeFilter === "ALL") return transactionsInDateRange;
+    return transactionsInDateRange.filter((txn) => txn.transaction_type === typeFilter);
+  }, [transactionsInDateRange, typeFilter]);
 
   type LedgerRow =
     | {
@@ -201,7 +212,7 @@ export default function YarnLedgerPage() {
       }));
     }
 
-    if (!transactionsWithBalance.length) return [];
+    if (!transactionsInDateRange.length) return [];
 
     const rows: LedgerRow[] = [];
     let currentMonthKey: string | null = null;
@@ -216,7 +227,7 @@ export default function YarnLedgerPage() {
 
     const pushFooter = (monthKey: string | null) => {
       if (!monthKey) return;
-      const anyTxnInMonth = transactionsWithBalance.find((t) => {
+      const anyTxnInMonth = transactionsInDateRange.find((t) => {
         const d = new Date(t.txn_time);
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
         return key === monthKey;
@@ -233,7 +244,7 @@ export default function YarnLedgerPage() {
       });
     };
 
-    transactionsWithBalance.forEach((txn, index) => {
+    transactionsInDateRange.forEach((txn, index) => {
       const d = new Date(txn.txn_time);
       const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
@@ -274,7 +285,7 @@ export default function YarnLedgerPage() {
     });
 
     return rows;
-  }, [transactionsWithBalance, filteredTransactions, typeFilter]);
+  }, [transactionsInDateRange, filteredTransactions, typeFilter]);
 
   async function generatePdf() {
     if (!ledgerData.yarnItem) return;
@@ -330,8 +341,14 @@ export default function YarnLedgerPage() {
       });
       doc.setFontSize(9);
       doc.text(`Generated: ${generatedAt}`, marginLeft, infoY);
+      if (dateFrom || dateTo) {
+        infoY += 5;
+        doc.text(`Date range: ${dateFrom || "…"} to ${dateTo || "…"}`, marginLeft, infoY);
+        infoY += 5;
+      }
+      infoY += 2;
 
-      const body = transactionsWithBalance.map((txn) => [
+      const body = transactionsInDateRange.map((txn) => [
         new Date(txn.txn_time).toLocaleString("en-ZA", {
           year: "numeric",
           month: "short",
@@ -390,7 +407,7 @@ export default function YarnLedgerPage() {
       });
 
       // Department allocations (DEPT_TO_ORDER) – separate table to show department activity
-      const deptAllocations = transactionsWithBalance.filter(
+      const deptAllocations = transactionsInDateRange.filter(
         (txn) => txn.transaction_type === "DEPT_TO_ORDER",
       );
 
@@ -557,23 +574,50 @@ export default function YarnLedgerPage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <label className="block text-sm font-semibold text-slate-900 mb-2">
-          Filter by Transaction Type
-        </label>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent transition sm:w-auto"
-        >
-          <option value="ALL">All Types</option>
-          <option value="RECEIPT">Receipt</option>
-          <option value="ISSUE">Issue</option>
-          <option value="DEPT_TO_ORDER">Allocated from dept</option>
-          <option value="ADJUSTMENT">Adjustment</option>
-          <option value="RETURN">Return</option>
-          <option value="SCRAP">Scrap</option>
-          <option value="TRANSFER">Transfer</option>
-        </select>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end lg:gap-6">
+            <div className="min-w-[180px]">
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Filter by Transaction Type
+              </label>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent transition"
+              >
+                <option value="ALL">All Types</option>
+                <option value="RECEIPT">Receipt</option>
+                <option value="ISSUE">Issue</option>
+                <option value="DEPT_TO_ORDER">Allocated from dept</option>
+                <option value="ADJUSTMENT">Adjustment</option>
+                <option value="RETURN">Return</option>
+                <option value="SCRAP">Scrap</option>
+                <option value="TRANSFER">Transfer</option>
+              </select>
+            </div>
+            <DateRangeFilter
+              from={dateFrom}
+              to={dateTo}
+              onFromChange={setDateFrom}
+              onToChange={setDateTo}
+              label="Date range (list & PDF)"
+              showAllHint={true}
+              className="min-w-0 flex-1"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+              }}
+              disabled={!dateFrom && !dateTo}
+            >
+              Clear dates
+            </Button>
+          </div>
+        </div>
       </motion.section>
 
       {/* Ledger Table */}
@@ -584,12 +628,22 @@ export default function YarnLedgerPage() {
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm overflow-x-auto"
       >
         <h2 className="mb-4 text-xl font-semibold text-slate-900">Transaction History</h2>
+        {(dateFrom || dateTo) && (
+          <p className="text-sm text-slate-600 mb-3">
+            Showing transactions from {dateFrom || "…"} to {dateTo || "…"}
+            {transactionsInDateRange.length > 0 && (
+              <span className="ml-2">({transactionsInDateRange.length} transaction{transactionsInDateRange.length !== 1 ? "s" : ""})</span>
+            )}
+          </p>
+        )}
 
         {filteredTransactions.length === 0 ? (
           <p className="text-sm text-slate-600">
-            {typeFilter === "ALL"
-              ? "No transactions found for this yarn item."
-              : `No ${typeFilter} transactions found.`}
+            {dateFrom || dateTo
+              ? "No transactions in the selected date range."
+              : typeFilter === "ALL"
+                ? "No transactions found for this yarn item."
+                : `No ${typeFilter} transactions found.`}
           </p>
         ) : (
           <div className="min-w-full">

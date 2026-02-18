@@ -61,7 +61,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
           order_id,
           invoice_no,
           gate_pass_no,
-          customer_orders:order_id (*),
+          customer_orders:order_id (*, customers:customer_id (name)),
           finished_fabric_store_issue_items (
             id,
             roll_no,
@@ -75,6 +75,10 @@ export default function FinishedFabricStoreIssueDetailPage() {
 
       if (fetchError) throw fetchError;
 
+      let order = Array.isArray(data.customer_orders) ? data.customer_orders[0] : data.customer_orders;
+      if (order && Array.isArray(order.customers)) {
+        order = { ...order, customers: order.customers[0] ?? null };
+      }
       setHeader({
         id: data.id,
         issue_no: data.issue_no ?? null,
@@ -85,7 +89,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
         order_id: data.order_id ?? null,
         invoice_no: data.invoice_no ?? null,
         gate_pass_no: data.gate_pass_no ?? null,
-        order: Array.isArray(data.customer_orders) ? data.customer_orders[0] : data.customer_orders,
+        order: order ?? null,
       });
 
       const mapped: IssueItem[] =
@@ -249,12 +253,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
               </p>
               {header.order && (
                 <p className="text-sm text-slate-600">
-                  Order:{" "}
-                  {header.order.order_no ||
-                    header.order.proforma_no ||
-                    header.order.quote_no ||
-                    header.order.id ||
-                    "—"}
+                  Order: {header.order.customers?.name ?? header.order.customer_name ?? "—"}
                 </p>
               )}
             </div>

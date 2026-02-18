@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
+import { DateRangeFilter, isDateInRange } from "@/components/ui/DateRangeFilter";
 import { motion } from "framer-motion";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -35,6 +36,8 @@ export default function OrderBookPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     fetchOrders();
@@ -109,13 +112,23 @@ export default function OrderBookPage() {
     }
   }
 
+  const ordersInRange = useMemo(() => {
+    if (!dateFrom && !dateTo) return orders;
+    return orders.filter((o) => isDateInRange(o.created_at, dateFrom, dateTo));
+  }, [orders, dateFrom, dateTo]);
+
   async function generatePDF() {
-    if (orders.length === 0) {
-      setError("No orders to generate report");
+    if (ordersInRange.length === 0) {
+      setError(
+        dateFrom || dateTo
+          ? "No orders in the selected date range. Adjust the range or clear dates."
+          : "No orders to generate report"
+      );
       return;
     }
 
     setIsGenerating(true);
+    setError(null);
     try {
       // Landscape and small margins to use as much page as possible (avoid table cut-off)
       const doc = new jsPDF({
@@ -182,15 +195,25 @@ export default function OrderBookPage() {
       });
       const metadataY = titleY + 35;
       doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
-      // Separate orders for summary
-      const openOrdersCount = orders.filter(
+      if (dateFrom || dateTo) {
+        doc.setFontSize(10);
+        doc.text(
+          `Date range: ${dateFrom || "…"} to ${dateTo || "…"}`,
+          pageWidth / 2,
+          metadataY + 8,
+          { align: "center" }
+        );
+      }
+      // Separate orders for summary (use ordersInRange for PDF content)
+      const openOrdersCount = ordersInRange.filter(
         (o) => o.status === "OPEN" || o.status === "PARTIALLY_FULFILLED"
       ).length;
-      const completedOrdersCount = orders.filter(
+      const completedOrdersCount = ordersInRange.filter(
         (o) => o.status === "COMPLETED" || o.status === "CANCELLED"
       ).length;
 
-      doc.text(`Total Orders: ${orders.length}`, pageWidth / 2, metadataY + 15, { align: "center" });
+      doc.setFontSize(12);
+      doc.text(`Total Orders: ${ordersInRange.length}`, pageWidth / 2, metadataY + (dateFrom || dateTo ? 18 : 15), { align: "center" });
       doc.text(
         `Open/In Production: ${openOrdersCount} | Completed: ${completedOrdersCount}`,
         pageWidth / 2,
@@ -198,8 +221,8 @@ export default function OrderBookPage() {
         { align: "center" }
       );
 
-      const totalMeters = orders.reduce((sum, o) => sum + o.total_m, 0);
-      doc.text(`Total Quantity: ${totalMeters.toFixed(2)} m`, pageWidth / 2, metadataY + 45, {
+      const totalMeters = ordersInRange.reduce((sum, o) => sum + o.total_m, 0);
+      doc.text(`Total Quantity: ${totalMeters.toFixed(2)} m`, pageWidth / 2, metadataY + (dateFrom || dateTo ? 52 : 45), {
         align: "center",
       });
 
@@ -225,11 +248,11 @@ export default function OrderBookPage() {
         }
       };
 
-      // Separate orders by status
-      const openOrders = orders.filter(
+      // Separate orders by status (use ordersInRange)
+      const openOrders = ordersInRange.filter(
         (o) => o.status === "OPEN" || o.status === "PARTIALLY_FULFILLED"
       );
-      const completedOrders = orders.filter(
+      const completedOrders = ordersInRange.filter(
         (o) => o.status === "COMPLETED" || o.status === "CANCELLED"
       );
 
@@ -783,33 +806,54 @@ export default function OrderBookPage() {
           <p className="text-sm text-slate-600">Loading orders...</p>
         ) : (
           <div className="space-y-4">
+            <DateRangeFilter
+              from={dateFrom}
+              to={dateTo}
+              onFromChange={setDateFrom}
+              onToChange={setDateTo}
+              label="Report date range"
+              showAllHint={true}
+            />
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-medium text-slate-900">
-                Ready to generate report for {orders.length} order{orders.length !== 1 ? "s" : ""}
+                Ready to generate report for {ordersInRange.length} order{ordersInRange.length !== 1 ? "s" : ""}
+                {(dateFrom || dateTo) && " in selected date range"}
               </p>
               <p className="text-xs text-slate-600 mt-1">
                 Total quantity:{" "}
-                {orders
+                {ordersInRange
                   .reduce((sum, o) => sum + o.total_m, 0)
                   .toFixed(2)}{" "}
                 meters
               </p>
             </div>
 
-            <Button
-              variant="primary"
-              onClick={generatePDF}
-              disabled={isGenerating || orders.length === 0}
-              className="w-full sm:w-auto"
-            >
-              {isGenerating ? "Generating PDF..." : "Generate Order Book PDF"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                onClick={generatePDF}
+                disabled={isGenerating || ordersInRange.length === 0}
+                className="w-full sm:w-auto"
+              >
+                {isGenerating ? "Generating PDF..." : "Generate Order Book PDF"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                disabled={!dateFrom && !dateTo}
+              >
+                Clear dates
+              </Button>
+            </div>
           </div>
         )}
       </motion.section>
 
       {/* Preview Section */}
-      {!isLoading && orders.length > 0 && (
+      {!isLoading && ordersInRange.length > 0 && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -828,7 +872,7 @@ export default function OrderBookPage() {
                 </tr>
               </thead>
               <tbody>
-                {orders.slice(0, 10).map((order) => (
+                {ordersInRange.slice(0, 10).map((order) => (
                   <tr key={order.id} className="border-b border-slate-100">
                     <td className="px-4 py-3 font-medium text-slate-900">{order.order_ref}</td>
                     <td className="px-4 py-3 text-slate-600">{order.customer_name}</td>
@@ -840,9 +884,9 @@ export default function OrderBookPage() {
                 ))}
               </tbody>
             </table>
-            {orders.length > 10 && (
+            {ordersInRange.length > 10 && (
               <p className="mt-2 text-xs text-slate-500 text-center">
-                Showing first 10 of {orders.length} orders. Full list will be in PDF.
+                Showing first 10 of {ordersInRange.length} orders. Full list will be in PDF.
               </p>
             )}
           </div>

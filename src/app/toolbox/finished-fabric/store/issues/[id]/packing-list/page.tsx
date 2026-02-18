@@ -66,7 +66,7 @@ export default function FinishedFabricPackingListPage() {
           order_id,
           invoice_no,
           gate_pass_no,
-          customer_orders:order_id (*),
+          customer_orders:order_id (*, customers:customer_id (name)),
           finished_fabric_store_issue_items (
             id,
             roll_id,
@@ -89,6 +89,10 @@ export default function FinishedFabricPackingListPage() {
 
       if (fetchError) throw fetchError;
 
+      let order = Array.isArray(data.customer_orders) ? data.customer_orders[0] : data.customer_orders;
+      if (order && Array.isArray(order.customers)) {
+        order = { ...order, customers: order.customers[0] ?? null };
+      }
       setHeader({
         id: data.id,
         issue_no: data.issue_no ?? null,
@@ -99,7 +103,7 @@ export default function FinishedFabricPackingListPage() {
         order_id: data.order_id ?? null,
         invoice_no: data.invoice_no ?? null,
         gate_pass_no: data.gate_pass_no ?? null,
-        order: Array.isArray(data.customer_orders) ? data.customer_orders[0] : data.customer_orders,
+        order: order ?? null,
       });
 
       const mapped: IssueItem[] =
@@ -230,15 +234,10 @@ export default function FinishedFabricPackingListPage() {
                 Destination: {header.destination || "—"}
               </p>
               <p className="text-sm text-slate-600">
-                Order:{" "}
-                {header.order?.order_no ||
-                  header.order?.proforma_no ||
-                  header.order?.quote_no ||
-                  header.order?.id ||
-                  "—"}
+                Order: {header.order?.customers?.name ?? header.order?.customer_name ?? "—"}
               </p>
               <p className="text-sm text-slate-600">
-                Customer: {header.order?.customer_name || "—"}
+                Customer: {header.order?.customers?.name ?? header.order?.customer_name ?? "—"}
               </p>
               <p className="text-sm text-slate-600">
                 Invoice No: {header.invoice_no || "____________"}

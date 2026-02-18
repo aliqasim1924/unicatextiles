@@ -1,12 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
+import { DateRangeFilter, isDateInRange } from "@/components/ui/DateRangeFilter";
+
+function getMonthKey(dateStr: string): string {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(monthKey: string): string {
+  const [y, m] = monthKey.split("-");
+  const date = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
+  return date.toLocaleDateString("en-ZA", { month: "long", year: "numeric" });
+}
 
 interface CoatingBatch {
   id: string;
@@ -25,6 +37,9 @@ export default function CoatingBatchesPage() {
   const [batches, setBatches] = useState<CoatingBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchBatches();
@@ -89,6 +104,30 @@ export default function CoatingBatchesPage() {
     }
   }
 
+  const filteredBatches = useMemo(() => {
+    if (!dateFrom && !dateTo) return batches;
+    return batches.filter((b) => isDateInRange(b.batch_date, dateFrom, dateTo));
+  }, [batches, dateFrom, dateTo]);
+
+  const batchesByMonth = useMemo(() => {
+    const map = new Map<string, CoatingBatch[]>();
+    filteredBatches.forEach((b) => {
+      const key = getMonthKey(b.batch_date);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(b);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [filteredBatches]);
+
+  function toggleMonth(monthKey: string) {
+    setCollapsedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(monthKey)) next.delete(monthKey);
+      else next.add(monthKey);
+      return next;
+    });
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
       <div className="flex items-center justify-between">
@@ -108,6 +147,45 @@ export default function CoatingBatchesPage() {
         </div>
       )}
 
+      {/* Filters: date range, print, clear dates */}
+      {!isLoading && batches.length > 0 && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+        >
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-end lg:gap-6">
+              <DateRangeFilter
+                from={dateFrom}
+                to={dateTo}
+                onFromChange={setDateFrom}
+                onToChange={setDateTo}
+                label="Date range (for list and print)"
+                showAllHint={true}
+                className="lg:min-w-0 lg:flex-1"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => window.print()} className="print:hidden">
+                Print report
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                className="print:hidden"
+                disabled={!dateFrom && !dateTo}
+              >
+                Clear dates
+              </Button>
+            </div>
+          </div>
+        </motion.section>
+      )}
+
       {isLoading ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-600">
           Loading batches...
@@ -122,6 +200,14 @@ export default function CoatingBatchesPage() {
           <Link href="/toolbox/finished-fabric/coating-batches/new" className="mt-4 inline-block">
             <Button variant="primary">Create First Batch</Button>
           </Link>
+        </motion.div>
+      ) : filteredBatches.length === 0 ? (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-slate-200 bg-white p-8 text-center"
+        >
+          <p className="text-slate-600">No coating batches in the selected date range.</p>
         </motion.div>
       ) : (
         <motion.div
@@ -159,42 +245,67 @@ export default function CoatingBatchesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
-              {batches.map((batch) => (
-                <tr
-                  key={batch.id}
-                  onClick={() => router.push(`/toolbox/finished-fabric/coating-batches/${batch.id}`)}
-                  className="cursor-pointer transition-colors hover:bg-slate-50"
-                >
-                  <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-slate-900">
-                    {batch.batch_no ?? "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                    {formatDate(batch.batch_date)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                    {batch.coating_type}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                    {batch.color ?? "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
-                    {batch.gsm ?? "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
-                    {batch.planned_meters ? batch.planned_meters.toFixed(2) : "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
-                    {batch.actual_coated_meters ? batch.actual_coated_meters.toFixed(2) : "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${getStatusBadgeColor(batch.status)}`}
-                    >
-                      {batch.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {batchesByMonth.map(([monthKey, monthBatches]) => {
+                const isCollapsed = collapsedMonths.has(monthKey);
+                return (
+                  <React.Fragment key={monthKey}>
+                    <tr className="border-b border-slate-200 bg-slate-100/80">
+                      <td colSpan={8} className="px-4 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleMonth(monthKey)}
+                          className="flex items-center gap-2 text-left w-full font-semibold text-slate-800 hover:text-teal-700 transition"
+                        >
+                          <span className="text-slate-500 select-none w-5">
+                            {isCollapsed ? "▶" : "▼"}
+                          </span>
+                          {formatMonthLabel(monthKey)}
+                          <span className="text-slate-500 font-normal text-sm">
+                            ({monthBatches.length} batch{monthBatches.length !== 1 ? "es" : ""})
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+                    {!isCollapsed &&
+                      monthBatches.map((batch) => (
+                        <tr
+                          key={batch.id}
+                          onClick={() => router.push(`/toolbox/finished-fabric/coating-batches/${batch.id}`)}
+                          className="cursor-pointer transition-colors hover:bg-slate-50"
+                        >
+                          <td className="whitespace-nowrap pl-9 pr-4 py-3 text-sm font-medium text-slate-900">
+                            {batch.batch_no ?? "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
+                            {formatDate(batch.batch_date)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
+                            {batch.coating_type}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
+                            {batch.color ?? "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">
+                            {batch.gsm ?? "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
+                            {batch.planned_meters ? batch.planned_meters.toFixed(2) : "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-slate-600">
+                            {batch.actual_coated_meters ? batch.actual_coated_meters.toFixed(2) : "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm">
+                            <span
+                              className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${getStatusBadgeColor(batch.status)}`}
+                            >
+                              {batch.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </motion.div>
