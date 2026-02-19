@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
 import { generateQRCode } from "@/lib/qr/generateQRCode";
 
+const LOCATION_COATING = "COATING";
+const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
+
 interface CoatingBatch {
   id: string;
   batch_no: string | null;
@@ -103,6 +106,25 @@ export default function CoatingBatchDetailPage() {
   const [editingChemicalId, setEditingChemicalId] = useState<string | null>(null);
   const [editingQuantity, setEditingQuantity] = useState<string>("");
   const [isUpdatingChemical, setIsUpdatingChemical] = useState(false);
+
+  // Base fabric roll selection state
+  const [availableBaseRolls, setAvailableBaseRolls] = useState<Array<{
+    id: string;
+    qr_code: string | null;
+    roll_no: string | null;
+    length_m: number;
+    cut_at: string;
+    order_no: string | null;
+    loom_no: string | null;
+    fabric_name: string | null;
+    total_allocated_to_batches: number;
+    remaining_for_batches: number;
+  }>>([]);
+  const [selectedBaseRollIds, setSelectedBaseRollIds] = useState<Set<string>>(new Set());
+  const [allocatedLengths, setAllocatedLengths] = useState<Record<string, string>>({});
+  const [isLoadingBaseRolls, setIsLoadingBaseRolls] = useState(false);
+  const [isAddingBaseRolls, setIsAddingBaseRolls] = useState(false);
+  const [showAddBaseRolls, setShowAddBaseRolls] = useState(false);
 
   useEffect(() => {
     if (batchId) {
@@ -262,6 +284,173 @@ export default function CoatingBatchDetailPage() {
       setError(err.message || "Failed to load batch.");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function fetchAvailableBaseRolls() {
+    try {
+      setIsLoadingBaseRolls(true);
+      setError(null);
+
+      // Get IDs of rolls already in this batch
+      const existingRollIds = baseRolls.map((br) => {
+        // Extract base_fabric_roll_id from the base roll
+        // We need to get it from the relation - but we don't have it directly
+        // So we'll fetch it from coating_batch_base_rolls
+        return null; // Will be handled differently
+      });
+
+      // Fetch available rolls
+      const { data, error: fetchError } = await supabaseBrowserClient
+        .from("base_fabric_rolls_available_for_coating")
+        .select(
+          `
+          id,
+          qr_code,
+          roll_no,
+          length_m,
+          cut_at,
+          order_no,
+          loom_no,
+          fabric_name,
+          total_allocated_to_batches,
+          remaining_for_batches
+        `
+        )
+        .eq("current_location", LOCATION_COATING)
+        .eq("status", STATUS_READY_FOR_COATING)
+        .gt("remaining_for_batches", 0)
+        .order("cut_at", { ascending: true });
+
+      if (fetchError) throw fetchError;
+
+      // Get base_fabric_roll_ids already in this batch
+      const { data: existingBatchRolls, error: existingError } = await supabaseBrowserClient
+        .from("coating_batch_base_rolls")
+        .select("base_fabric_roll_id")
+        .eq("batch_id", batchId);
+
+      if (existingError) throw existingError;
+
+      const existingIds = new Set((existingBatchRolls || []).map((r: any) => r.base_fabric_roll_id));
+
+      // Filter out rolls already in this batch
+      const filtered = (data || []).filter((roll: any) => !existingIds.has(roll.id));
+
+      setAvailableBaseRolls(
+        filtered.map((row: any) => ({
+          id: row.id as string,
+          qr_code: row.qr_code ?? null,
+          roll_no: row.roll_no ?? null,
+          length_m: Number(row.length_m || 0),
+          cut_at: row.cut_at,
+          order_no: row.order_no ?? null,
+          loom_no: row.loom_no ?? null,
+          fabric_name: row.fabric_name ?? null,
+          total_allocated_to_batches: Number(row.total_allocated_to_batches || 0),
+          remaining_for_batches: Number(row.remaining_for_batches || 0),
+        }))
+      );
+    } catch (err: any) {
+      console.error("Failed to fetch available base rolls", err);
+      setError(err.message || "Failed to load available base rolls.");
+    } finally {
+      setIsLoadingBaseRolls(false);
+    }
+  }
+
+  function toggleBaseRollSelection(rollId: string) {
+    const newSelection = new Set(selectedBaseRollIds);
+    const newAllocated = { ...allocatedLengths };
+    const roll = availableBaseRolls.find((r) => r.id === rollId);
+
+    if (newSelection.has(rollId)) {
+      newSelection.delete(rollId);
+      delete newAllocated[rollId];
+    } else {
+      newSelection.add(rollId);
+      if (roll && !newAllocated[rollId]) {
+        newAllocated[rollId] = roll.remaining_for_batches.toFixed(2);
+      }
+    }
+
+    setSelectedBaseRollIds(newSelection);
+    setAllocatedLengths(newAllocated);
+  }
+
+  function handleAllocatedLengthChange(rollId: string, value: string) {
+    const newAllocated = { ...allocatedLengths };
+    newAllocated[rollId] = value;
+
+    const parsed = parseFloat(value);
+    const newSelection = new Set(selectedBaseRollIds);
+    if (!value || isNaN(parsed) || parsed <= 0) {
+      newSelection.delete(rollId);
+    } else {
+      newSelection.add(rollId);
+    }
+
+    setAllocatedLengths(newAllocated);
+    setSelectedBaseRollIds(newSelection);
+  }
+
+  async function handleAddBaseRolls(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (selectedBaseRollIds.size === 0) {
+      setError("Please select at least one base fabric roll and enter allocation length.");
+      return;
+    }
+
+    setIsAddingBaseRolls(true);
+
+    try {
+      const selectedRolls = availableBaseRolls.filter((r) => selectedBaseRollIds.has(r.id));
+
+      // Validate allocations
+      for (const roll of selectedRolls) {
+        const value = allocatedLengths[roll.id];
+        const allocated = parseFloat(value);
+
+        if (!value || isNaN(allocated) || allocated <= 0) {
+          throw new Error(
+            `Please enter a valid allocated length for roll ${roll.roll_no || roll.id}.`
+          );
+        }
+
+        if (allocated > roll.remaining_for_batches) {
+          throw new Error(
+            `Allocated length for roll ${roll.roll_no || roll.id} exceeds remaining available quantity.\n` +
+              `Allocated: ${allocated.toFixed(2)} m, Remaining: ${roll.remaining_for_batches.toFixed(2)} m.`
+          );
+        }
+      }
+
+      // Insert batch base rolls
+      const batchBaseRolls = selectedRolls.map((roll) => ({
+        batch_id: batchId,
+        base_fabric_roll_id: roll.id,
+        input_length_m: parseFloat(allocatedLengths[roll.id]),
+      }));
+
+      const { error: baseRollsError } = await supabaseBrowserClient
+        .from("coating_batch_base_rolls")
+        .insert(batchBaseRolls);
+
+      if (baseRollsError) throw baseRollsError;
+
+      setSuccess("Base fabric rolls added successfully.");
+      setSelectedBaseRollIds(new Set());
+      setAllocatedLengths({});
+      setShowAddBaseRolls(false);
+      await fetchData(); // Refresh to show new rolls
+    } catch (err: any) {
+      console.error("Failed to add base rolls", err);
+      setError(err.message || "Failed to add base fabric rolls.");
+    } finally {
+      setIsAddingBaseRolls(false);
     }
   }
 
@@ -990,9 +1179,25 @@ export default function CoatingBatchDetailPage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">
-          Base Fabric Rolls ({baseRolls.length})
-        </h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Base Fabric Rolls ({baseRolls.length})
+          </h2>
+          {batch.status !== "COMPLETED" && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setShowAddBaseRolls(!showAddBaseRolls);
+                if (!showAddBaseRolls) {
+                  fetchAvailableBaseRolls();
+                }
+              }}
+            >
+              {showAddBaseRolls ? "Cancel" : "Add Base Fabric Rolls"}
+            </Button>
+          )}
+        </div>
         {baseRolls.length === 0 ? (
           <p className="text-slate-600">No base rolls added to this batch.</p>
         ) : (
@@ -1050,6 +1255,133 @@ export default function CoatingBatchDetailPage() {
                 </tr>
               </tfoot>
             </table>
+          </div>
+        )}
+
+        {/* Add Base Fabric Rolls Form */}
+        {showAddBaseRolls && batch.status !== "COMPLETED" && (
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900">Select Base Fabric Rolls</h3>
+            
+            {isLoadingBaseRolls ? (
+              <p className="text-slate-600">Loading available rolls...</p>
+            ) : availableBaseRolls.length === 0 ? (
+              <p className="text-slate-600">No available base fabric rolls found.</p>
+            ) : (
+              <form onSubmit={handleAddBaseRolls} className="space-y-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="border-b border-slate-200 bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={selectedBaseRollIds.size === availableBaseRolls.length && availableBaseRolls.length > 0}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                const allIds = new Set(availableBaseRolls.map((r) => r.id));
+                                const newAllocated: Record<string, string> = {};
+                                availableBaseRolls.forEach((roll) => {
+                                  newAllocated[roll.id] = roll.remaining_for_batches.toFixed(2);
+                                });
+                                setSelectedBaseRollIds(allIds);
+                                setAllocatedLengths(newAllocated);
+                              } else {
+                                setSelectedBaseRollIds(new Set());
+                                setAllocatedLengths({});
+                              }
+                            }}
+                            className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                          />
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          Roll No
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          QR Code
+                        </th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          Length (m)
+                        </th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          Remaining (m)
+                        </th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          Allocation Length (m) <span className="text-red-600">*</span>
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          Order
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          Fabric
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {availableBaseRolls.map((roll) => (
+                        <tr key={roll.id}>
+                          <td className="px-4 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedBaseRollIds.has(roll.id)}
+                              onChange={() => toggleBaseRollSelection(roll.id)}
+                              className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                            />
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
+                            {roll.roll_no ?? "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                            {roll.qr_code ?? "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                            {roll.length_m.toFixed(2)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                            {roll.remaining_for_batches.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              max={roll.remaining_for_batches}
+                              value={allocatedLengths[roll.id] || ""}
+                              onChange={(e) => handleAllocatedLengthChange(roll.id, e.target.value)}
+                              className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                              placeholder="0.00"
+                              disabled={!selectedBaseRollIds.has(roll.id)}
+                            />
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                            {roll.order_no ?? "-"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                            {roll.fabric_name ?? "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setShowAddBaseRolls(false);
+                      setSelectedBaseRollIds(new Set());
+                      setAllocatedLengths({});
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="primary" disabled={isAddingBaseRolls || selectedBaseRollIds.size === 0}>
+                    {isAddingBaseRolls ? "Adding..." : `Add ${selectedBaseRollIds.size} Roll(s)`}
+                  </Button>
+                </div>
+              </form>
+            )}
           </div>
         )}
       </motion.section>
