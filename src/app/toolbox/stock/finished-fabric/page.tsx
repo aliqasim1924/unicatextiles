@@ -235,6 +235,27 @@ export default function FinishedFabricStockPage() {
     return { rollsCount, metersTotal };
   }, [inStockRolls]);
 
+  const inStockByGrade = useMemo(() => {
+    const grades = ["A", "B", "C", "SCRAP"] as const;
+    const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
+    grades.forEach((g) => {
+      grouped[g] = { rollsCount: 0, metersTotal: 0 };
+    });
+    grouped["Other"] = { rollsCount: 0, metersTotal: 0 };
+    inStockRolls.forEach((roll) => {
+      const key = roll.grade && grades.includes(roll.grade as any) ? roll.grade : "Other";
+      grouped[key].rollsCount += 1;
+      grouped[key].metersTotal += roll.length_m;
+    });
+    return [
+      { grade: "A", ...grouped["A"] },
+      { grade: "B", ...grouped["B"] },
+      { grade: "C", ...grouped["C"] },
+      { grade: "Scrap", ...grouped["SCRAP"] },
+      ...(grouped["Other"].rollsCount > 0 ? [{ grade: "Other", ...grouped["Other"] }] : []),
+    ];
+  }, [inStockRolls]);
+
   async function generatePDF() {
     if (inStockRolls.length === 0) {
       alert("No stock data to generate report");
@@ -319,9 +340,46 @@ export default function FinishedFabricStockPage() {
       doc.setTextColor(128, 128, 128);
       doc.text("Confidential - For Internal Use Only", pageWidth / 2, pageHeight - 20, { align: "center" });
 
-      // ===== PAGE 2: SUMMARY BY TYPE / GSM / COLOUR (table format) =====
+      // ===== PAGE 2: GRADE SUMMARY + TYPE / GSM / COLOUR =====
       doc.addPage("a4", "landscape");
       pageNumber++;
+      const gradeSummaryBody = inStockByGrade.map((row) => [
+        row.grade,
+        row.rollsCount,
+        row.metersTotal.toFixed(2),
+      ]);
+      if (gradeSummaryBody.length > 0) {
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text("Summary by Grade (A, B, C, Scrap)", margin, margin + 10);
+        autoTable(doc, {
+          head: [["Grade", "Rolls", "Meters"]],
+          body: gradeSummaryBody,
+          startY: margin + 16,
+          margin: { left: margin, right: margin },
+          tableWidth: 120,
+          theme: "grid",
+          styles: { fontSize: 9 },
+          headStyles: {
+            fillColor: [15, 118, 110],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+          },
+          columnStyles: {
+            0: { cellWidth: 40, halign: "left" },
+            1: { cellWidth: 35, halign: "right" },
+            2: { cellWidth: 45, halign: "right" },
+          },
+          didParseCell: (data) => {
+            if (data.section === "head" && (data.column.index === 1 || data.column.index === 2)) {
+              data.cell.styles.halign = "right";
+            }
+          },
+        });
+      }
+      let summaryY = (gradeSummaryBody.length > 0 ? (doc as any).lastAutoTable.finalY + 14 : margin + 10);
+
       const ripstopRolls = inStockRolls.filter((r) =>
         (r.coating_type || "").toLowerCase().includes("ripstop"),
       );
@@ -329,7 +387,13 @@ export default function FinishedFabricStockPage() {
         (r.coating_type || "").toLowerCase().includes("pvc"),
       );
 
-      type SummaryRow = { rollsCount: number; metersTotal: number };
+      type SummaryRow = { 
+        rollsCount: number; 
+        metersTotal: number;
+        aGradeMeters: number;
+        bGradeMeters: number;
+        cGradeMeters: number;
+      };
       // Build table body: for each GSM a total row, then indented rows per colour
       const buildGsmColourTableBody = (rolls: FinishedFabricRoll[]): (string | number)[][] => {
         if (rolls.length === 0) return [];
@@ -340,16 +404,43 @@ export default function FinishedFabricStockPage() {
         rolls.forEach((roll) => {
           const gsmKey = roll.gsm != null ? String(roll.gsm) : "Unknown";
           if (!byGsm[gsmKey]) {
-            byGsm[gsmKey] = { total: { rollsCount: 0, metersTotal: 0 }, byColor: {} };
+            byGsm[gsmKey] = { 
+              total: { rollsCount: 0, metersTotal: 0, aGradeMeters: 0, bGradeMeters: 0, cGradeMeters: 0 }, 
+              byColor: {} 
+            };
           }
           byGsm[gsmKey].total.rollsCount += 1;
           byGsm[gsmKey].total.metersTotal += roll.length_m;
+          // Track by grade
+          const grade = roll.grade?.toUpperCase() || "";
+          if (grade === "A") {
+            byGsm[gsmKey].total.aGradeMeters += roll.length_m;
+          } else if (grade === "B") {
+            byGsm[gsmKey].total.bGradeMeters += roll.length_m;
+          } else if (grade === "C") {
+            byGsm[gsmKey].total.cGradeMeters += roll.length_m;
+          }
+          
           const colorKey = (roll.color || "Unknown").trim() || "Unknown";
           if (!byGsm[gsmKey].byColor[colorKey]) {
-            byGsm[gsmKey].byColor[colorKey] = { rollsCount: 0, metersTotal: 0 };
+            byGsm[gsmKey].byColor[colorKey] = { 
+              rollsCount: 0, 
+              metersTotal: 0, 
+              aGradeMeters: 0, 
+              bGradeMeters: 0, 
+              cGradeMeters: 0 
+            };
           }
           byGsm[gsmKey].byColor[colorKey].rollsCount += 1;
           byGsm[gsmKey].byColor[colorKey].metersTotal += roll.length_m;
+          // Track by grade for colour
+          if (grade === "A") {
+            byGsm[gsmKey].byColor[colorKey].aGradeMeters += roll.length_m;
+          } else if (grade === "B") {
+            byGsm[gsmKey].byColor[colorKey].bGradeMeters += roll.length_m;
+          } else if (grade === "C") {
+            byGsm[gsmKey].byColor[colorKey].cGradeMeters += roll.length_m;
+          }
         });
         const gsmOrder = Object.keys(byGsm).sort((a, b) => {
           if (a === "Unknown") return 1;
@@ -360,10 +451,24 @@ export default function FinishedFabricStockPage() {
         gsmOrder.forEach((gsmKey) => {
           const { total, byColor } = byGsm[gsmKey];
           const gsmLabel = gsmKey === "Unknown" ? "Unknown GSM" : `${gsmKey} GSM`;
-          body.push([gsmLabel, total.rollsCount, total.metersTotal.toFixed(2)]);
+          body.push([
+            gsmLabel, 
+            total.rollsCount, 
+            total.aGradeMeters.toFixed(2),
+            total.bGradeMeters.toFixed(2),
+            total.cGradeMeters.toFixed(2),
+            total.metersTotal.toFixed(2)
+          ]);
           const colors = Object.entries(byColor).sort(([a], [b]) => a.localeCompare(b));
           colors.forEach(([color, stats]) => {
-            body.push([`  ${color}`, stats.rollsCount, stats.metersTotal.toFixed(2)]);
+            body.push([
+              `  ${color}`, 
+              stats.rollsCount, 
+              stats.aGradeMeters.toFixed(2),
+              stats.bGradeMeters.toFixed(2),
+              stats.cGradeMeters.toFixed(2),
+              stats.metersTotal.toFixed(2)
+            ]);
           });
         });
         return body;
@@ -381,26 +486,40 @@ export default function FinishedFabricStockPage() {
         doc.text(title, margin, startY);
         const body = buildGsmColourTableBody(rolls);
         if (body.length === 0) return startY + 6;
+        
+        // Calculate column widths - distribute space for 6 columns
+        const remainingWidth = tableWidth - 40 - 40 - 40 - 40 - 50; // Subtract fixed widths for columns 1-5
+        const col0Width = remainingWidth * 0.7; // GSM/Colour (70% of remaining space for better readability)
+        const col1Width = 40; // Rolls
+        const col2Width = 40; // A Grade Meters
+        const col3Width = 40; // B Grade Meters
+        const col4Width = 40; // C Grade Meters
+        const col5Width = 50; // Total Meters
+        
         autoTable(doc, {
-          head: [["GSM / Colour", "Rolls", "Meters"]],
+          head: [["GSM / Colour", "Rolls", "A Grade Meters", "B Grade Meters", "C Grade Meters", "Total Meters"]],
           body,
           startY: startY + 6,
           margin: { left: margin, right: margin },
           tableWidth,
           theme: "grid",
-          styles: { fontSize: 9 },
+          styles: { fontSize: 8 },
           headStyles: {
             fillColor: [15, 118, 110],
             textColor: [255, 255, 255],
             fontStyle: "bold",
           },
           columnStyles: {
-            0: { cellWidth: tableWidth - 45 - 50, halign: "left" },
-            1: { cellWidth: 45, halign: "right" },
-            2: { cellWidth: 50, halign: "right" },
+            0: { cellWidth: col0Width, halign: "left" },
+            1: { cellWidth: col1Width, halign: "right" },
+            2: { cellWidth: col2Width, halign: "right" },
+            3: { cellWidth: col3Width, halign: "right" },
+            4: { cellWidth: col4Width, halign: "right" },
+            5: { cellWidth: col5Width, halign: "right" },
           },
           didParseCell: (data) => {
-            if (data.section === "head" && (data.column.index === 1 || data.column.index === 2)) {
+            // Right-align numeric columns (1-5)
+            if (data.section === "head" && data.column.index >= 1 && data.column.index <= 5) {
               data.cell.styles.halign = "right";
             }
             if (data.section === "body") {
@@ -414,7 +533,6 @@ export default function FinishedFabricStockPage() {
         return (doc as any).lastAutoTable.finalY + 8;
       };
 
-      let summaryY = margin + 10;
       summaryY = drawSummaryTable("Ripstop summary (by GSM, then colour)", ripstopRolls, summaryY);
       summaryY = drawSummaryTable("PVC summary (by GSM, then colour)", pvcRolls, summaryY);
 
@@ -561,6 +679,38 @@ export default function FinishedFabricStockPage() {
               <p className="text-2xl font-semibold text-slate-900">
                 {inStockTotals.metersTotal.toFixed(3)} m
               </p>
+            </div>
+          </div>
+
+          {/* Breakdown by Grade (A, B, C, Scrap) */}
+          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <h4 className="mb-2 text-sm font-semibold text-slate-700">Breakdown by Grade</h4>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left">
+                    <th className="py-1.5 pr-4 font-semibold text-slate-700">Grade</th>
+                    <th className="py-1.5 pr-4 font-semibold text-slate-700 text-right">Rolls</th>
+                    <th className="py-1.5 font-semibold text-slate-700 text-right">Meters</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inStockByGrade.map((item) => (
+                    <tr
+                      key={item.grade}
+                      className="border-b border-slate-100 last:border-b-0"
+                    >
+                      <td className="py-1.5 pr-4 font-medium text-slate-700">{item.grade}</td>
+                      <td className="py-1.5 pr-4 text-slate-600 text-right">
+                        {item.rollsCount} roll{item.rollsCount !== 1 ? "s" : ""}
+                      </td>
+                      <td className="py-1.5 text-slate-600 text-right">
+                        {item.metersTotal.toFixed(2)} m
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 

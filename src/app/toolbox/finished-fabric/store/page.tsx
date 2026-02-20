@@ -273,6 +273,28 @@ export default function FinishedFabricStorePage() {
       .sort((a, b) => a.type.localeCompare(b.type));
   }, [inStoreRolls]);
 
+  // Breakdown by Grade (A, B, C, Scrap)
+  const inStoreByGrade = useMemo(() => {
+    const grades = ["A", "B", "C", "SCRAP"] as const;
+    const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
+    grades.forEach((g) => {
+      grouped[g] = { rollsCount: 0, metersTotal: 0 };
+    });
+    grouped["Other"] = { rollsCount: 0, metersTotal: 0 };
+    inStoreRolls.forEach((roll) => {
+      const key = roll.grade && grades.includes(roll.grade as any) ? roll.grade : "Other";
+      grouped[key].rollsCount += 1;
+      grouped[key].metersTotal += roll.length_m;
+    });
+    return [
+      { grade: "A", ...grouped["A"] },
+      { grade: "B", ...grouped["B"] },
+      { grade: "C", ...grouped["C"] },
+      { grade: "Scrap", ...grouped["SCRAP"] },
+      ...(grouped["Other"].rollsCount > 0 ? [{ grade: "Other", ...grouped["Other"] }] : []),
+    ];
+  }, [inStoreRolls]);
+
   return (
     <div className="grid gap-6">
       <div className="flex items-center justify-between">
@@ -544,6 +566,25 @@ export default function FinishedFabricStorePage() {
                                 </div>
                               ))
                             )}
+                          </div>
+                        </div>
+
+                        {/* By Grade (A, B, C, Scrap) */}
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <h4 className="mb-2 text-sm font-semibold text-slate-700">By Grade</h4>
+                          <div className="space-y-1">
+                            {inStoreByGrade.map((item) => (
+                              <div
+                                key={item.grade}
+                                className="flex items-center justify-between border-b border-slate-200 pb-1 text-xs"
+                              >
+                                <span className="font-medium text-slate-700">{item.grade}</span>
+                                <span className="text-slate-600">
+                                  {item.rollsCount} roll{item.rollsCount !== 1 ? "s" : ""} •{" "}
+                                  {item.metersTotal.toFixed(2)}m
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </div>
