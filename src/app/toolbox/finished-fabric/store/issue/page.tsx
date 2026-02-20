@@ -561,10 +561,60 @@ export default function FinishedFabricStoreIssuePage() {
       }
     }
 
+    // Prevent double submission
+    if (isSubmitting) {
+      setError("Please wait, submission in progress...");
+      return;
+    }
+
     setIsSubmitting(true);
+    let createdIssueId: string | null = null;
+
     try {
       const { data: userData } = await supabaseBrowserClient.auth.getUser();
 
+      // CRITICAL: Validate that selected rolls are still available in store before issuing
+      const { data: rollStatusCheck, error: statusCheckError } = await supabaseBrowserClient
+        .from("finished_fabric_rolls")
+        .select("id, roll_no, status, current_location")
+        .in("id", Array.from(selectedRollIds));
+
+      if (statusCheckError) throw statusCheckError;
+
+      // Check for rolls that are no longer in store (already issued)
+      const unavailableRolls = (rollStatusCheck || []).filter(
+        (roll) => roll.status !== STATUS_IN_STORE || roll.current_location !== LOCATION_STORE
+      );
+
+      if (unavailableRolls.length > 0) {
+        const unavailableRollNos = unavailableRolls.map((r) => r.roll_no || r.id.slice(0, 8)).join(", ");
+        throw new Error(
+          `Cannot issue: Some rolls are no longer available in store (may have been issued already): ${unavailableRollNos}. Please refresh and try again.`
+        );
+      }
+
+      // CRITICAL: Check for duplicate issue items (same roll_id already issued for this order)
+      if (destination === "CUSTOMER" && selectedOrderId) {
+        const { data: existingItems, error: existingItemsError } = await supabaseBrowserClient
+          .from("finished_fabric_store_issue_items")
+          .select("roll_id, finished_fabric_store_issues!inner(order_id)")
+          .in("roll_id", Array.from(selectedRollIds))
+          .eq("finished_fabric_store_issues.order_id", selectedOrderId)
+          .eq("finished_fabric_store_issues.destination", "CUSTOMER");
+
+        if (existingItemsError) throw existingItemsError;
+
+        if (existingItems && existingItems.length > 0) {
+          const duplicateRollIds = existingItems.map((item: any) => item.roll_id);
+          const duplicateRolls = selectedRolls.filter((r) => duplicateRollIds.includes(r.id));
+          const duplicateRollNos = duplicateRolls.map((r) => r.roll_no || r.id.slice(0, 8)).join(", ");
+          throw new Error(
+            `Cannot issue: Some rolls have already been issued for this order: ${duplicateRollNos}. Please refresh and try again.`
+          );
+        }
+      }
+
+      // Create the issue header
       const { data: issue, error: issueError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .insert({
@@ -590,20 +640,36 @@ export default function FinishedFabricStoreIssuePage() {
         .single();
 
       if (issueError) throw issueError;
+      createdIssueId = issue.id;
 
-      const lineRows = selectedRolls.map((roll) => ({
-        issue_id: issue.id,
-        roll_id: roll.id,
-        roll_no: roll.roll_no,
-        length_m: roll.length_m,
-        grade: roll.grade,
-      }));
+      // Create issue items - filter out any duplicates that might have been created between validation and insert
+      const rollIdsToIssue = Array.from(selectedRollIds);
+      const lineRows = selectedRolls
+        .filter((roll) => rollIdsToIssue.includes(roll.id))
+        .map((roll) => ({
+          issue_id: issue.id,
+          roll_id: roll.id,
+          roll_no: roll.roll_no,
+          length_m: roll.length_m,
+          grade: roll.grade,
+        }));
+
+      if (lineRows.length === 0) {
+        // No valid rolls to issue - delete the issue header we just created
+        await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
+        throw new Error("No valid rolls to issue. Some rolls may have been issued by another user.");
+      }
 
       const { error: lineError } = await supabaseBrowserClient
         .from("finished_fabric_store_issue_items")
         .insert(lineRows);
-      if (lineError) throw lineError;
+      if (lineError) {
+        // Rollback: delete the issue header if items insert fails
+        await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
+        throw lineError;
+      }
 
+      // Update roll statuses - only update rolls that are still in store
       const { error: updateError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .update({
@@ -612,8 +678,16 @@ export default function FinishedFabricStoreIssuePage() {
           issued_store_at: new Date().toISOString(),
           issued_store_by: userData?.user?.id || null,
         })
-        .in("id", Array.from(selectedRollIds));
-      if (updateError) throw updateError;
+        .in("id", rollIdsToIssue)
+        .eq("status", STATUS_IN_STORE)
+        .eq("current_location", LOCATION_STORE);
+
+      if (updateError) {
+        // Rollback: delete issue items and header if roll update fails
+        await supabaseBrowserClient.from("finished_fabric_store_issue_items").delete().eq("issue_id", issue.id);
+        await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
+        throw updateError;
+      }
 
       // Carry invoice and gate pass to the customer order so they appear on the order section
       if (destination === "CUSTOMER" && selectedOrderId && (invoiceNo || gatePassNo)) {

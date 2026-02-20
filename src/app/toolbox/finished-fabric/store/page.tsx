@@ -326,6 +326,14 @@ export default function FinishedFabricStorePage() {
             Dispatch Planning (coming soon)
           </Button>
         </div>
+        <div className="mt-4 border-t border-slate-200 pt-4">
+          <Link href="/toolbox/finished-fabric/store/cleanup-duplicates" className="text-sm text-amber-700 hover:text-amber-800 font-semibold">
+            Cleanup Duplicate Issues →
+          </Link>
+          <p className="mt-1 text-xs text-slate-500">
+            Utility to find and remove duplicate issues and restore stock figures
+          </p>
+        </div>
       </motion.section>
 
       {/* Tabs */}
