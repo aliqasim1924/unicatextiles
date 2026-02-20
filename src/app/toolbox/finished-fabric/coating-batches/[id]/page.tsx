@@ -107,6 +107,11 @@ export default function CoatingBatchDetailPage() {
   const [editingQuantity, setEditingQuantity] = useState<string>("");
   const [isUpdatingChemical, setIsUpdatingChemical] = useState(false);
 
+  // Cancel batch state
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+
   // Base fabric roll selection state
   const [availableBaseRolls, setAvailableBaseRolls] = useState<Array<{
     id: string;
@@ -583,6 +588,98 @@ export default function CoatingBatchDetailPage() {
     }
   }
 
+  async function handleCancelBatch() {
+    if (!batch) return;
+
+    if (!cancelReason.trim()) {
+      setError("Please provide a reason for cancelling this batch.");
+      return;
+    }
+
+    setIsCancelling(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      // Step 1: Restore base fabric rolls to COATING/READY_FOR_COATING
+      if (baseRolls.length > 0) {
+        // Get the actual base_fabric_roll_id from coating_batch_base_rolls
+        const { data: batchBaseRollsData, error: batchBaseRollsError } = await supabaseBrowserClient
+          .from("coating_batch_base_rolls")
+          .select("base_fabric_roll_id")
+          .eq("batch_id", batchId);
+
+        if (batchBaseRollsError) throw batchBaseRollsError;
+
+        const actualBaseRollIds = (batchBaseRollsData || []).map((r: any) => r.base_fabric_roll_id).filter(Boolean);
+
+        if (actualBaseRollIds.length > 0) {
+          // Restore rolls to READY_FOR_COATING status
+          const { error: restoreError } = await supabaseBrowserClient
+            .from("base_fabric_rolls")
+            .update({
+              current_location: LOCATION_COATING,
+              status: STATUS_READY_FOR_COATING,
+            })
+            .in("id", actualBaseRollIds);
+
+          if (restoreError) throw restoreError;
+        }
+
+        // Delete coating_batch_base_rolls entries
+        const { error: deleteBaseRollsError } = await supabaseBrowserClient
+          .from("coating_batch_base_rolls")
+          .delete()
+          .eq("batch_id", batchId);
+
+        if (deleteBaseRollsError) throw deleteBaseRollsError;
+      }
+
+      // Step 2: Reverse chemical allocations (reduce allocated quantities)
+      if (batchChemicals.length > 0) {
+        // Delete coating_batch_chemicals entries (this will free up the allocated quantities)
+        const { error: deleteChemicalsError } = await supabaseBrowserClient
+          .from("coating_batch_chemicals")
+          .delete()
+          .eq("batch_id", batchId);
+
+        if (deleteChemicalsError) throw deleteChemicalsError;
+      }
+
+      // Step 3: Delete finished fabric rolls
+      if (finishedRolls.length > 0) {
+        const { error: deleteFinishedRollsError } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .delete()
+          .eq("batch_id", batchId);
+
+        if (deleteFinishedRollsError) throw deleteFinishedRollsError;
+      }
+
+      // Step 4: Update batch status to CANCELLED with reason
+      const { error: updateError } = await supabaseBrowserClient
+        .from("coating_batches")
+        .update({
+          status: "CANCELLED",
+          notes: `CANCELLED: ${cancelReason.trim()}` + (batch.notes ? `\n\nPrevious notes: ${batch.notes}` : ""),
+        })
+        .eq("id", batchId);
+
+      if (updateError) throw updateError;
+
+      setSuccess("Batch cancelled successfully. All raw materials have been reversed.");
+      setShowCancelDialog(false);
+      setCancelReason("");
+      await fetchData();
+      router.push("/toolbox/finished-fabric/coating-batches");
+    } catch (err: any) {
+      console.error("Failed to cancel batch", err);
+      setError(err.message || "Failed to cancel batch. Please try again.");
+    } finally {
+      setIsCancelling(false);
+    }
+  }
+
   async function handleAddChemical(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -909,6 +1006,8 @@ export default function CoatingBatchDetailPage() {
         return "bg-purple-100 text-purple-800";
       case "COMPLETED":
         return "bg-teal-100 text-teal-800";
+      case "CANCELLED":
+        return "bg-red-100 text-red-800";
       default:
         return "bg-slate-100 text-slate-800";
     }
@@ -1093,8 +1192,32 @@ export default function CoatingBatchDetailPage() {
         {/* Status Update Buttons */}
         <div className="mt-6 flex flex-wrap gap-2">
           {batch.status === "PLANNED" && (
-            <Button variant="primary" onClick={() => handleUpdateStatus("RUNNING")}>
-              Start Batch
+            <>
+              <Button variant="primary" onClick={() => handleUpdateStatus("RUNNING")}>
+                Start Batch
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setError(null);
+                  setShowCancelDialog(true);
+                }}
+                className="bg-red-600 text-white hover:bg-red-700"
+              >
+                Cancel Batch
+              </Button>
+            </>
+          )}
+          {batch.status === "RUNNING" && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setError(null);
+                setShowCancelDialog(true);
+              }}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Cancel Batch
             </Button>
           )}
           {batch.status === "ROLLED" && (
@@ -1800,6 +1923,154 @@ export default function CoatingBatchDetailPage() {
                 disabled={!shortageReason.trim() || isUpdatingCoatedMeters}
               >
                 {isUpdatingCoatedMeters ? "Saving..." : "Confirm & Save"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Batch Modal */}
+      {showCancelDialog && batch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-6 shadow-lg max-h-[90vh] overflow-y-auto">
+            <h3 className="mb-4 text-xl font-semibold text-slate-900">Cancel Coating Batch</h3>
+            
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-900 mb-2">Warning: This action will:</p>
+              <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
+                <li>Cancel the coating batch (Batch #{batch.batch_no})</li>
+                <li>Restore all base fabric rolls to COATING/READY_FOR_COATING status</li>
+                <li>Remove all chemical allocations (free up allocated quantities)</li>
+                <li>Delete all finished fabric rolls created for this batch</li>
+              </ul>
+            </div>
+
+            {/* Raw Materials Breakdown */}
+            {(baseRolls.length > 0 || batchChemicals.length > 0 || finishedRolls.length > 0) && (
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h4 className="mb-3 text-sm font-semibold text-slate-900">Raw Materials Linked to This Batch:</h4>
+                
+                {/* Base Fabric Rolls */}
+                {baseRolls.length > 0 && (
+                  <div className="mb-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Base Fabric Rolls ({baseRolls.length}):</p>
+                    <div className="max-h-32 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Roll No</th>
+                            <th className="px-2 py-1.5 text-right">Input Length (m)</th>
+                            <th className="px-2 py-1.5 text-right">Roll Length (m)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {baseRolls.map((roll) => {
+                            const rollData = Array.isArray(roll.base_fabric_rolls) 
+                              ? roll.base_fabric_rolls[0] 
+                              : roll.base_fabric_rolls;
+                            return (
+                              <tr key={roll.id} className="border-b border-slate-100">
+                                <td className="px-2 py-1.5">{rollData?.roll_no || "—"}</td>
+                                <td className="px-2 py-1.5 text-right">{roll.input_length_m.toFixed(3)}</td>
+                                <td className="px-2 py-1.5 text-right">{rollData?.length_m?.toFixed(3) || "—"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Chemicals */}
+                {batchChemicals.length > 0 && (
+                  <div className="mb-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Chemicals ({batchChemicals.length}):</p>
+                    <div className="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Chemical</th>
+                            <th className="px-2 py-1.5 text-right">Quantity</th>
+                            <th className="px-2 py-1.5 text-left">UOM</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batchChemicals.map((chem) => (
+                            <tr key={chem.id} className="border-b border-slate-100">
+                              <td className="px-2 py-1.5">{chem.chemical_name || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">{chem.quantity?.toFixed(3) || "—"}</td>
+                              <td className="px-2 py-1.5">{chem.uom || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Finished Fabric Rolls */}
+                {finishedRolls.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Finished Fabric Rolls ({finishedRolls.length}):</p>
+                    <div className="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Roll No</th>
+                            <th className="px-2 py-1.5 text-right">Length (m)</th>
+                            <th className="px-2 py-1.5 text-left">Grade</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {finishedRolls.map((roll) => (
+                            <tr key={roll.id} className="border-b border-slate-100">
+                              <td className="px-2 py-1.5">{roll.roll_no || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">{roll.length_m.toFixed(3)}</td>
+                              <td className="px-2 py-1.5">{roll.grade || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Reason for Cancellation <span className="text-red-600">*</span>
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent"
+                placeholder="e.g. Batch no longer needed, quality issue, production problem..."
+                rows={4}
+                required
+              />
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowCancelDialog(false);
+                  setCancelReason("");
+                  setError(null);
+                }}
+                disabled={isCancelling}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleCancelBatch}
+                disabled={isCancelling || !cancelReason.trim()}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isCancelling ? "Cancelling..." : "Confirm Cancellation"}
               </Button>
             </div>
           </div>

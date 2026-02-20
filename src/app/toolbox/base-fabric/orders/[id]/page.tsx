@@ -129,6 +129,11 @@ export default function BaseFabricOrderDetailPage() {
   const [deptAllocForm, setDeptAllocForm] = useState({ yarn_item_id: "", quantity: "" });
   const [deptAllocError, setDeptAllocError] = useState<string | null>(null);
   const [deptAllocSubmitting, setDeptAllocSubmitting] = useState(false);
+  
+  // Cancel order state
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
 
   useEffect(() => {
     if (orderId) {
@@ -504,6 +509,95 @@ export default function BaseFabricOrderDetailPage() {
       setError(err.message || "Failed to complete order.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleCancelOrder() {
+    if (!order) return;
+
+    if (!cancelReason.trim()) {
+      setError("Please provide a reason for cancelling this order.");
+      return;
+    }
+
+    setIsCancelling(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      // Step 1: Reverse yarn transactions (create RETURN transactions)
+      const yarnTransactionsToReverse = yarnIssues.filter(
+        (txn) => txn.transaction_type === "ISSUE" || txn.transaction_type === "DEPT_TO_ORDER"
+      );
+
+      if (yarnTransactionsToReverse.length > 0) {
+        const returnTransactions = yarnTransactionsToReverse.map((txn) => ({
+          yarn_item_id: txn.yarn_item_id,
+          transaction_type: "RETURN",
+          quantity: txn.quantity,
+          uom: txn.uom,
+          notes: `Reversal: Order ${order.order_no} cancelled - ${cancelReason.trim()}`,
+          base_fabric_order_id: orderId, // Link to cancelled order for audit
+        }));
+
+        const { error: returnError } = await supabaseBrowserClient
+          .from("yarn_transactions")
+          .insert(returnTransactions);
+
+        if (returnError) throw returnError;
+      }
+
+      // Step 2: Delete beam loadings (cascade will handle this, but we'll do it explicitly for clarity)
+      if (orderBeams.length > 0) {
+        const { error: beamsError } = await supabaseBrowserClient
+          .from("base_fabric_order_beams")
+          .delete()
+          .eq("base_fabric_order_id", orderId);
+
+        if (beamsError) throw beamsError;
+      }
+
+      // Step 3: Delete weft records
+      if (orderWeft.length > 0) {
+        const { error: weftError } = await supabaseBrowserClient
+          .from("base_fabric_order_weft")
+          .delete()
+          .eq("base_fabric_order_id", orderId);
+
+        if (weftError) throw weftError;
+      }
+
+      // Step 4: Delete base fabric rolls (or mark as cancelled - we'll delete them)
+      if (rolls.length > 0) {
+        const { error: rollsError } = await supabaseBrowserClient
+          .from("base_fabric_rolls")
+          .delete()
+          .eq("base_fabric_order_id", orderId);
+
+        if (rollsError) throw rollsError;
+      }
+
+      // Step 5: Update order status to CANCELLED with reason
+      const { error: updateError } = await supabaseBrowserClient
+        .from("base_fabric_orders")
+        .update({
+          status: "CANCELLED",
+          notes: `CANCELLED: ${cancelReason.trim()}` + (order.notes ? `\n\nPrevious notes: ${order.notes}` : ""),
+        })
+        .eq("id", orderId);
+
+      if (updateError) throw updateError;
+
+      setSuccess("Order cancelled successfully. All raw materials have been reversed.");
+      setShowCancelDialog(false);
+      setCancelReason("");
+      await fetchOrderData();
+      router.push("/toolbox/base-fabric/orders");
+    } catch (err: any) {
+      console.error("Failed to cancel order", err);
+      setError(err.message || "Failed to cancel order. Please try again.");
+    } finally {
+      setIsCancelling(false);
     }
   }
 
@@ -1896,9 +1990,21 @@ export default function BaseFabricOrderDetailPage() {
           transition={{ duration: 0.3, delay: 0.1 }}
           className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
         >
-          <Button variant="primary" onClick={handleStartOrder} disabled={isSubmitting}>
-            {isSubmitting ? "Starting..." : "Start Order"}
-          </Button>
+          <div className="flex gap-3">
+            <Button variant="primary" onClick={handleStartOrder} disabled={isSubmitting}>
+              {isSubmitting ? "Starting..." : "Start Order"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setError(null);
+                setShowCancelDialog(true);
+              }}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Cancel Order
+            </Button>
+          </div>
         </motion.section>
       )}
 
@@ -1911,15 +2017,27 @@ export default function BaseFabricOrderDetailPage() {
         >
           {rolls.length >= 1 ? (
             !showCompleteDialog ? (
-              <Button
-                variant="primary"
-                onClick={() => {
-                  setError(null);
-                  setShowCompleteDialog(true);
-                }}
-              >
-                Complete Order
-              </Button>
+              <div className="flex gap-3">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setError(null);
+                    setShowCompleteDialog(true);
+                  }}
+                >
+                  Complete Order
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setError(null);
+                    setShowCancelDialog(true);
+                  }}
+                  className="bg-red-600 text-white hover:bg-red-700"
+                >
+                  Cancel Order
+                </Button>
+              </div>
             ) : (
               <div className="space-y-4">
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -2109,6 +2227,179 @@ export default function BaseFabricOrderDetailPage() {
           </div>
         )}
       </motion.section>
+
+      {/* Cancel Order Modal */}
+      {showCancelDialog && order && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-6 shadow-lg max-h-[90vh] overflow-y-auto">
+            <h3 className="mb-4 text-xl font-semibold text-slate-900">Cancel Production Order</h3>
+            
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-900 mb-2">Warning: This action will:</p>
+              <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
+                <li>Cancel the production order (Order #{order.order_no})</li>
+                <li>Reverse all yarn transactions (create RETURN transactions)</li>
+                <li>Delete all beam loadings</li>
+                <li>Delete all weft entries</li>
+                <li>Delete all base fabric rolls created for this order</li>
+              </ul>
+            </div>
+
+            {/* Raw Materials Breakdown */}
+            {(yarnIssues.length > 0 || orderBeams.length > 0 || orderWeft.length > 0 || rolls.length > 0) && (
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h4 className="mb-3 text-sm font-semibold text-slate-900">Raw Materials Linked to This Order:</h4>
+                
+                {/* Yarn Transactions */}
+                {yarnIssues.length > 0 && (
+                  <div className="mb-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Yarn Transactions ({yarnIssues.length}):</p>
+                    <div className="max-h-32 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Type</th>
+                            <th className="px-2 py-1.5 text-left">Yarn</th>
+                            <th className="px-2 py-1.5 text-right">Quantity</th>
+                            <th className="px-2 py-1.5 text-left">UOM</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {yarnIssues.map((txn) => (
+                            <tr key={txn.id} className="border-b border-slate-100">
+                              <td className="px-2 py-1.5">{txn.transaction_type}</td>
+                              <td className="px-2 py-1.5">{txn.yarn_items?.name || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">{txn.quantity.toFixed(3)}</td>
+                              <td className="px-2 py-1.5">{txn.uom}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Beam Loadings */}
+                {orderBeams.length > 0 && (
+                  <div className="mb-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Beam Loadings ({orderBeams.length}):</p>
+                    <div className="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Beam</th>
+                            <th className="px-2 py-1.5 text-left">Yarn</th>
+                            <th className="px-2 py-1.5 text-right">Weight Ready (kg)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orderBeams.map((beam) => (
+                            <tr key={beam.id} className="border-b border-slate-100">
+                              <td className="px-2 py-1.5">{beam.weaving_beams?.beam_no || "—"}</td>
+                              <td className="px-2 py-1.5">{beam.yarn_items?.name || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">{beam.weight_ready_kg.toFixed(3)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Weft Entries */}
+                {orderWeft.length > 0 && (
+                  <div className="mb-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Weft Entries ({orderWeft.length}):</p>
+                    <div className="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Cone</th>
+                            <th className="px-2 py-1.5 text-left">Yarn</th>
+                            <th className="px-2 py-1.5 text-right">Kg Start</th>
+                            <th className="px-2 py-1.5 text-right">Kg End</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orderWeft.map((weft) => (
+                            <tr key={weft.id} className="border-b border-slate-100">
+                              <td className="px-2 py-1.5">{weft.cone_sequence ?? "—"}</td>
+                              <td className="px-2 py-1.5">{weft.yarn_items?.name || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">{weft.kg_start.toFixed(3)}</td>
+                              <td className="px-2 py-1.5 text-right">{weft.kg_end?.toFixed(3) || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Base Fabric Rolls */}
+                {rolls.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold text-slate-700">Base Fabric Rolls ({rolls.length}):</p>
+                    <div className="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Roll No</th>
+                            <th className="px-2 py-1.5 text-right">Length (m)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rolls.map((roll) => (
+                            <tr key={roll.id} className="border-b border-slate-100">
+                              <td className="px-2 py-1.5">{roll.roll_no || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">{roll.length_m.toFixed(3)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Reason for Cancellation <span className="text-red-600">*</span>
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent"
+                placeholder="e.g. Order no longer needed, customer cancelled, production issue..."
+                rows={4}
+                required
+              />
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowCancelDialog(false);
+                  setCancelReason("");
+                  setError(null);
+                }}
+                disabled={isCancelling}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleCancelOrder}
+                disabled={isCancelling || !cancelReason.trim()}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isCancelling ? "Cancelling..." : "Confirm Cancellation"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
