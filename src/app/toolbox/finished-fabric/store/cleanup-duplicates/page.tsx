@@ -111,45 +111,68 @@ export default function CleanupDuplicatesPage() {
           itemsByIssue[item.issue_id].push(item);
         });
 
-        // Find issues that have overlapping roll_ids (true duplicates)
+        // Find issues that have overlapping roll_ids (true duplicates). Keep oldest of each "unique" set of rolls.
         const sortedGroup = [...group].sort(
           (a, b) => new Date(a.issue_time).getTime() - new Date(b.issue_time).getTime()
         );
-        const keepIssue = sortedGroup[0];
-        const keepIssueRollIds = new Set((itemsByIssue[keepIssue.id] || []).map((item: any) => item.roll_id));
-        
+        const keptRollIds = new Set<string>(); // Rolls already accounted for by issues we're keeping
         const duplicateIssuesToDelete: any[] = [];
         const duplicateRollIds: string[] = [];
 
-        for (let i = 1; i < sortedGroup.length; i++) {
+        for (let i = 0; i < sortedGroup.length; i++) {
           const checkIssue = sortedGroup[i];
-          const checkIssueRollIds = new Set((itemsByIssue[checkIssue.id] || []).map((item: any) => item.roll_id));
-          
-          // Check if this issue has overlapping rolls with the keep issue
-          const overlappingRolls = Array.from(checkIssueRollIds).filter((rollId) => keepIssueRollIds.has(rollId));
-          
+          const checkIssueRollIds = (itemsByIssue[checkIssue.id] || []).map((item: any) => item.roll_id);
+          const overlappingRolls = checkIssueRollIds.filter((rollId: string) => keptRollIds.has(rollId));
+
           if (overlappingRolls.length > 0) {
-            // This is a duplicate - it has overlapping rolls
+            // This issue repeats rolls we already kept → treat as duplicate and delete it
             duplicateIssuesToDelete.push(checkIssue);
             duplicateRollIds.push(...overlappingRolls);
-            duplicateItems.push(...(itemsByIssue[checkIssue.id] || []).filter((item: any) => 
+            duplicateItems.push(...(itemsByIssue[checkIssue.id] || []).filter((item: any) =>
               overlappingRolls.includes(item.roll_id)
             ));
+          } else {
+            // No overlap with kept issues → keep this issue and add its rolls to kept set
+            checkIssueRollIds.forEach((rollId: string) => keptRollIds.add(rollId));
           }
         }
 
         if (duplicateIssuesToDelete.length > 0) {
-          duplicateIssues.push(...duplicateIssuesToDelete);
-
-          // Delete duplicate issues (this will cascade delete items via foreign key)
+          // Delete duplicate issues: first delete items (don't rely on CASCADE in case RLS or schema differs), then the issue
           for (const dupIssue of duplicateIssuesToDelete) {
-            const { error: deleteError } = await supabaseBrowserClient
+            const { error: deleteItemsError } = await supabaseBrowserClient
+              .from("finished_fabric_store_issue_items")
+              .delete()
+              .eq("issue_id", dupIssue.id);
+
+            if (deleteItemsError) {
+              errors.push(`Error deleting items for issue ${dupIssue.issue_no}: ${deleteItemsError.message}`);
+              continue;
+            }
+
+            const { error: deleteIssueError } = await supabaseBrowserClient
               .from("finished_fabric_store_issues")
               .delete()
               .eq("id", dupIssue.id);
 
-            if (deleteError) {
-              errors.push(`Error deleting duplicate issue ${dupIssue.issue_no}: ${deleteError.message}`);
+            if (deleteIssueError) {
+              errors.push(`Error deleting duplicate issue ${dupIssue.issue_no}: ${deleteIssueError.message}`);
+              continue;
+            }
+
+            // Verify delete persisted (RLS or other policies can cause silent no-op)
+            const { data: stillThere } = await supabaseBrowserClient
+              .from("finished_fabric_store_issues")
+              .select("id")
+              .eq("id", dupIssue.id)
+              .maybeSingle();
+
+            if (stillThere) {
+              errors.push(
+                `Delete did not persist for issue ${dupIssue.issue_no} (likely RLS). Run the migration "add_rls_policies_finished_fabric_store_issues.sql" in Supabase SQL Editor.`
+              );
+            } else {
+              duplicateIssues.push(dupIssue);
             }
           }
 
@@ -239,6 +262,11 @@ export default function CleanupDuplicatesPage() {
             <li>Keep the first (oldest) issue and delete duplicates</li>
             <li>Restore rolls to IN_STORE status if they have no valid issue items</li>
           </ul>
+          <p className="mt-3 text-sm text-slate-600">
+            If you run this and the same duplicates keep appearing, deletes are not persisting (often due to RLS).
+            Run <code className="rounded bg-slate-200 px-1">migrations/add_rls_policies_finished_fabric_store_issues.sql</code> in
+            Supabase → SQL Editor, then run cleanup again.
+          </p>
         </div>
 
         <Button
@@ -256,22 +284,29 @@ export default function CleanupDuplicatesPage() {
               <h3 className="mb-2 text-sm font-semibold text-slate-900">Results</h3>
               <div className="space-y-2 text-sm text-slate-700">
                 <p>
-                  <span className="font-semibold">Duplicate Issues Found:</span> {results.duplicateIssues.length}
+                  <span className="font-semibold">Duplicate Issues Deleted:</span> {results.duplicateIssues.length}
                 </p>
                 <p>
-                  <span className="font-semibold">Duplicate Items Found:</span> {results.duplicateItems.length}
+                  <span className="font-semibold">Duplicate Items Removed:</span> {results.duplicateItems.length}
                 </p>
                 <p>
                   <span className="font-semibold">Rolls Restored to Store:</span> {results.fixedRolls.length}
                 </p>
+                {results.duplicateIssues.length > 0 && results.errors.length === 0 && (
+                  <p className="mt-2 text-green-700 font-medium">Cleanup applied. Run again to confirm no duplicates remain.</p>
+                )}
                 {results.errors.length > 0 && (
                   <div className="mt-4">
-                    <p className="font-semibold text-red-700">Errors:</p>
+                    <p className="font-semibold text-red-700">Errors (some deletes may not have been applied):</p>
                     <ul className="mt-1 list-disc list-inside space-y-1 text-red-600">
                       {results.errors.map((error, idx) => (
                         <li key={idx}>{error}</li>
                       ))}
                     </ul>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Run the migration <code className="rounded bg-slate-200 px-1">migrations/add_rls_policies_finished_fabric_store_issues.sql</code> in
+                      Supabase (Dashboard → SQL Editor) for your project so deletes can persist.
+                    </p>
                   </div>
                 )}
               </div>

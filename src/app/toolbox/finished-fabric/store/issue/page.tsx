@@ -91,6 +91,8 @@ export default function FinishedFabricStoreIssuePage() {
   const [orderLines, setOrderLines] = useState<OrderLine[]>([]);
   const [orderRequirements, setOrderRequirements] = useState<OrderRequirement[]>([]);
   const [showOnlyMatching, setShowOnlyMatching] = useState(false);
+  /** Roll IDs already issued for the currently selected order (so we hide them from stock list) */
+  const [alreadyIssuedRollIdsForOrder, setAlreadyIssuedRollIdsForOrder] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchStock();
@@ -117,6 +119,7 @@ export default function FinishedFabricStoreIssuePage() {
     } else {
       setOrderLines([]);
       setOrderRequirements([]);
+      setAlreadyIssuedRollIdsForOrder(new Set());
     }
   }, [selectedOrderId, destination]);
 
@@ -294,8 +297,10 @@ export default function FinishedFabricStoreIssuePage() {
       };
 
       const issuedMap: Record<string, number> = {};
+      const issuedRollIds = new Set<string>();
       (issuesData || []).forEach((issue: any) => {
         (issue.finished_fabric_store_issue_items || []).forEach((item: any) => {
+          if (item.roll_id) issuedRollIds.add(item.roll_id);
           const roll = Array.isArray(item.finished_fabric_rolls)
             ? item.finished_fabric_rolls[0]
             : item.finished_fabric_rolls;
@@ -307,6 +312,7 @@ export default function FinishedFabricStoreIssuePage() {
           }
         });
       });
+      setAlreadyIssuedRollIdsForOrder(issuedRollIds);
 
       // Build requirements array
       const requirements: OrderRequirement[] = Object.entries(requiredMap).map(([key, data]) => {
@@ -430,6 +436,10 @@ export default function FinishedFabricStoreIssuePage() {
 
   const filteredRolls = useMemo(() => {
     return stockRolls.filter((roll) => {
+      // Don't show rolls already issued for the selected order (prevents accidental duplicate selection)
+      if (destination === "CUSTOMER" && selectedOrderId && alreadyIssuedRollIdsForOrder.has(roll.id)) {
+        return false;
+      }
       const matchesGrade = gradeFilter === "ALL" || roll.grade === gradeFilter;
       const matchesSearch =
         searchTerm.trim() === "" ||
@@ -440,7 +450,7 @@ export default function FinishedFabricStoreIssuePage() {
         rollMatchesOrder[roll.id]?.matches === true;
       return matchesGrade && matchesSearch && matchesOrder;
     });
-  }, [stockRolls, gradeFilter, searchTerm, showOnlyMatching, selectedOrderId, rollMatchesOrder]);
+  }, [stockRolls, gradeFilter, searchTerm, showOnlyMatching, selectedOrderId, rollMatchesOrder, destination, alreadyIssuedRollIdsForOrder]);
 
   const selectedRolls = useMemo(
     () => filteredRolls.filter((r) => selectedRollIds.has(r.id)),
@@ -594,23 +604,34 @@ export default function FinishedFabricStoreIssuePage() {
       }
 
       // CRITICAL: Check for duplicate issue items (same roll_id already issued for this order)
+      // Use two-step query to avoid join filter issues: get issue IDs for order, then items for those issues
       if (destination === "CUSTOMER" && selectedOrderId) {
-        const { data: existingItems, error: existingItemsError } = await supabaseBrowserClient
-          .from("finished_fabric_store_issue_items")
-          .select("roll_id, finished_fabric_store_issues!inner(order_id)")
-          .in("roll_id", Array.from(selectedRollIds))
-          .eq("finished_fabric_store_issues.order_id", selectedOrderId)
-          .eq("finished_fabric_store_issues.destination", "CUSTOMER");
+        const { data: orderIssues, error: orderIssuesError } = await supabaseBrowserClient
+          .from("finished_fabric_store_issues")
+          .select("id")
+          .eq("order_id", selectedOrderId)
+          .eq("destination", "CUSTOMER");
 
-        if (existingItemsError) throw existingItemsError;
+        if (orderIssuesError) throw orderIssuesError;
 
-        if (existingItems && existingItems.length > 0) {
-          const duplicateRollIds = existingItems.map((item: any) => item.roll_id);
-          const duplicateRolls = selectedRolls.filter((r) => duplicateRollIds.includes(r.id));
-          const duplicateRollNos = duplicateRolls.map((r) => r.roll_no || r.id.slice(0, 8)).join(", ");
-          throw new Error(
-            `Cannot issue: Some rolls have already been issued for this order: ${duplicateRollNos}. Please refresh and try again.`
-          );
+        if (orderIssues && orderIssues.length > 0) {
+          const orderIssueIds = orderIssues.map((i: any) => i.id);
+          const { data: existingItems, error: existingItemsError } = await supabaseBrowserClient
+            .from("finished_fabric_store_issue_items")
+            .select("roll_id")
+            .in("issue_id", orderIssueIds)
+            .in("roll_id", Array.from(selectedRollIds));
+
+          if (existingItemsError) throw existingItemsError;
+
+          if (existingItems && existingItems.length > 0) {
+            const duplicateRollIds = [...new Set(existingItems.map((item: any) => item.roll_id))];
+            const duplicateRolls = selectedRolls.filter((r) => duplicateRollIds.includes(r.id));
+            const duplicateRollNos = duplicateRolls.map((r) => r.roll_no || r.id.slice(0, 8)).join(", ");
+            throw new Error(
+              `Cannot issue: Some rolls have already been issued for this order: ${duplicateRollNos}. Please refresh and try again.`
+            );
+          }
         }
       }
 
@@ -642,7 +663,32 @@ export default function FinishedFabricStoreIssuePage() {
       if (issueError) throw issueError;
       createdIssueId = issue.id;
 
-      // Create issue items - filter out any duplicates that might have been created between validation and insert
+      // Last-moment duplicate check (catches race: another tab or request issued same rolls for this order)
+      if (destination === "CUSTOMER" && selectedOrderId) {
+        const { data: orderIssues2, error: orderIssues2Error } = await supabaseBrowserClient
+          .from("finished_fabric_store_issues")
+          .select("id")
+          .eq("order_id", selectedOrderId)
+          .eq("destination", "CUSTOMER")
+          .neq("id", issue.id);
+
+        if (!orderIssues2Error && orderIssues2 && orderIssues2.length > 0) {
+          const orderIssueIds2 = orderIssues2.map((i: any) => i.id);
+          const { data: existingItems2 } = await supabaseBrowserClient
+            .from("finished_fabric_store_issue_items")
+            .select("roll_id")
+            .in("issue_id", orderIssueIds2)
+            .in("roll_id", Array.from(selectedRollIds));
+
+          if (existingItems2 && existingItems2.length > 0) {
+            await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
+            throw new Error(
+              "Some of these rolls were just issued for this order (e.g. by another tab). Please refresh and try again."
+            );
+          }
+        }
+      }
+
       const rollIdsToIssue = Array.from(selectedRollIds);
       const lineRows = selectedRolls
         .filter((roll) => rollIdsToIssue.includes(roll.id))
