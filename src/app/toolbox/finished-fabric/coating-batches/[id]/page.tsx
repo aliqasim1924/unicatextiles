@@ -49,6 +49,8 @@ interface FinishedRoll {
   grade: string | null;
   notes: string | null;
   created_at: string;
+  /** Set when roll has been received into finished fabric store; rolls with this set cannot be edited */
+  received_store_at: string | null;
 }
 
 interface BatchChemical {
@@ -111,6 +113,13 @@ export default function CoatingBatchDetailPage() {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Finished roll amendment (edit until received in store)
+  const [editingRollId, setEditingRollId] = useState<string | null>(null);
+  const [editRollLength, setEditRollLength] = useState("");
+  const [editRollGrade, setEditRollGrade] = useState("A");
+  const [editRollNotes, setEditRollNotes] = useState("");
+  const [isUpdatingRoll, setIsUpdatingRoll] = useState(false);
 
   // Base fabric roll selection state
   const [availableBaseRolls, setAvailableBaseRolls] = useState<Array<{
@@ -209,10 +218,10 @@ export default function CoatingBatchDetailPage() {
       
       setBaseRolls(mappedBaseRolls);
 
-      // Fetch finished rolls
+      // Fetch finished rolls (include received_store_at to know if roll can be edited)
       const { data: rollsData, error: rollsError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
-        .select("id, roll_no, length_m, grade, notes, created_at")
+        .select("id, roll_no, length_m, grade, notes, created_at, received_store_at")
         .eq("batch_id", batchId)
         .order("created_at", { ascending: false });
 
@@ -225,6 +234,7 @@ export default function CoatingBatchDetailPage() {
           grade: row.grade ?? null,
           notes: row.notes ?? null,
           created_at: row.created_at,
+          received_store_at: row.received_store_at ?? null,
         })) as FinishedRoll[]
       );
 
@@ -524,6 +534,7 @@ export default function CoatingBatchDetailPage() {
         grade: inserted.grade ?? null,
         notes: inserted.notes ?? null,
         created_at: inserted.created_at || new Date().toISOString(),
+        received_store_at: null,
       };
       setFinishedRolls([newRoll, ...finishedRolls]);
 
@@ -536,6 +547,67 @@ export default function CoatingBatchDetailPage() {
       setError(err.message || "Failed to add finished roll.");
     } finally {
       setIsAddingRoll(false);
+    }
+  }
+
+  function canEditRoll(roll: FinishedRoll): boolean {
+    return roll.received_store_at == null;
+  }
+
+  function handleStartEditRoll(roll: FinishedRoll) {
+    if (!canEditRoll(roll)) return;
+    setEditingRollId(roll.id);
+    setEditRollLength(roll.length_m.toString());
+    setEditRollGrade(roll.grade ?? "A");
+    setEditRollNotes(roll.notes ?? "");
+    setError(null);
+  }
+
+  function handleCancelEditRoll() {
+    setEditingRollId(null);
+    setEditRollLength("");
+    setEditRollGrade("A");
+    setEditRollNotes("");
+  }
+
+  async function handleSaveRoll(rollId: string) {
+    const lengthNum = parseFloat(editRollLength);
+    if (isNaN(lengthNum) || lengthNum < 0) {
+      setError("Enter a valid length (m).");
+      return;
+    }
+    setIsUpdatingRoll(true);
+    setError(null);
+    try {
+      const { error: updateError } = await supabaseBrowserClient
+        .from("finished_fabric_rolls")
+        .update({
+          length_m: lengthNum,
+          grade: editRollGrade || null,
+          notes: editRollNotes.trim() || null,
+        })
+        .eq("id", rollId);
+
+      if (updateError) throw updateError;
+
+      setFinishedRolls((prev) =>
+        prev.map((r) =>
+          r.id === rollId
+            ? {
+                ...r,
+                length_m: lengthNum,
+                grade: editRollGrade || null,
+                notes: editRollNotes.trim() || null,
+              }
+            : r
+        )
+      );
+      setSuccess("Roll updated.");
+      handleCancelEditRoll();
+    } catch (err: any) {
+      setError(err.message || "Failed to update roll.");
+    } finally {
+      setIsUpdatingRoll(false);
     }
   }
 
@@ -1532,6 +1604,10 @@ export default function CoatingBatchDetailPage() {
         {finishedRolls.length === 0 ? (
           <p className="text-slate-600">No finished rolls created yet.</p>
         ) : (
+          <>
+            <p className="mb-3 text-sm text-slate-600">
+              You can amend length, grade, and notes for any roll until it has been received in the finished fabric store. Once received, the row is locked.
+            </p>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b border-slate-200 bg-slate-50">
@@ -1551,26 +1627,109 @@ export default function CoatingBatchDetailPage() {
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Created
                   </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {finishedRolls.map((roll) => (
-                  <tr key={roll.id}>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm font-medium text-slate-900">
-                      {roll.roll_no ?? "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
-                      {roll.length_m.toFixed(2)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
-                      {roll.grade ?? "-"}
-                    </td>
-                    <td className="px-4 py-2 text-sm text-slate-600">{roll.notes ?? "-"}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
-                      {formatDate(roll.created_at)}
-                    </td>
-                  </tr>
-                ))}
+                {finishedRolls.map((roll) => {
+                  const isEditing = editingRollId === roll.id;
+                  const editable = canEditRoll(roll);
+                  return (
+                    <tr key={roll.id} className={isEditing ? "bg-slate-50" : ""}>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm font-medium text-slate-900">
+                        {roll.roll_no ?? "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                        {isEditing ? (
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={editRollLength}
+                            onChange={(e) => setEditRollLength(e.target.value)}
+                            className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                            disabled={isUpdatingRoll}
+                          />
+                        ) : (
+                          roll.length_m.toFixed(2)
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                        {isEditing ? (
+                          <select
+                            value={editRollGrade}
+                            onChange={(e) => setEditRollGrade(e.target.value)}
+                            className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                            disabled={isUpdatingRoll}
+                          >
+                            <option value="A">A</option>
+                            <option value="B">B</option>
+                            <option value="C">C</option>
+                            <option value="SCRAP">SCRAP</option>
+                          </select>
+                        ) : (
+                          roll.grade ?? "-"
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-sm text-slate-600">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editRollNotes}
+                            onChange={(e) => setEditRollNotes(e.target.value)}
+                            className="w-full min-w-[120px] rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                            placeholder="Optional"
+                            disabled={isUpdatingRoll}
+                          />
+                        ) : (
+                          roll.notes ?? "-"
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                        {formatDate(roll.created_at)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-sm">
+                        {editable ? (
+                          isEditing ? (
+                            <span className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveRoll(roll.id)}
+                                disabled={isUpdatingRoll}
+                                className="text-green-600 hover:text-green-800 font-medium"
+                              >
+                                {isUpdatingRoll ? "Saving..." : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelEditRoll}
+                                disabled={isUpdatingRoll}
+                                className="text-slate-600 hover:text-slate-800"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditRoll(roll)}
+                              className="text-teal-600 hover:text-teal-800 font-medium"
+                              title="Amend roll (only until received in store)"
+                            >
+                              Amend
+                            </button>
+                          )
+                        ) : (
+                          <span className="text-slate-400 text-xs" title="Received in store – no edits allowed">
+                            Locked
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot className="border-t-2 border-slate-300 bg-slate-50">
                 <tr>
@@ -1578,11 +1737,12 @@ export default function CoatingBatchDetailPage() {
                   <td className="px-4 py-2 text-right text-sm font-semibold text-slate-900">
                     {totalFinishedLength.toFixed(2)}
                   </td>
-                  <td colSpan={3}></td>
+                  <td colSpan={4}></td>
                 </tr>
               </tfoot>
             </table>
           </div>
+          </>
         )}
 
         {/* Add Finished Roll Form */}
