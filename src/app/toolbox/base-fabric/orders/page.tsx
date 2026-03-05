@@ -14,6 +14,7 @@ interface OrderRow {
   planned_qty_m: number;
   loom_no: string | null;
   created_at: string;
+  actual_start_at: string | null;
   base_fabric_items: {
     name: string;
   };
@@ -73,6 +74,7 @@ export default function BaseFabricOrdersPage() {
           planned_qty_m,
           loom_no,
           created_at,
+          actual_start_at,
           base_fabric_items:base_fabric_item_id ( name )
         `
         )
@@ -99,6 +101,7 @@ export default function BaseFabricOrdersPage() {
       const processed = (ordersData || []).map((order: any) => ({
         ...order,
         created_at: order.created_at ?? new Date().toISOString(),
+        actual_start_at: order.actual_start_at ?? null,
         base_fabric_items: Array.isArray(order.base_fabric_items)
           ? order.base_fabric_items[0]
           : order.base_fabric_items,
@@ -267,6 +270,8 @@ export default function BaseFabricOrdersPage() {
                   </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Loom</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Status</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Created</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Started</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">
                     Planned (m)
                   </th>
@@ -284,7 +289,7 @@ export default function BaseFabricOrdersPage() {
                       <tr
                         className="border-b border-slate-200 bg-slate-100/80"
                       >
-                        <td colSpan={7} className="px-4 py-2.5">
+                        <td colSpan={9} className="px-4 py-2.5">
                           <button
                             type="button"
                             onClick={() => toggleMonth(monthKey)}
@@ -329,6 +334,14 @@ export default function BaseFabricOrdersPage() {
                                 >
                                   {order.status}
                                 </span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">
+                                {new Date(order.created_at).toLocaleDateString("en-ZA")}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">
+                                {order.actual_start_at
+                                  ? new Date(order.actual_start_at).toLocaleString("en-ZA")
+                                  : "—"}
                               </td>
                               <td className="px-4 py-3 text-right font-medium text-slate-900">
                                 {order.planned_qty_m.toFixed(2)}

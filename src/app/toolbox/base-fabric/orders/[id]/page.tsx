@@ -99,6 +99,14 @@ interface DeptAllocOption {
   available: number;
 }
 
+interface YarnSummaryRow {
+  yarn_item_id: string;
+  name: string;
+  issued: number;
+  defaultConsumed: number;
+  uom: string;
+}
+
 export default function BaseFabricOrderDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -134,6 +142,10 @@ export default function BaseFabricOrderDetailPage() {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
+  const [rollsToKeep, setRollsToKeep] = useState<Set<string>>(new Set());
+  const [beamCancelWeights, setBeamCancelWeights] = useState<Record<string, string>>({});
+  const [weftCancelKgEnd, setWeftCancelKgEnd] = useState<Record<string, string>>({});
+  const [extraWeftUsed, setExtraWeftUsed] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (orderId) {
@@ -525,21 +537,33 @@ export default function BaseFabricOrderDetailPage() {
     setSuccess(null);
 
     try {
-      // Step 1: Reverse yarn transactions (create RETURN transactions)
-      const yarnTransactionsToReverse = yarnIssues.filter(
-        (txn) => txn.transaction_type === "ISSUE" || txn.transaction_type === "DEPT_TO_ORDER"
-      );
+      // Step 1: Reverse yarn balance based on beam/weft cancellation weights (Issued - Used).
+      // For each yarn_item_id: return only the unused balance to store.
+      const returnTransactions: {
+        yarn_item_id: string;
+        transaction_type: string;
+        quantity: number;
+        uom: string;
+        notes: string;
+        base_fabric_order_id: string;
+      }[] = [];
 
-      if (yarnTransactionsToReverse.length > 0) {
-        const returnTransactions = yarnTransactionsToReverse.map((txn) => ({
-          yarn_item_id: txn.yarn_item_id,
-          transaction_type: "RETURN",
-          quantity: txn.quantity,
-          uom: txn.uom,
-          notes: `Reversal: Order ${order.order_no} cancelled - ${cancelReason.trim()}`,
-          base_fabric_order_id: orderId, // Link to cancelled order for audit
-        }));
+      yarnSummary.forEach((row) => {
+        const used = row.defaultConsumed;
+        const toReturn = row.issued - used;
+        if (toReturn > 0.000001) {
+          returnTransactions.push({
+            yarn_item_id: row.yarn_item_id,
+            transaction_type: "RETURN",
+            quantity: toReturn,
+            uom: row.uom,
+            notes: `Reversal (balance): Order ${order.order_no} cancelled - ${cancelReason.trim()}`,
+            base_fabric_order_id: orderId, // Link to cancelled order for audit
+          });
+        }
+      });
 
+      if (returnTransactions.length > 0) {
         const { error: returnError } = await supabaseBrowserClient
           .from("yarn_transactions")
           .insert(returnTransactions);
@@ -567,14 +591,17 @@ export default function BaseFabricOrderDetailPage() {
         if (weftError) throw weftError;
       }
 
-      // Step 4: Delete base fabric rolls (or mark as cancelled - we'll delete them)
+      // Step 4: Delete base fabric rolls that are not marked to be kept
       if (rolls.length > 0) {
-        const { error: rollsError } = await supabaseBrowserClient
-          .from("base_fabric_rolls")
-          .delete()
-          .eq("base_fabric_order_id", orderId);
+        const idsToDelete = rolls.filter((roll) => !rollsToKeep.has(roll.id)).map((roll) => roll.id);
+        if (idsToDelete.length > 0) {
+          const { error: rollsError } = await supabaseBrowserClient
+            .from("base_fabric_rolls")
+            .delete()
+            .in("id", idsToDelete);
 
-        if (rollsError) throw rollsError;
+          if (rollsError) throw rollsError;
+        }
       }
 
       // Step 5: Update order status to CANCELLED with reason
@@ -588,9 +615,10 @@ export default function BaseFabricOrderDetailPage() {
 
       if (updateError) throw updateError;
 
-      setSuccess("Order cancelled successfully. All raw materials have been reversed.");
+      setSuccess("Order cancelled successfully. Yarn balance has been returned and rolls updated.");
       setShowCancelDialog(false);
       setCancelReason("");
+      setRollsToKeep(new Set());
       await fetchOrderData();
       router.push("/toolbox/base-fabric/orders");
     } catch (err: any) {
@@ -634,6 +662,73 @@ export default function BaseFabricOrderDetailPage() {
     });
     return m;
   }, [orderBeams, orderWeft]);
+
+  function computeUsedForYarn(yarnItemId: string): number {
+    let used = 0;
+
+    // Beams (warp): initial on beam minus remaining on beam at cancellation
+    orderBeams.forEach((row) => {
+      if (row.yarn_item_id !== yarnItemId) return;
+      const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+      const initial = Math.max(Number(row.weight_ready_kg) - Number(tare), 0);
+      const rawCancel = beamCancelWeights[row.id];
+      if (rawCancel && rawCancel.trim() !== "") {
+        const cancelVal = parseFloat(rawCancel);
+        const remaining = isNaN(cancelVal) ? 0 : Math.max(cancelVal - Number(tare), 0);
+        const consumed = Math.max(initial - remaining, 0);
+        used += consumed;
+      } else {
+        // If no cancellation weight given, assume full initial yarn on beam was used
+        used += initial;
+      }
+    });
+
+    // Weft cones: kg_start - kg_end_now
+    orderWeft.forEach((row) => {
+      if (row.yarn_item_id !== yarnItemId) return;
+      const rawCancel = weftCancelKgEnd[row.id];
+      let end: number | null = null;
+      if (rawCancel && rawCancel.trim() !== "") {
+        const v = parseFloat(rawCancel);
+        if (!isNaN(v)) end = v;
+      } else if (row.kg_end != null) {
+        end = Number(row.kg_end);
+      }
+      if (end != null) {
+        const c = Number(row.kg_start) - end;
+        if (c > 0) used += c;
+      }
+    });
+
+    // Extra weft used that was not recorded as a cone on the production page
+    const extraRaw = extraWeftUsed[yarnItemId];
+    if (extraRaw && extraRaw.trim() !== "") {
+      const extraVal = parseFloat(extraRaw);
+      if (!isNaN(extraVal) && extraVal > 0) {
+        used += extraVal;
+      }
+    }
+
+    return used;
+  }
+
+  const yarnSummary: YarnSummaryRow[] = useMemo(() => {
+    const rows: YarnSummaryRow[] = [];
+    issuedPerYarn.forEach((issuedQty, yarnItemId) => {
+      const consumedQty = computeUsedForYarn(yarnItemId);
+      const sampleIssue = yarnIssues.find((i) => i.yarn_item_id === yarnItemId);
+      const name = sampleIssue?.yarn_items?.name || "N/A";
+      const uom = sampleIssue?.uom || "kg";
+      rows.push({
+        yarn_item_id: yarnItemId,
+        name,
+        issued: issuedQty,
+        defaultConsumed: consumedQty,
+        uom,
+      });
+    });
+    return rows;
+  }, [issuedPerYarn, yarnIssues, orderBeams, orderWeft, beamCancelWeights, weftCancelKgEnd]);
 
   async function handleAddBeamLoading(e: React.FormEvent) {
     e.preventDefault();
@@ -1070,6 +1165,14 @@ export default function BaseFabricOrderDetailPage() {
                 <span className="print:font-semibold print:text-slate-900">Status:</span>{" "}
                 <span className="print:text-slate-700">{order.status}</span>
               </div>
+              {order.actual_start_at && (
+                <div>
+                  <span className="print:font-semibold print:text-slate-900">Start Date:</span>{" "}
+                  <span className="print:text-slate-700">
+                    {new Date(order.actual_start_at).toLocaleString("en-ZA")}
+                  </span>
+                </div>
+              )}
               {order.estimated_completion_at && (
                 <div>
                   <span className="print:font-semibold print:text-slate-900">
@@ -2238,10 +2341,10 @@ export default function BaseFabricOrderDetailPage() {
               <p className="text-sm font-semibold text-amber-900 mb-2">Warning: This action will:</p>
               <ul className="list-disc list-inside space-y-1 text-sm text-amber-800">
                 <li>Cancel the production order (Order #{order.order_no})</li>
-                <li>Reverse all yarn transactions (create RETURN transactions)</li>
+                <li>Return only the unused yarn balance to store (based on beams & weft usage)</li>
                 <li>Delete all beam loadings</li>
                 <li>Delete all weft entries</li>
-                <li>Delete all base fabric rolls created for this order</li>
+                <li>Delete all base fabric rolls created for this order that are not marked to be kept</li>
               </ul>
             </div>
 
@@ -2250,6 +2353,65 @@ export default function BaseFabricOrderDetailPage() {
               <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
                 <h4 className="mb-3 text-sm font-semibold text-slate-900">Raw Materials Linked to This Order:</h4>
                 
+                {/* Yarn Summary (Issued / Used / Extra Weft / Balance) */}
+                {yarnSummary.length > 0 && (
+                  <div className="mb-4">
+                    <p className="mb-2 text-xs font-semibold text-slate-700">
+                      Yarn Summary (kg) – based on beam cancellation weights, weft cone end weights, and any extra unrecorded weft; only the balance will be returned
+                    </p>
+                    <div className="max-h-32 overflow-y-auto rounded border border-slate-200 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left">Yarn</th>
+                            <th className="px-2 py-1.5 text-right">Issued ({yarnSummary[0].uom})</th>
+                            <th className="px-2 py-1.5 text-right">Used ({yarnSummary[0].uom})</th>
+                            <th className="px-2 py-1.5 text-right">Extra Weft Used ({yarnSummary[0].uom})</th>
+                            <th className="px-2 py-1.5 text-right">Balance to Return ({yarnSummary[0].uom})</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {yarnSummary.map((row) => {
+                            const autoUsed = Math.min(row.defaultConsumed, row.issued);
+                            const extraRaw = extraWeftUsed[row.yarn_item_id];
+                            const extraParsed =
+                              extraRaw && extraRaw.trim() !== "" ? parseFloat(extraRaw) : 0;
+                            const extra = !isNaN(extraParsed) && extraParsed > 0 ? extraParsed : 0;
+                            const totalUsed = Math.min(autoUsed + extra, row.issued);
+                            const balance = row.issued - totalUsed;
+                            return (
+                              <tr key={row.yarn_item_id} className="border-b border-slate-100">
+                                <td className="px-2 py-1.5">{row.name}</td>
+                                <td className="px-2 py-1.5 text-right">{row.issued.toFixed(3)}</td>
+                                <td className="px-2 py-1.5 text-right">{autoUsed.toFixed(3)}</td>
+                                <td className="px-2 py-1.5 text-right">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.001"
+                                    className="w-24 rounded border border-slate-200 px-1.5 py-0.5 text-right text-xs"
+                                    placeholder="Extra weft"
+                                    value={extraWeftUsed[row.yarn_item_id] ?? ""}
+                                    onChange={(e) =>
+                                      setExtraWeftUsed((prev) => ({
+                                        ...prev,
+                                        [row.yarn_item_id]: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5 text-right">
+                                  {balance > 0 ? balance.toFixed(3) : "0.000"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {/* Yarn Transactions */}
                 {yarnIssues.length > 0 && (
                   <div className="mb-3">
@@ -2290,6 +2452,7 @@ export default function BaseFabricOrderDetailPage() {
                             <th className="px-2 py-1.5 text-left">Beam</th>
                             <th className="px-2 py-1.5 text-left">Yarn</th>
                             <th className="px-2 py-1.5 text-right">Weight Ready (kg)</th>
+                            <th className="px-2 py-1.5 text-right">Beam Weight Now (kg)</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2298,6 +2461,22 @@ export default function BaseFabricOrderDetailPage() {
                               <td className="px-2 py-1.5">{beam.weaving_beams?.beam_no || "—"}</td>
                               <td className="px-2 py-1.5">{beam.yarn_items?.name || "—"}</td>
                               <td className="px-2 py-1.5 text-right">{beam.weight_ready_kg.toFixed(3)}</td>
+                              <td className="px-2 py-1.5 text-right">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.001"
+                                  className="w-24 rounded border border-slate-200 px-1.5 py-0.5 text-right text-xs"
+                                  placeholder="Beam now"
+                                  value={beamCancelWeights[beam.id] ?? ""}
+                                  onChange={(e) =>
+                                    setBeamCancelWeights((prev) => ({
+                                      ...prev,
+                                      [beam.id]: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2318,6 +2497,7 @@ export default function BaseFabricOrderDetailPage() {
                             <th className="px-2 py-1.5 text-left">Yarn</th>
                             <th className="px-2 py-1.5 text-right">Kg Start</th>
                             <th className="px-2 py-1.5 text-right">Kg End</th>
+                            <th className="px-2 py-1.5 text-right">Kg End Now</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2327,6 +2507,22 @@ export default function BaseFabricOrderDetailPage() {
                               <td className="px-2 py-1.5">{weft.yarn_items?.name || "—"}</td>
                               <td className="px-2 py-1.5 text-right">{weft.kg_start.toFixed(3)}</td>
                               <td className="px-2 py-1.5 text-right">{weft.kg_end?.toFixed(3) || "—"}</td>
+                              <td className="px-2 py-1.5 text-right">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.001"
+                                  className="w-24 rounded border border-slate-200 px-1.5 py-0.5 text-right text-xs"
+                                  placeholder="Cone now"
+                                  value={weftCancelKgEnd[weft.id] ?? ""}
+                                  onChange={(e) =>
+                                    setWeftCancelKgEnd((prev) => ({
+                                      ...prev,
+                                      [weft.id]: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2345,6 +2541,7 @@ export default function BaseFabricOrderDetailPage() {
                           <tr>
                             <th className="px-2 py-1.5 text-left">Roll No</th>
                             <th className="px-2 py-1.5 text-right">Length (m)</th>
+                            <th className="px-2 py-1.5 text-center">Keep?</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2352,6 +2549,24 @@ export default function BaseFabricOrderDetailPage() {
                             <tr key={roll.id} className="border-b border-slate-100">
                               <td className="px-2 py-1.5">{roll.roll_no || "—"}</td>
                               <td className="px-2 py-1.5 text-right">{roll.length_m.toFixed(3)}</td>
+                              <td className="px-2 py-1.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  className="h-3 w-3 rounded border-slate-300 text-teal-600 focus:ring-teal-600"
+                                  checked={rollsToKeep.has(roll.id)}
+                                  onChange={(e) => {
+                                    setRollsToKeep((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) {
+                                        next.add(roll.id);
+                                      } else {
+                                        next.delete(roll.id);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2383,6 +2598,10 @@ export default function BaseFabricOrderDetailPage() {
                   setShowCancelDialog(false);
                   setCancelReason("");
                   setError(null);
+                  setBeamCancelWeights({});
+                  setWeftCancelKgEnd({});
+                  setExtraWeftUsed({});
+                  setRollsToKeep(new Set());
                 }}
                 disabled={isCancelling}
               >
