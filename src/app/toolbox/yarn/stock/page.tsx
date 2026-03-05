@@ -110,18 +110,19 @@ export default function YarnStockPage() {
           const issued = issuedByItem[item.yarn_item_id] ?? 0;
           const consumed = consumedByItem[item.yarn_item_id] ?? 0;
           const withDept = Math.max(0, issued - consumed);
-          const allocated = allocatedByItem[item.yarn_item_id] ?? 0;
-          // "Available in Dept" should reflect what's physically left in the department storeroom.
-          // Allocations are informational only (do not reduce physical availability).
-          const availableInDept = withDept;
+          const allocatedTotal = allocatedByItem[item.yarn_item_id] ?? 0;
+          // Yarn currently allocated from department to orders but not yet consumed
+          const allocatedInDept = Math.max(0, allocatedTotal - consumed);
+          // Yarn physically in department that is not yet allocated to any order
+          const unallocatedInDept = Math.max(0, withDept - allocatedInDept);
           return {
             ...item,
             stock_qty: Number(item.stock_qty || 0),
             issued_qty: issued,
             consumed_qty: consumed,
             with_department_qty: withDept,
-            allocated_to_orders_qty: allocated,
-            available_in_dept_qty: availableInDept,
+            allocated_to_orders_qty: allocatedInDept,
+            available_in_dept_qty: unallocatedInDept,
             yarn_items: Array.isArray(item.yarn_items) ? item.yarn_items[0] : item.yarn_items,
           };
         }) as YarnStockItem[];
@@ -157,7 +158,8 @@ export default function YarnStockPage() {
                 });
 
                 const avgPrice = totalQty > 0 ? totalCost / totalQty : 0;
-                const valuation = item.stock_qty * avgPrice;
+                const totalHeldQty = item.stock_qty + (item.with_department_qty ?? 0);
+                const valuation = totalHeldQty * avgPrice;
 
                 return {
                   ...item,
@@ -270,7 +272,7 @@ export default function YarnStockPage() {
       const totalIssued = stockItems.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
       const totalConsumed = stockItems.reduce((sum, item) => sum + (item.consumed_qty ?? 0), 0);
       const totalWithDept = stockItems.reduce((sum, item) => sum + (item.with_department_qty ?? 0), 0);
-      const totalAvailableInDept = stockItems.reduce((sum, item) => sum + (item.available_in_dept_qty ?? 0), 0);
+      const totalUnallocatedInDept = stockItems.reduce((sum, item) => sum + (item.available_in_dept_qty ?? 0), 0);
       const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
 
       // Cover page: 2-column summary table spanning the page
@@ -281,7 +283,7 @@ export default function YarnStockPage() {
           [`Generated: ${reportDate}`, `Total Items: ${totalItems}`],
           [`Total In Store: ${totalInStore.toFixed(3)}`, `Total Issued: ${totalIssued.toFixed(3)}`],
           [`Total Consumed: ${totalConsumed.toFixed(3)}`, `Total In Dept: ${totalWithDept.toFixed(3)}`],
-          [``, `Available in Dept: ${totalAvailableInDept.toFixed(3)}`],
+          [``, `Unallocated in Dept: ${totalUnallocatedInDept.toFixed(3)}`],
           [`Total Valuation: R ${totalValuation.toFixed(2)}`, ""],
         ],
         startY: summaryStartY,
@@ -311,10 +313,9 @@ export default function YarnStockPage() {
         item.yarn_items?.name || "N/A",
         item.yarn_items?.denier ? `${item.yarn_items.denier}D` : "-",
         item.stock_qty.toFixed(3),
-        (item.issued_qty ?? 0).toFixed(3),
-        (item.consumed_qty ?? 0).toFixed(3),
-        (item.with_department_qty ?? 0).toFixed(3),
         (item.available_in_dept_qty ?? 0).toFixed(3),
+        (item.allocated_to_orders_qty ?? 0).toFixed(3),
+        (item.with_department_qty ?? 0).toFixed(3),
         item.yarn_items?.uom || "kg",
         item.avg_price_zar && item.avg_price_zar > 0 ? `R ${item.avg_price_zar.toFixed(4)}` : "-",
         item.valuation_zar && item.valuation_zar > 0 ? `R ${item.valuation_zar.toFixed(2)}` : "-",
@@ -343,7 +344,7 @@ export default function YarnStockPage() {
       });
 
       autoTable(doc, {
-        head: [["Yarn Name", "Denier", "In Store", "Issued", "Consumed", "In Dept", "Avail Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
+        head: [["Yarn Name", "Denier", "In Store", "Unallocated In Dept", "Allocated In Dept", "Total In Dept", "UoM", "Avg Price (ZAR)", "Valuation (ZAR)"]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
@@ -472,12 +473,6 @@ export default function YarnStockPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Link
-            href="/toolbox/yarn/stocktake"
-            className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
-          >
-            Month-end Stocktake
-          </Link>
           <Button
             variant="primary"
             onClick={generatePDF}
@@ -545,16 +540,13 @@ export default function YarnStockPage() {
                     In Store
                   </th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    Issued
+                    Unallocated in Dept
                   </th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    Consumed
+                    Allocated in Dept
                   </th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">
                     Total in Dept
-                  </th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    Available in Dept
                   </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     UoM
@@ -592,16 +584,13 @@ export default function YarnStockPage() {
                       {item.stock_qty?.toFixed(3) ?? "0.000"}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
-                      {(item.issued_qty ?? 0).toFixed(3)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-700">
-                      {(item.consumed_qty ?? 0).toFixed(3)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-700">
-                      {(item.with_department_qty ?? 0).toFixed(3)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-900">
                       {(item.available_in_dept_qty ?? 0).toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {(item.allocated_to_orders_qty ?? 0).toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {(item.with_department_qty ?? 0).toFixed(3)}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {item.yarn_items?.uom || "kg"}
