@@ -107,6 +107,19 @@ interface YarnSummaryRow {
   uom: string;
 }
 
+interface AvailableCancelledBeam {
+  orderId: string;
+  orderNo: string | null;
+  orderStatus: string;
+  orderBeamId: string;
+  beamId: string;
+  beamNo: string | null;
+  yarnItemId: string;
+  yarnName: string | null;
+  remainingReadyKg: number;
+  remainingNetKg: number;
+}
+
 export default function BaseFabricOrderDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -114,6 +127,7 @@ export default function BaseFabricOrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [yarnIssues, setYarnIssues] = useState<YarnIssue[]>([]);
+  const [yarnReturns, setYarnReturns] = useState<{ yarn_item_id: string; quantity: number }[]>([]);
   const [yarnReceiptPrices, setYarnReceiptPrices] = useState<YarnPriceSample[]>([]);
   const [rollForm, setRollForm] = useState({
     length_m: "",
@@ -146,12 +160,18 @@ export default function BaseFabricOrderDetailPage() {
   const [beamCancelWeights, setBeamCancelWeights] = useState<Record<string, string>>({});
   const [weftCancelKgEnd, setWeftCancelKgEnd] = useState<Record<string, string>>({});
   const [extraWeftUsed, setExtraWeftUsed] = useState<Record<string, string>>({});
+  const [availableCancelledBeams, setAvailableCancelledBeams] = useState<AvailableCancelledBeam[]>([]);
+  const [selectedCancelledBeam, setSelectedCancelledBeam] = useState<AvailableCancelledBeam | null>(null);
 
   useEffect(() => {
     if (orderId) {
       fetchOrderData();
     }
   }, [orderId]);
+
+  useEffect(() => {
+    fetchAvailableCancelledBeams();
+  }, []);
 
   async function fetchOrderData() {
     try {
@@ -206,7 +226,7 @@ export default function BaseFabricOrderDetailPage() {
       if (rollsError) throw rollsError;
       setRolls((rollsData as Roll[]) || []);
 
-      // Fetch yarn issues and department allocations linked to this order
+      // Fetch yarn issues linked to this order
       const { data: issuesData, error: issuesError } = await supabaseBrowserClient
         .from("yarn_transactions")
         .select(
@@ -233,6 +253,22 @@ export default function BaseFabricOrderDetailPage() {
           ...row,
           yarn_items: Array.isArray(row.yarn_items) ? row.yarn_items[0] : row.yarn_items,
         })) as YarnIssue[]
+      );
+
+      // Fetch yarn returns linked specifically to this order (used for cancelled-order fallback)
+      const { data: returnsData, error: returnsError } = await supabaseBrowserClient
+        .from("yarn_transactions")
+        .select("yarn_item_id, quantity")
+        .eq("base_fabric_order_id", orderId)
+        .eq("transaction_type", "RETURN");
+
+      if (returnsError) throw returnsError;
+
+      setYarnReturns(
+        (returnsData as any[]).map((row) => ({
+          yarn_item_id: row.yarn_item_id,
+          quantity: Number(row.quantity || 0),
+        })) || []
       );
 
       // Beam loadings and weft for this order
@@ -537,61 +573,7 @@ export default function BaseFabricOrderDetailPage() {
     setSuccess(null);
 
     try {
-      // Step 1: Reverse yarn balance based on beam/weft cancellation weights (Issued - Used).
-      // For each yarn_item_id: return only the unused balance to store.
-      const returnTransactions: {
-        yarn_item_id: string;
-        transaction_type: string;
-        quantity: number;
-        uom: string;
-        notes: string;
-        base_fabric_order_id: string;
-      }[] = [];
-
-      yarnSummary.forEach((row) => {
-        const used = row.defaultConsumed;
-        const toReturn = row.issued - used;
-        if (toReturn > 0.000001) {
-          returnTransactions.push({
-            yarn_item_id: row.yarn_item_id,
-            transaction_type: "RETURN",
-            quantity: toReturn,
-            uom: row.uom,
-            notes: `Reversal (balance): Order ${order.order_no} cancelled - ${cancelReason.trim()}`,
-            base_fabric_order_id: orderId, // Link to cancelled order for audit
-          });
-        }
-      });
-
-      if (returnTransactions.length > 0) {
-        const { error: returnError } = await supabaseBrowserClient
-          .from("yarn_transactions")
-          .insert(returnTransactions);
-
-        if (returnError) throw returnError;
-      }
-
-      // Step 2: Delete beam loadings (cascade will handle this, but we'll do it explicitly for clarity)
-      if (orderBeams.length > 0) {
-        const { error: beamsError } = await supabaseBrowserClient
-          .from("base_fabric_order_beams")
-          .delete()
-          .eq("base_fabric_order_id", orderId);
-
-        if (beamsError) throw beamsError;
-      }
-
-      // Step 3: Delete weft records
-      if (orderWeft.length > 0) {
-        const { error: weftError } = await supabaseBrowserClient
-          .from("base_fabric_order_weft")
-          .delete()
-          .eq("base_fabric_order_id", orderId);
-
-        if (weftError) throw weftError;
-      }
-
-      // Step 4: Delete base fabric rolls that are not marked to be kept
+      // Step 1: Delete base fabric rolls that are not marked to be kept
       if (rolls.length > 0) {
         const idsToDelete = rolls.filter((roll) => !rollsToKeep.has(roll.id)).map((roll) => roll.id);
         if (idsToDelete.length > 0) {
@@ -604,12 +586,108 @@ export default function BaseFabricOrderDetailPage() {
         }
       }
 
-      // Step 5: Update order status to CANCELLED with reason
+      // Step 2: Build a cancellation snapshot for yarn consumption & cost
+      // This uses the beam/weft cancellation weights and any extra weft entered on the dialog.
+      const perYarnSnapshot: Record<
+        string,
+        {
+          name: string;
+          uom: string;
+          issuedKg: number;
+          usedKg: number;
+          withDeptKg: number;
+          avgPriceZar: number;
+          costZar: number;
+        }
+      > = {};
+
+      const perBeamSnapshot: Record<
+        string,
+        {
+          remainingReadyKg: number;
+          remainingNetKg: number;
+        }
+      > = {};
+
+      let snapshotTotalIssuedKg = 0;
+      let snapshotTotalConsumedKg = 0;
+      let snapshotTotalYarnCostZar = 0;
+
+      yarnSummary.forEach((row) => {
+        const autoUsed = Math.min(row.defaultConsumed, row.issued);
+        const extraRaw = extraWeftUsed[row.yarn_item_id];
+        const extraParsed = extraRaw && extraRaw.trim() !== "" ? parseFloat(extraRaw) : 0;
+        const extra = !isNaN(extraParsed) && extraParsed > 0 ? extraParsed : 0;
+        const usedKg = Math.min(autoUsed + extra, row.issued);
+        const issuedKg = row.issued;
+        const withDeptKg = Math.max(0, issuedKg - usedKg);
+        const avgPrice = avgUnitPriceByYarn.get(row.yarn_item_id) || 0;
+        const costZar = usedKg * avgPrice;
+
+        snapshotTotalIssuedKg += issuedKg;
+        snapshotTotalConsumedKg += usedKg;
+        snapshotTotalYarnCostZar += costZar;
+
+        perYarnSnapshot[row.yarn_item_id] = {
+          name: row.name,
+          uom: row.uom,
+          issuedKg,
+          usedKg,
+          withDeptKg,
+          avgPriceZar: avgPrice,
+          costZar,
+        };
+      });
+
+      // Beam-level remaining weights at cancellation (warp on beams in department)
+      orderBeams.forEach((row) => {
+        const tare = row.weaving_beams?.tare_weight_kg ?? 0;
+        const initialReady = Number(row.weight_ready_kg) || 0;
+        const rawCancel = beamCancelWeights[row.id];
+        let remainingReady = initialReady;
+        if (rawCancel && rawCancel.trim() !== "") {
+          const parsed = parseFloat(rawCancel);
+          if (!isNaN(parsed) && parsed >= 0) {
+            remainingReady = parsed;
+          }
+        } else {
+          // If no cancellation weight provided for this beam, assume all yarn used (beam back to tare only)
+          remainingReady = tare;
+        }
+        const remainingNet = Math.max(0, remainingReady - tare);
+        perBeamSnapshot[row.id] = {
+          remainingReadyKg: remainingReady,
+          remainingNetKg: remainingNet,
+        };
+      });
+
+      const snapshotYarnKgPerM = totalFabricM > 0 ? snapshotTotalConsumedKg / totalFabricM : null;
+      const snapshotYarnCostPerM = totalFabricM > 0 ? snapshotTotalYarnCostZar / totalFabricM : null;
+
+      const cancelSnapshot = {
+        version: 1,
+        totalIssuedKg: snapshotTotalIssuedKg,
+        totalConsumedKg: snapshotTotalConsumedKg,
+        totalYarnCostZar: snapshotTotalYarnCostZar,
+        yarnKgPerM: snapshotYarnKgPerM,
+        yarnCostPerM: snapshotYarnCostPerM,
+        perYarn: perYarnSnapshot,
+        perBeam: perBeamSnapshot,
+      };
+
+      const snapshotLine = `CANCEL_SNAPSHOT:${JSON.stringify(cancelSnapshot)}`;
+      const cancelHeader = `CANCELLED: ${cancelReason.trim()}`;
+      let newNotes = `${cancelHeader}\n${snapshotLine}`;
+      if (order.notes) {
+        newNotes += `\n\nPrevious notes: ${order.notes}`;
+      }
+
+      // Step 3: Update order status to CANCELLED with reason + snapshot
       const { error: updateError } = await supabaseBrowserClient
         .from("base_fabric_orders")
         .update({
           status: "CANCELLED",
-          notes: `CANCELLED: ${cancelReason.trim()}` + (order.notes ? `\n\nPrevious notes: ${order.notes}` : ""),
+          notes: newNotes,
         })
         .eq("id", orderId);
 
@@ -646,6 +724,14 @@ export default function BaseFabricOrderDetailPage() {
     yarnIssues.forEach((i) => m.set(i.yarn_item_id, (m.get(i.yarn_item_id) || 0) + i.quantity));
     return m;
   }, [yarnIssues]);
+
+  const returnsPerYarn: Map<string, number> = useMemo(() => {
+    const m = new Map<string, number>();
+    yarnReturns.forEach((r) => {
+      m.set(r.yarn_item_id, (m.get(r.yarn_item_id) || 0) + r.quantity);
+    });
+    return m;
+  }, [yarnReturns]);
 
   const consumedPerYarnCurrent: Map<string, number> = useMemo(() => {
     const m = new Map<string, number>();
@@ -743,6 +829,18 @@ export default function BaseFabricOrderDetailPage() {
     if (isNaN(weightReady) || weightReady < 0) {
       setBeamFormError("Weight when ready (kg) must be a non-negative number.");
       return;
+    }
+    if (selectedCancelledBeam && selectedCancelledBeam.beamId === beamId) {
+      const expected = selectedCancelledBeam.remainingReadyKg;
+      const diff = Math.abs(weightReady - expected);
+      if (diff > 0.005) {
+        setBeamFormError(
+          `This beam must be used as a whole unit from floor stock. Expected weight ${expected.toFixed(
+            3,
+          )} kg, but you entered ${weightReady.toFixed(3)} kg.`,
+        );
+        return;
+      }
     }
     const beam = beams.find((b) => b.id === beamId);
     const tare = beam ? Number(beam.tare_weight_kg) : 0;
@@ -1028,13 +1126,182 @@ export default function BaseFabricOrderDetailPage() {
   const totalConsumedKg = Array.from(consumedByYarn.values()).reduce((s, k) => s + k, 0);
   const withDepartmentKg = Math.max(0, totalIssuedKg - totalConsumedKg);
 
+  type CancelSnapshot = {
+    version: number;
+    totalIssuedKg: number;
+    totalConsumedKg: number;
+    totalYarnCostZar: number;
+    yarnKgPerM: number | null;
+    yarnCostPerM: number | null;
+    perYarn: Record<
+      string,
+      {
+        name: string;
+        uom: string;
+        issuedKg: number;
+        usedKg: number;
+        withDeptKg: number;
+        avgPriceZar: number;
+        costZar: number;
+      }
+    >;
+    perBeam?: Record<
+      string,
+      {
+        remainingReadyKg: number;
+        remainingNetKg: number;
+      }
+    >;
+  };
+
+  function parseCancelSnapshot(notes: string | null | undefined): CancelSnapshot | null {
+    if (!notes) return null;
+    const lines = notes.split("\n");
+    const line = lines.find((l) => l.trim().startsWith("CANCEL_SNAPSHOT:"));
+    if (!line) return null;
+    const jsonPart = line.trim().slice("CANCEL_SNAPSHOT:".length).trim();
+    if (!jsonPart) return null;
+    try {
+      const parsed = JSON.parse(jsonPart) as CancelSnapshot;
+      if (!parsed || typeof parsed !== "object") return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  const cancelSnapshot = order.status === "CANCELLED" ? parseCancelSnapshot(order.notes) : null;
+
+  async function fetchAvailableCancelledBeams() {
+    try {
+      const { data, error } = await supabaseBrowserClient
+        .from("base_fabric_orders")
+        .select(
+          `
+          id,
+          order_no,
+          status,
+          notes,
+          base_fabric_order_beams (
+            id,
+            beam_id,
+            yarn_item_id,
+            weight_ready_kg,
+            weaving_beams:beam_id ( beam_no, tare_weight_kg ),
+            yarn_items:yarn_item_id ( name )
+          )
+        `
+        )
+        .eq("status", "CANCELLED")
+        .eq("is_outsourced", false);
+
+      if (error || !data) {
+        console.error("Failed to fetch cancelled beams", error);
+        return;
+      }
+
+      const list: AvailableCancelledBeam[] = [];
+
+      (data as any[]).forEach((orderRow) => {
+        const snapshot = parseCancelSnapshot(orderRow.notes);
+        if (!snapshot?.perBeam) return;
+        const beamsRows = Array.isArray(orderRow.base_fabric_order_beams)
+          ? orderRow.base_fabric_order_beams
+          : [];
+        beamsRows.forEach((row: any) => {
+          const snap = snapshot.perBeam?.[row.id];
+          if (!snap || !(snap.remainingNetKg > 0)) return;
+          const beamInfo = Array.isArray(row.weaving_beams)
+            ? row.weaving_beams[0]
+            : row.weaving_beams;
+          const yarnInfo = Array.isArray(row.yarn_items) ? row.yarn_items[0] : row.yarn_items;
+          list.push({
+            orderId: orderRow.id as string,
+            orderNo: orderRow.order_no ?? null,
+            orderStatus: orderRow.status as string,
+            orderBeamId: row.id as string,
+            beamId: row.beam_id as string,
+            beamNo: beamInfo?.beam_no ?? null,
+            yarnItemId: row.yarn_item_id as string,
+            yarnName: yarnInfo?.name ?? null,
+            remainingReadyKg: Number(snap.remainingReadyKg || 0),
+            remainingNetKg: Number(snap.remainingNetKg || 0),
+          });
+        });
+      });
+
+      // Only show beams that still have a meaningful remaining warp
+      setAvailableCancelledBeams(list.filter((b) => b.remainingNetKg > 0.0001));
+    } catch (err) {
+      console.error("Error computing available cancelled beams", err);
+    }
+  }
+
+  // Fallback for older cancelled orders (before snapshot implementation) that created RETURNs
+  let fallbackConsumedFromReturns: number | null = null;
+  let fallbackTotalYarnCostZar: number | null = null;
+  let fallbackYarnKgPerM: number | null = null;
+  let fallbackYarnCostPerM: number | null = null;
+
+  if (order.status === "CANCELLED" && !cancelSnapshot) {
+    let consumedKg = 0;
+    let totalCostZar = 0;
+
+    issuedPerYarn.forEach((issuedQty, yarnItemId) => {
+      const returnedQty = returnsPerYarn.get(yarnItemId) || 0;
+      const usedQty = Math.max(0, issuedQty - returnedQty);
+      if (usedQty > 0) {
+        consumedKg += usedQty;
+        const avgPrice = avgUnitPriceByYarn.get(yarnItemId) || 0;
+        totalCostZar += usedQty * avgPrice;
+      }
+    });
+
+    fallbackConsumedFromReturns = consumedKg;
+    fallbackTotalYarnCostZar = totalCostZar;
+    fallbackYarnKgPerM = totalFabricM > 0 ? consumedKg / totalFabricM : null;
+    fallbackYarnCostPerM = totalFabricM > 0 ? totalCostZar / totalFabricM : null;
+  }
+
+  const effectiveTotalConsumedKg =
+    cancelSnapshot && typeof cancelSnapshot.totalConsumedKg === "number"
+      ? cancelSnapshot.totalConsumedKg
+      : fallbackConsumedFromReturns !== null
+        ? fallbackConsumedFromReturns
+        : totalConsumedKg;
+
+  const effectiveTotalYarnCostZar =
+    cancelSnapshot && typeof cancelSnapshot.totalYarnCostZar === "number"
+      ? cancelSnapshot.totalYarnCostZar
+      : fallbackTotalYarnCostZar;
+
+  const effectiveYarnKgPerM =
+    cancelSnapshot && typeof cancelSnapshot.yarnKgPerM === "number"
+      ? cancelSnapshot.yarnKgPerM
+      : fallbackYarnKgPerM;
+
+  const effectiveYarnCostPerM =
+    cancelSnapshot && typeof cancelSnapshot.yarnCostPerM === "number"
+      ? cancelSnapshot.yarnCostPerM
+      : fallbackYarnCostPerM;
+
+  const effectiveWithDepartmentKg =
+    cancelSnapshot && typeof cancelSnapshot.totalIssuedKg === "number"
+      ? Math.max(0, cancelSnapshot.totalIssuedKg - cancelSnapshot.totalConsumedKg)
+      : fallbackConsumedFromReturns !== null
+        ? Math.max(0, totalIssuedKg - fallbackConsumedFromReturns)
+        : withDepartmentKg;
+
   // Cost based on consumed yarn (not issued)
-  const totalYarnCostZar = Array.from(consumedByYarn.entries()).reduce((sum, [yarnItemId, kg]) => {
+  const totalYarnCostZarRaw = Array.from(consumedByYarn.entries()).reduce((sum, [yarnItemId, kg]) => {
     const avgPrice = avgUnitPriceByYarn.get(yarnItemId) || 0;
     return sum + kg * avgPrice;
   }, 0);
-  const yarnKgPerM = totalFabricM > 0 ? totalConsumedKg / totalFabricM : null;
-  const yarnCostPerM = totalFabricM > 0 ? totalYarnCostZar / totalFabricM : null;
+  const totalYarnCostZar = effectiveTotalYarnCostZar ?? totalYarnCostZarRaw;
+  const yarnKgPerMRaw = totalFabricM > 0 ? totalConsumedKg / totalFabricM : null;
+  const yarnCostPerMRaw = totalFabricM > 0 ? totalYarnCostZarRaw / totalFabricM : null;
+  const yarnKgPerM = effectiveYarnKgPerM ?? yarnKgPerMRaw;
+  const yarnCostPerM = effectiveYarnCostPerM ?? yarnCostPerMRaw;
 
   return (
     <div className="grid gap-8">
@@ -1534,13 +1801,15 @@ export default function BaseFabricOrderDetailPage() {
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm font-semibold text-slate-600">Yarn consumed (beams + cones)</p>
             <p className="mt-1 text-lg font-semibold text-slate-900">
-              {totalConsumedKg.toFixed(3)} kg
+              {effectiveTotalConsumedKg.toFixed(3)} kg
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm font-semibold text-slate-600">Total yarn cost (ZAR)</p>
             <p className="mt-1 text-lg font-semibold text-slate-900">
-              {totalYarnCostZar.toFixed(2)} ZAR
+              {effectiveTotalYarnCostZar != null
+                ? `${(effectiveTotalYarnCostZar).toFixed(2)} ZAR`
+                : `${totalYarnCostZar.toFixed(2)} ZAR`}
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -1564,7 +1833,7 @@ export default function BaseFabricOrderDetailPage() {
         </div>
 
         {/* Issued vs Consumed */}
-        {totalIssuedKg > 0 || totalConsumedKg > 0 ? (
+        {totalIssuedKg > 0 || effectiveTotalConsumedKg > 0 ? (
           <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50/50 p-4">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">Issued vs Consumed</h3>
             <div className="grid gap-3 sm:grid-cols-3 text-sm">
@@ -1574,11 +1843,15 @@ export default function BaseFabricOrderDetailPage() {
               </div>
               <div>
                 <span className="text-slate-600">Consumed (beams + cones):</span>{" "}
-                <span className="font-semibold text-slate-900">{totalConsumedKg.toFixed(3)} kg</span>
+                <span className="font-semibold text-slate-900">
+                  {effectiveTotalConsumedKg.toFixed(3)} kg
+                </span>
               </div>
               <div>
                 <span className="text-slate-600">With department (on cones/beams):</span>{" "}
-                <span className="font-semibold text-slate-900">{withDepartmentKg.toFixed(3)} kg</span>
+                <span className="font-semibold text-slate-900">
+                  {effectiveWithDepartmentKg.toFixed(3)} kg
+                </span>
               </div>
             </div>
           </div>
@@ -1628,6 +1901,60 @@ export default function BaseFabricOrderDetailPage() {
           </p>
         )}
       </motion.section>
+      )}
+
+      {/* Warp Beams at Cancellation (available in department) – only for cancelled orders with snapshot */}
+      {!order.is_outsourced && order.status === "CANCELLED" && cancelSnapshot?.perBeam && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.08 }}
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
+        >
+          <h2 className="mb-3 text-xl font-semibold text-slate-900">
+            Warp Beams at Cancellation (Available in Department)
+          </h2>
+          <p className="mb-3 text-sm text-slate-600">
+            Remaining warp on beams at the time of cancellation. These beams should be reused as whole
+            units on future orders (no partial beam usage).
+          </p>
+          {orderBeams.length === 0 ? (
+            <p className="text-sm text-slate-600">No beam loadings recorded for this order.</p>
+          ) : (
+            <div className="overflow-x-auto rounded border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold text-slate-900">Beam</th>
+                    <th className="px-4 py-2 text-left font-semibold text-slate-900">Yarn</th>
+                    <th className="px-4 py-2 text-right font-semibold text-slate-900">Remaining warp (kg)</th>
+                    <th className="px-4 py-2 text-right font-semibold text-slate-900">Beam weight now (kg)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderBeams.map((row) => {
+                    const snap = cancelSnapshot.perBeam?.[row.id];
+                    if (!snap) return null;
+                    const beamNo = row.weaving_beams?.beam_no ?? "—";
+                    const yarnName = row.yarn_items?.name ?? "—";
+                    return (
+                      <tr key={row.id} className="border-t border-slate-100">
+                        <td className="px-4 py-2 text-slate-900">{beamNo}</td>
+                        <td className="px-4 py-2 text-slate-900">{yarnName}</td>
+                        <td className="px-4 py-2 text-right text-slate-900">
+                          {snap.remainingNetKg.toFixed(3)}
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-900">
+                          {snap.remainingReadyKg.toFixed(3)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </motion.section>
       )}
 
       {/* Yarn issued / allocated to this order – hidden for outsourced */}
@@ -1820,7 +2147,11 @@ export default function BaseFabricOrderDetailPage() {
                   <label className="block text-sm font-semibold text-slate-900 mb-1">Beam</label>
                   <select
                     value={beamForm.beam_id}
-                    onChange={(e) => setBeamForm((p) => ({ ...p, beam_id: e.target.value }))}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setBeamForm((p) => ({ ...p, beam_id: val }));
+                      setSelectedCancelledBeam(null);
+                    }}
                     className="w-full min-w-[260px] rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
                   >
                     <option value="">Select beam</option>
@@ -1867,6 +2198,72 @@ export default function BaseFabricOrderDetailPage() {
                   <Button type="submit" variant="primary">Add beam</Button>
                 </div>
               </form>
+              {availableCancelledBeams.length > 0 && (
+                <div className="mb-4 rounded-lg border border-dashed border-teal-300 bg-teal-50/40 p-3">
+                  <p className="mb-2 text-xs font-semibold text-slate-800">
+                    Available beams from cancelled orders (floor stock – use as whole beams)
+                  </p>
+                  <div className="max-h-40 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-teal-100/60">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left">Order</th>
+                          <th className="px-2 py-1.5 text-left">Beam</th>
+                          <th className="px-2 py-1.5 text-left">Yarn</th>
+                          <th className="px-2 py-1.5 text-right">Remaining warp (kg)</th>
+                          <th className="px-2 py-1.5 text-right">Beam weight now (kg)</th>
+                          <th className="px-2 py-1.5 text-right">Use</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availableCancelledBeams.map((b) => (
+                          <tr key={b.orderBeamId} className="border-b border-slate-100">
+                            <td className="px-2 py-1.5 text-slate-900">
+                              {b.orderNo || b.orderId}
+                            </td>
+                            <td className="px-2 py-1.5 text-slate-900">
+                              {b.beamNo || "—"}
+                            </td>
+                            <td className="px-2 py-1.5 text-slate-900">
+                              {b.yarnName || "—"}
+                            </td>
+                            <td className="px-2 py-1.5 text-right text-slate-900">
+                              {b.remainingNetKg.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1.5 text-right text-slate-900">
+                              {b.remainingReadyKg.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <button
+                                type="button"
+                                className="rounded border border-teal-500 px-2 py-0.5 text-[11px] font-semibold text-teal-700 hover:bg-teal-500 hover:text-white"
+                                onClick={() => {
+                                  setBeamForm({
+                                    beam_id: b.beamId,
+                                    yarn_item_id: b.yarnItemId,
+                                    weight_ready_kg: b.remainingReadyKg.toFixed(3),
+                                  });
+                                  setSelectedCancelledBeam(b);
+                                  setBeamFormError(null);
+                                }}
+                              >
+                                Use this beam
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {selectedCancelledBeam && (
+                    <p className="mt-2 text-[11px] text-slate-700">
+                      Selected beam {selectedCancelledBeam.beamNo || ""} from{" "}
+                      {selectedCancelledBeam.orderNo || selectedCancelledBeam.orderId} – expected whole
+                      beam weight {selectedCancelledBeam.remainingReadyKg.toFixed(3)} kg.
+                    </p>
+                  )}
+                </div>
+              )}
               {beamFormError && <p className="mb-2 text-sm text-red-600">{beamFormError}</p>}
               {orderBeams.length === 0 ? (
                 <p className="text-sm text-slate-600">No beam loadings recorded yet.</p>
