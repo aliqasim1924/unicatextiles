@@ -16,6 +16,7 @@ interface YarnStockItem {
   consumed_qty: number;
   with_department_qty: number;
   available_in_dept_qty: number;
+  allocated_to_orders_qty?: number;
   yarn_items: {
     name: string;
     denier: number | null;
