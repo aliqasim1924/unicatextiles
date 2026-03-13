@@ -1888,82 +1888,83 @@ export default function CoatingBatchDetailPage() {
                 {batchChemicals
                   .filter((chem) => chem.kind === "DYE")
                   .map((chem) => {
-                  const isEditing = editingChemicalId === chem.id;
-                  const canEdit = batch?.status !== "COMPLETED";
-                  
-                  return (
-                    <tr key={chem.id}>
-                      <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
-                        {chem.chemical_name ?? "-"}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
-                        {isEditing ? (
-                          <div className="flex items-center justify-end gap-2">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.001"
-                              value={editingQuantity}
-                              onChange={(e) => setEditingQuantity(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity));
-                                } else if (e.key === "Escape") {
-                                  handleCancelEditChemical();
-                                }
-                              }}
-                              className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                              autoFocus
-                              disabled={isUpdatingChemical}
-                            />
-                            <button
-                              onClick={() => handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity))}
-                              disabled={isUpdatingChemical}
-                              className="text-green-600 hover:text-green-800 disabled:text-slate-400"
-                              title="Save"
-                            >
-                              ✓
-                            </button>
-                            <button
-                              onClick={handleCancelEditChemical}
-                              disabled={isUpdatingChemical}
-                              className="text-red-600 hover:text-red-800 disabled:text-slate-400"
-                              title="Cancel"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-end gap-2">
-                            <span>{chem.quantity !== null ? chem.quantity.toFixed(3) : "-"}</span>
-                            {canEdit && (
+                    const isEditing = editingChemicalId === chem.id;
+                    const canEdit = batch?.status !== "COMPLETED";
+
+                    return (
+                      <tr key={chem.id}>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
+                          {chem.chemical_name ?? "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                          {isEditing ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                value={editingQuantity}
+                                onChange={(e) => setEditingQuantity(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity));
+                                  } else if (e.key === "Escape") {
+                                    handleCancelEditChemical();
+                                  }
+                                }}
+                                className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                                autoFocus
+                                disabled={isUpdatingChemical}
+                              />
                               <button
-                                onClick={() => handleStartEditChemical(chem)}
-                                className="text-blue-600 hover:text-blue-800 text-xs"
-                                title="Edit quantity"
+                                onClick={() => handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity))}
+                                disabled={isUpdatingChemical}
+                                className="text-green-600 hover:text-green-800 disabled:text-slate-400"
+                                title="Save"
                               >
-                                ✏️
+                                ✓
                               </button>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
-                        {chem.uom ?? "-"}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-sm">
-                        {canEdit ? (
-                          <button
-                            onClick={() => handleDeleteChemical(chem.id)}
-                            className="text-red-600 hover:text-red-800"
-                          >
-                            Remove
-                          </button>
-                        ) : (
-                          <span className="text-slate-400 text-xs">Locked</span>
-                        )}
-                      </td>
-                    </tr>
+                              <button
+                                onClick={handleCancelEditChemical}
+                                disabled={isUpdatingChemical}
+                                className="text-red-600 hover:text-red-800 disabled:text-slate-400"
+                                title="Cancel"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-2">
+                              <span>{chem.quantity !== null ? chem.quantity.toFixed(3) : "-"}</span>
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleStartEditChemical(chem)}
+                                  className="text-blue-600 hover:text-blue-800 text-xs"
+                                  title="Edit quantity"
+                                >
+                                  ✏️
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                          {chem.uom ?? "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm">
+                          {canEdit ? (
+                            <button
+                              onClick={() => handleDeleteChemical(chem.id)}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              Remove
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-xs">Locked</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
                   })}
               </tbody>
             </table>
