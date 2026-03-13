@@ -59,6 +59,7 @@ interface BatchChemical {
   quantity: number | null;
   uom: string | null;
   chemical_item_id: string | null;
+  kind?: "DYE" | "CHEMICAL";
 }
 
 interface AvailableChemical {
@@ -241,7 +242,16 @@ export default function CoatingBatchDetailPage() {
       // Fetch batch chemicals
       const { data: chemData, error: chemError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
-        .select("id, chemical_name, quantity, uom, chemical_item_id")
+        .select(
+          `
+          id,
+          chemical_name,
+          quantity,
+          uom,
+          chemical_item_id,
+          dye_items:chemical_item_id ( type )
+        `
+        )
         .eq("batch_id", batchId);
 
       if (chemError) throw chemError;
@@ -249,13 +259,20 @@ export default function CoatingBatchDetailPage() {
         ((chemData || []) as any[])
           // Hide "removed" chemicals (quantity set to 0 or null)
           .filter((row) => row.quantity !== null && Number(row.quantity) > 0)
-          .map((row: any) => ({
-            id: row.id,
-            chemical_name: row.chemical_name ?? null,
-            quantity: row.quantity !== null ? Number(row.quantity) : null,
-            uom: row.uom ?? null,
-            chemical_item_id: row.chemical_item_id ?? null,
-          })) as BatchChemical[]
+          .map((row: any) => {
+            const dyeInfo = Array.isArray(row.dye_items) ? row.dye_items[0] : row.dye_items;
+            const typeVal = dyeInfo?.type ? String(dyeInfo.type).toUpperCase() : null;
+            const kind: "DYE" | "CHEMICAL" =
+              typeVal && typeVal.includes("DYE") ? "DYE" : "CHEMICAL";
+            return {
+              id: row.id,
+              chemical_name: row.chemical_name ?? null,
+              quantity: row.quantity !== null ? Number(row.quantity) : null,
+              uom: row.uom ?? null,
+              chemical_item_id: row.chemical_item_id ?? null,
+              kind,
+            } as BatchChemical;
+          })
       );
 
       // Fetch available chemicals (issued to coating) with UOM from dye_items
@@ -637,7 +654,28 @@ export default function CoatingBatchDetailPage() {
       return;
     }
 
-    if (!confirm("Are you sure you want to complete production? This will close the batch and make it read-only.")) {
+    const hasAnyChemicals = batchChemicals.length > 0;
+    const hasDyes = batchChemicals.some((c) => c.kind === "DYE");
+    const hasNonDyes = batchChemicals.some((c) => c.kind !== "DYE");
+
+    if (!hasAnyChemicals) {
+      setError("Cannot complete production. At least one chemical or dye must be recorded for this batch.");
+      return;
+    }
+    if (!hasDyes) {
+      setError("Cannot complete production. At least one dye (colour pigment) must be recorded for this batch.");
+      return;
+    }
+    if (!hasNonDyes) {
+      setError("Cannot complete production. At least one non-dye chemical (binder/additive) must be recorded for this batch.");
+      return;
+    }
+
+    if (
+      !confirm(
+        "Are you sure you want to complete production? This will close the batch and make it read-only.",
+      )
+    ) {
       return;
     }
 
@@ -770,7 +808,7 @@ export default function CoatingBatchDetailPage() {
 
     setIsAddingChemical(true);
     try {
-      const { data: inserted, error: insertError } = await supabaseBrowserClient
+      const { error: insertError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
         .insert({
           batch_id: batchId,
@@ -779,36 +817,13 @@ export default function CoatingBatchDetailPage() {
           uom: newChemicalUom || "kg",
           chemical_item_id: selectedChemicalItemId || null,
         })
-        .select()
+        .select("id")
         .single();
 
       if (insertError) throw insertError;
 
-      // Add to local state without refreshing
-      const newChemical: BatchChemical = {
-        id: inserted.id,
-        chemical_name: inserted.chemical_name,
-        quantity: inserted.quantity !== null ? Number(inserted.quantity) : null,
-        uom: inserted.uom,
-        chemical_item_id: inserted.chemical_item_id,
-      };
-      setBatchChemicals([...batchChemicals, newChemical]);
-
-      // Update available chemicals - reduce remaining quantity
-      if (selectedChemicalItemId) {
-        setAvailableChemicals((prev) =>
-          prev.map((chem) => {
-            if (chem.chemical_item_id === selectedChemicalItemId) {
-              return {
-                ...chem,
-                total_allocated_to_batches: chem.total_allocated_to_batches + quantityVal,
-                remaining_for_batches: chem.remaining_for_batches - quantityVal,
-              };
-            }
-            return chem;
-          })
-        );
-      }
+      // Reload batch data so that chemicals and available stock (including dye/chemical kind) stay correct
+      await fetchData();
 
       setSuccess("Chemical added successfully.");
       setNewChemicalName("");
@@ -1832,25 +1847,31 @@ export default function CoatingBatchDetailPage() {
         )}
       </motion.section>
 
-      {/* Chemicals */}
+      {/* Dyes & Chemicals */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.15 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">
-          Chemicals ({batchChemicals.length})
-        </h2>
+        <h2 className="mb-1 text-xl font-semibold text-slate-900">Dyes &amp; Chemicals</h2>
+        <p className="mb-4 text-sm text-slate-600">
+          Record both colour dyes (pigments) and other coating chemicals used on this batch. At least one
+          dye and one other chemical are required before completing production.
+        </p>
         {batchChemicals.length === 0 ? (
-          <p className="text-slate-600">No chemicals added to this batch.</p>
-        ) : (
-          <div className="overflow-x-auto">
+          <p className="text-slate-600">No dyes or chemicals added to this batch yet.</p>
+        ) : null}
+
+        {/* Dyes table */}
+        <h3 className="mt-2 mb-2 text-sm font-semibold text-slate-900">Dyes</h3>
+        {batchChemicals.some((c) => c.kind === "DYE") ? (
+          <div className="mb-4 overflow-x-auto rounded border border-slate-200">
             <table className="w-full">
               <thead className="border-b border-slate-200 bg-slate-50">
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Chemical Name
+                    Dye Name
                   </th>
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Quantity
@@ -1864,7 +1885,9 @@ export default function CoatingBatchDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {batchChemicals.map((chem) => {
+                {batchChemicals
+                  .filter((chem) => chem.kind === "DYE")
+                  .map((chem) => {
                   const isEditing = editingChemicalId === chem.id;
                   const canEdit = batch?.status !== "COMPLETED";
                   
@@ -1941,11 +1964,124 @@ export default function CoatingBatchDetailPage() {
                         )}
                       </td>
                     </tr>
-                  );
-                })}
+                  })}
               </tbody>
             </table>
           </div>
+        ) : (
+          <p className="mb-4 text-sm text-slate-500">No dyes recorded for this batch.</p>
+        )}
+
+        {/* Other chemicals table */}
+        <h3 className="mt-4 mb-2 text-sm font-semibold text-slate-900">Other Chemicals</h3>
+        {batchChemicals.some((c) => c.kind !== "DYE") ? (
+          <div className="overflow-x-auto rounded border border-slate-200">
+            <table className="w-full">
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Chemical Name
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Quantity
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    UOM
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {batchChemicals
+                  .filter((chem) => chem.kind !== "DYE")
+                  .map((chem) => {
+                    const isEditing = editingChemicalId === chem.id;
+                    const canEdit = batch?.status !== "COMPLETED";
+
+                    return (
+                      <tr key={chem.id}>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-900">
+                          {chem.chemical_name ?? "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                          {isEditing ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                value={editingQuantity}
+                                onChange={(e) => setEditingQuantity(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity));
+                                  } else if (e.key === "Escape") {
+                                    handleCancelEditChemical();
+                                  }
+                                }}
+                                className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                                autoFocus
+                                disabled={isUpdatingChemical}
+                              />
+                              <button
+                                onClick={() =>
+                                  handleUpdateChemicalQuantity(chem.id, parseFloat(editingQuantity))
+                                }
+                                disabled={isUpdatingChemical}
+                                className="text-green-600 hover:text-green-800 disabled:text-slate-400"
+                                title="Save"
+                              >
+                                ✓
+                              </button>
+                              <button
+                                onClick={handleCancelEditChemical}
+                                disabled={isUpdatingChemical}
+                                className="text-red-600 hover:text-red-800 disabled:text-slate-400"
+                                title="Cancel"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-2">
+                              <span>{chem.quantity !== null ? chem.quantity.toFixed(3) : "-"}</span>
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleStartEditChemical(chem)}
+                                  className="text-blue-600 hover:text-blue-800 text-xs"
+                                  title="Edit quantity"
+                                >
+                                  ✏️
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+                          {chem.uom ?? "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm">
+                          {canEdit ? (
+                            <button
+                              onClick={() => handleDeleteChemical(chem.id)}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              Remove
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-xs">Locked</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">No other (non-dye) chemicals recorded for this batch.</p>
         )}
 
         {/* Add Chemical Form */}
