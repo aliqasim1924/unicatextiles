@@ -242,37 +242,49 @@ export default function CoatingBatchDetailPage() {
       // Fetch batch chemicals
       const { data: chemData, error: chemError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
-        .select(
-          `
-          id,
-          chemical_name,
-          quantity,
-          uom,
-          chemical_item_id,
-          dye_items:chemical_item_id ( type )
-        `
-        )
+        .select("id, chemical_name, quantity, uom, chemical_item_id")
         .eq("batch_id", batchId);
 
       if (chemError) throw chemError;
+
+      const chemRows = ((chemData || []) as any[]).filter(
+        (row) => row.quantity !== null && Number(row.quantity) > 0
+      );
+
+      // Build a map of dye item types to classify between DYE and CHEMICAL
+      const chemIds = chemRows
+        .map((row) => row.chemical_item_id)
+        .filter((id: string | null) => !!id) as string[];
+
+      let typeMap: Record<string, string | null> = {};
+      if (chemIds.length > 0) {
+        const { data: dyeInfoData, error: dyeInfoError } = await supabaseBrowserClient
+          .from("dye_items")
+          .select("id, type")
+          .in("id", chemIds);
+
+        if (dyeInfoError) throw dyeInfoError;
+
+        (dyeInfoData || []).forEach((row: any) => {
+          typeMap[row.id] = row.type ?? null;
+        });
+      }
+
       setBatchChemicals(
-        ((chemData || []) as any[])
-          // Hide "removed" chemicals (quantity set to 0 or null)
-          .filter((row) => row.quantity !== null && Number(row.quantity) > 0)
-          .map((row: any) => {
-            const dyeInfo = Array.isArray(row.dye_items) ? row.dye_items[0] : row.dye_items;
-            const typeVal = dyeInfo?.type ? String(dyeInfo.type).toUpperCase() : null;
-            const kind: "DYE" | "CHEMICAL" =
-              typeVal && typeVal.includes("DYE") ? "DYE" : "CHEMICAL";
-            return {
-              id: row.id,
-              chemical_name: row.chemical_name ?? null,
-              quantity: row.quantity !== null ? Number(row.quantity) : null,
-              uom: row.uom ?? null,
-              chemical_item_id: row.chemical_item_id ?? null,
-              kind,
-            } as BatchChemical;
-          })
+        chemRows.map((row: any) => {
+          const typeVal = row.chemical_item_id ? typeMap[row.chemical_item_id] : null;
+          const upper = typeVal ? String(typeVal).toUpperCase() : null;
+          const kind: "DYE" | "CHEMICAL" =
+            upper && upper.includes("DYE") ? "DYE" : "CHEMICAL";
+          return {
+            id: row.id,
+            chemical_name: row.chemical_name ?? null,
+            quantity: row.quantity !== null ? Number(row.quantity) : null,
+            uom: row.uom ?? null,
+            chemical_item_id: row.chemical_item_id ?? null,
+            kind,
+          } as BatchChemical;
+        })
       );
 
       // Fetch available chemicals (issued to coating) with UOM from dye_items
