@@ -9,6 +9,15 @@ import { Button } from "@/components/ui/Button";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+/** Reasons when adding an unrecorded dye/chemical line. Mirrors fabric stocktakes. */
+const UNRECORDED_ITEM_REASONS = [
+  { value: "Manufactured – not recorded in app", label: "Manufactured – not recorded in app" },
+  { value: "Outsourced – not recorded in app", label: "Outsourced – not recorded in app" },
+  { value: "Stock balancing – initial setup", label: "Stock balancing – initial setup" },
+  { value: "Stock balancing – quantity correction", label: "Stock balancing – quantity correction" },
+  { value: "Other", label: "Other" },
+];
+
 interface Session {
   id: string;
   name: string;
@@ -47,6 +56,13 @@ interface StockRow {
   };
 }
 
+interface DyeItemOption {
+  id: string;
+  name: string;
+  code: string | null;
+  uom: string;
+}
+
 export default function DyesStocktakeDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -54,12 +70,21 @@ export default function DyesStocktakeDetailPage() {
 
   const [session, setSession] = useState<Session | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  const [allDyeItems, setAllDyeItems] = useState<DyeItemOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [isAddingItem, setIsAddingItem] = useState(false);
+  const [addItemForm, setAddItemForm] = useState({
+    dye_item_id: "",
+    quantity: "",
+    reason: "",
+    note: "",
+  });
 
   useEffect(() => {
     if (!sessionId) return;
@@ -73,6 +98,7 @@ export default function DyesStocktakeDetailPage() {
       const [
         { data: sessionData, error: sessionError },
         { data: linesData, error: linesError },
+        { data: itemsData, error: itemsError },
       ] = await Promise.all([
         supabaseBrowserClient
           .from("dye_stocktake_sessions")
@@ -102,10 +128,16 @@ export default function DyesStocktakeDetailPage() {
           )
           .eq("session_id", sessionId)
           .order("id"),
+        supabaseBrowserClient
+          .from("dye_items")
+          .select("id, name, code, uom")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
       ]);
 
       if (sessionError) throw sessionError;
       if (linesError) throw linesError;
+      if (itemsError) throw itemsError;
 
       setSession(sessionData as Session);
       const processed = (linesData as any[])?.map((row) => ({
@@ -115,6 +147,15 @@ export default function DyesStocktakeDetailPage() {
           : row.dye_items,
       })) as Line[];
       setLines(processed || []);
+
+      setAllDyeItems(
+        ((itemsData as any[]) || []).map((item) => ({
+          id: item.id as string,
+          name: item.name as string,
+          code: (item.code as string | null) ?? null,
+          uom: (item.uom as string) || "kg",
+        })),
+      );
 
       // If no lines yet, offer to generate from current stock
       if (!linesData || (linesData as any[]).length === 0) {
@@ -238,6 +279,80 @@ export default function DyesStocktakeDetailPage() {
       hasMissingReasons: missingReason.length > 0,
     };
   }, [lines]);
+
+  async function addUnrecordedItem(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (!session) {
+      setError("Missing stocktake session.");
+      return;
+    }
+    if (session.status === "posted") {
+      setError("Cannot add items to a posted stocktake.");
+      return;
+    }
+
+    if (!addItemForm.dye_item_id.trim()) {
+      setError("Please select a chemical.");
+      return;
+    }
+
+    const quantity = parseFloat(addItemForm.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Enter a valid quantity greater than zero.");
+      return;
+    }
+
+    const reasonText =
+      addItemForm.reason === "Other" ? addItemForm.note.trim() : addItemForm.reason;
+    if (!reasonText) {
+      setError("Please select or enter a reason for this unrecorded chemical.");
+      return;
+    }
+
+    if (addItemForm.reason === "Other" && !addItemForm.note.trim()) {
+      setError("Please enter a reason in the note field when selecting Other.");
+      return;
+    }
+
+    const selectedItem =
+      allDyeItems.find((i) => i.id === addItemForm.dye_item_id) || null;
+    const uom = selectedItem?.uom || "kg";
+
+    setIsAddingItem(true);
+    try {
+      const { error: insertError } = await supabaseBrowserClient
+        .from("dye_stocktake_lines")
+        .insert({
+          session_id: session.id,
+          dye_item_id: addItemForm.dye_item_id.trim(),
+          system_qty: 0,
+          counted_qty: quantity,
+          variance_qty: quantity,
+          reason: reasonText,
+          note: addItemForm.note.trim() || null,
+        });
+
+      if (insertError) throw insertError;
+
+      setSuccess("Unrecorded chemical added. Reloading list.");
+      setShowAddItemModal(false);
+      setAddItemForm({
+        dye_item_id: "",
+        quantity: "",
+        reason: "",
+        note: "",
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error("Failed to add unrecorded chemical", err);
+      setError(err.message || "Failed to add unrecorded chemical.");
+    } finally {
+      setIsAddingItem(false);
+    }
+  }
 
   async function saveLines() {
     setIsSaving(true);
@@ -613,6 +728,14 @@ export default function DyesStocktakeDetailPage() {
           <div className="flex flex-wrap gap-3">
             <Button
               type="button"
+              variant="outline"
+              onClick={() => setShowAddItemModal(true)}
+              disabled={isLoading || session?.status === "posted"}
+            >
+              Add unrecorded chemical
+            </Button>
+            <Button
+              type="button"
               variant="secondary"
               onClick={saveLines}
               disabled={isSaving || isLoading}
@@ -749,6 +872,148 @@ export default function DyesStocktakeDetailPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {/* Modal: Add unrecorded chemical */}
+        {showAddItemModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            onClick={() => !isAddingItem && setShowAddItemModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="mb-4 text-lg font-semibold text-slate-900">
+                Add unrecorded chemical
+              </h3>
+              <p className="mb-4 text-sm text-slate-600">
+                Use this when a chemical is physically present on the floor but was
+                never recorded in the system (for example an old drum or bag that
+                was not captured in previous stocktakes).
+              </p>
+              <form onSubmit={addUnrecordedItem} className="grid gap-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Chemical <span className="text-red-600">*</span>
+                  </label>
+                  <select
+                    value={addItemForm.dye_item_id}
+                    onChange={(e) =>
+                      setAddItemForm((prev) => ({
+                        ...prev,
+                        dye_item_id: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    required
+                  >
+                    <option value="">Select chemical</option>
+                    {allDyeItems.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                        {item.code ? ` (${item.code})` : ""} [{item.uom}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Quantity to add <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={addItemForm.quantity}
+                    onChange={(e) =>
+                      setAddItemForm((prev) => ({
+                        ...prev,
+                        quantity: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    placeholder="0.000"
+                    required
+                  />
+                </div>
+                {addItemForm.dye_item_id && (
+                  <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                    {(() => {
+                      const item =
+                        allDyeItems.find((i) => i.id === addItemForm.dye_item_id) ||
+                        null;
+                      const uom = item?.uom || "kg";
+                      const qty = addItemForm.quantity || "0";
+                      return `You are adjusting: ${item?.name || "Selected chemical"} by +${qty} ${uom}.`;
+                    })()}
+                  </div>
+                )}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Reason <span className="text-red-600">*</span>
+                  </label>
+                  <select
+                    value={addItemForm.reason}
+                    onChange={(e) =>
+                      setAddItemForm((prev) => ({
+                        ...prev,
+                        reason: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    required
+                  >
+                    <option value="">Select reason</option>
+                    {UNRECORDED_ITEM_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {addItemForm.reason === "Other" && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Reason (free text) <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addItemForm.note}
+                      onChange={(e) =>
+                        setAddItemForm((prev) => ({
+                          ...prev,
+                          note: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                      placeholder="Describe reason"
+                    />
+                  </div>
+                )}
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowAddItemModal(false)}
+                    disabled={isAddingItem}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={isAddingItem}
+                    className="flex-1"
+                  >
+                    {isAddingItem ? "Adding..." : "Add chemical"}
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
           </div>
         )}
       </motion.section>
