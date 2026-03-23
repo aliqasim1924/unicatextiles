@@ -807,8 +807,10 @@ export default function CoatingBatchDetailPage() {
     setError(null);
     setSuccess(null);
 
-    if (!newChemicalName.trim()) {
-      setError("Please enter a chemical name");
+    // Block manual chemical entry. We only allow adding chemicals that come from
+    // `chemicals_available_for_coating` (issued to coating).
+    if (!selectedChemicalItemId) {
+      setError("Please select a chemical from the issued chemicals list.");
       return;
     }
 
@@ -818,16 +820,32 @@ export default function CoatingBatchDetailPage() {
       return;
     }
 
+    const issuedChemical = availableChemicals.find(
+      (c) => c.chemical_item_id === selectedChemicalItemId
+    );
+    if (!issuedChemical) {
+      setError("Selected chemical is not available for allocation on this batch.");
+      return;
+    }
+
+    if (quantityVal > issuedChemical.remaining_for_batches) {
+      setError(
+        `Not enough chemical available in coating to allocate.\n` +
+          `Requested: ${quantityVal.toFixed(3)}, available: ${issuedChemical.remaining_for_batches.toFixed(3)}.`
+      );
+      return;
+    }
+
     setIsAddingChemical(true);
     try {
       const { error: insertError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
         .insert({
           batch_id: batchId,
-          chemical_name: newChemicalName.trim(),
+          chemical_name: issuedChemical.item_name,
           quantity: quantityVal,
-          uom: newChemicalUom || "kg",
-          chemical_item_id: selectedChemicalItemId || null,
+          uom: issuedChemical.uom,
+          chemical_item_id: selectedChemicalItemId,
         })
         .select("id")
         .single();
@@ -973,6 +991,16 @@ export default function CoatingBatchDetailPage() {
     const quantityDiff = newQuantity - oldQuantity;
 
     // If increasing quantity, ensure there is enough available stock in coating
+    if (!chemicalItemId && quantityDiff > 0) {
+      // Safety: if the chemical wasn’t added from the issued list, we cannot
+      // validate "remaining_for_batches" for it.
+      setIsUpdatingChemical(false);
+      setError(
+        "Cannot increase quantity for a chemical that is not linked to an issued chemical item."
+      );
+      return;
+    }
+
     if (chemicalItemId && quantityDiff > 0) {
       const stockEntry = availableChemicals.find(
         (c) => c.chemical_item_id === chemicalItemId
@@ -2141,7 +2169,7 @@ export default function CoatingBatchDetailPage() {
                 )}
                 {chemicalSearchQuery.length > 0 && filteredChemicals.length === 0 && (
                   <p className="mt-1 text-xs text-slate-500">
-                    No matching issued chemicals found. You can still enter a custom name.
+                    No matching issued chemicals found. Please select one from the list above.
                   </p>
                 )}
               </div>
@@ -2166,6 +2194,7 @@ export default function CoatingBatchDetailPage() {
                   value={newChemicalUom}
                   onChange={(e) => setNewChemicalUom(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  disabled={!!selectedChemicalItemId}
                 >
                   <option value="kg">kg</option>
                   <option value="L">L</option>
@@ -2174,7 +2203,11 @@ export default function CoatingBatchDetailPage() {
                 </select>
               </div>
               <div className="sm:col-span-3 flex justify-end">
-                <Button type="submit" variant="primary" disabled={isAddingChemical}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={isAddingChemical || !selectedChemicalItemId}
+                >
                   {isAddingChemical ? "Adding..." : "Add Chemical"}
                 </Button>
               </div>
