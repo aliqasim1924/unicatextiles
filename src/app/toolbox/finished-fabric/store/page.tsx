@@ -27,9 +27,10 @@ export default function FinishedFabricStorePage() {
   const [awaitingReceiptRolls, setAwaitingReceiptRolls] = useState<StoreRoll[]>([]);
   const [inStoreRolls, setInStoreRolls] = useState<StoreRoll[]>([]);
   const [issuings, setIssuings] = useState<any[]>([]);
+  const [issueReturns, setIssueReturns] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"awaiting" | "inStore" | "issuings">("awaiting");
+  const [activeTab, setActiveTab] = useState<"awaiting" | "inStore" | "issuings" | "returns">("awaiting");
   const lastFetchRef = useRef<number>(0);
   const isFetchingRef = useRef<boolean>(false);
 
@@ -176,6 +177,70 @@ export default function FinishedFabricStorePage() {
       });
 
       setIssuings(mappedIssuings);
+
+      // Fetch issue returns (last 50)
+      // NOTE: We intentionally avoid embedding finished_fabric_store_issues here because
+      // PostgREST can throw "table name specified more than once" for this relationship
+      // in some environments. We'll load issues in a second query instead.
+      const { data: returnsData, error: returnsError } = await supabaseBrowserClient
+        .from("finished_fabric_store_issue_returns")
+        .select(
+          `
+          id,
+          return_no,
+          return_time,
+          reason,
+          notes,
+          issue_id,
+          finished_fabric_store_issue_return_items (
+            id,
+            length_m
+          )
+        `,
+        )
+        .order("return_time", { ascending: false })
+        .limit(50);
+
+      if (returnsError) throw returnsError;
+
+      const returnRows = (returnsData || []) as any[];
+      const issueIds = [
+        ...new Set(returnRows.map((r) => r.issue_id).filter(Boolean)),
+      ] as string[];
+
+      let issueById: Record<string, any> = {};
+      if (issueIds.length > 0) {
+        const { data: issueRows, error: issueError } = await supabaseBrowserClient
+          .from("finished_fabric_store_issues")
+          .select("id, issue_no, destination, reference")
+          .in("id", issueIds);
+        if (issueError) throw issueError;
+        (issueRows || []).forEach((row: any) => {
+          issueById[row.id] = row;
+        });
+      }
+
+      const mappedReturns = returnRows.map((ret: any) => {
+        const issue = ret.issue_id ? issueById[ret.issue_id] : null;
+        const items = ret.finished_fabric_store_issue_return_items || [];
+        const totalMeters = items.reduce(
+          (sum: number, item: any) => sum + Number(item.length_m || 0),
+          0,
+        );
+        return {
+          id: ret.id,
+          return_no: ret.return_no ?? null,
+          return_time: ret.return_time,
+          reason: ret.reason ?? null,
+          issue_no: issue?.issue_no ?? null,
+          destination: issue?.destination ?? null,
+          reference: issue?.reference ?? null,
+          rolls_count: items.length,
+          total_meters: totalMeters,
+        };
+      });
+
+      setIssueReturns(mappedReturns);
     } catch (err: any) {
       console.error("Failed to load store data", err);
       const message = err?.message || JSON.stringify(err) || "Failed to load store data.";
@@ -322,9 +387,11 @@ export default function FinishedFabricStorePage() {
               Issue from Store
             </Button>
           </Link>
-          <Button variant="secondary" className="w-full" disabled>
-            Dispatch Planning (coming soon)
-          </Button>
+          <Link href="/toolbox/finished-fabric/store/returns/new" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Return Issue Slip
+            </Button>
+          </Link>
         </div>
         <div className="mt-4 border-t border-slate-200 pt-4">
           <Link href="/toolbox/finished-fabric/store/cleanup-duplicates" className="text-sm text-amber-700 hover:text-amber-800 font-semibold">
@@ -374,6 +441,16 @@ export default function FinishedFabricStorePage() {
               }`}
             >
               Issuings ({issuings.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("returns")}
+              className={`px-4 py-2 text-sm font-semibold transition-colors ${
+                activeTab === "returns"
+                  ? "border-b-2 border-teal-700 text-teal-700"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Returns ({issueReturns.length})
             </button>
           </div>
           <Button variant="secondary" onClick={fetchData} isLoading={isLoading}>
@@ -695,6 +772,118 @@ export default function FinishedFabricStorePage() {
                             <td className="px-4 py-3">
                               <Link
                                 href={`/toolbox/finished-fabric/store/issues/${issue.id}`}
+                                className="text-teal-700 hover:text-teal-800 text-sm font-semibold"
+                              >
+                                View &amp; Print
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Returns Tab */}
+            {activeTab === "returns" && (
+              <div>
+                {issueReturns.length === 0 ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-8 text-center">
+                    <p className="text-slate-600">No issue returns recorded yet.</p>
+                    <p className="mt-2 text-sm text-slate-500">
+                      Returns will appear here after you return an issue slip.
+                    </p>
+                    <div className="mt-4">
+                      <Link href="/toolbox/finished-fabric/store/returns/new">
+                        <Button variant="primary">Return Issue Slip</Button>
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Return No
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Date/Time
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Original Issue
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Destination
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Reference
+                          </th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                            Rolls
+                          </th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                            Meters
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Reason
+                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                            Action
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {issueReturns.map((ret) => (
+                          <tr
+                            key={ret.id}
+                            className="border-b border-slate-100 hover:bg-slate-50"
+                          >
+                            <td className="px-4 py-3 font-medium text-slate-900">
+                              {ret.return_no != null
+                                ? `FFIR-${String(ret.return_no).padStart(6, "0")}`
+                                : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">
+                              {new Date(ret.return_time).toLocaleString("en-ZA", {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">
+                              {ret.issue_no != null
+                                ? `FFSI-${String(ret.issue_no).padStart(6, "0")}`
+                                : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">
+                              {ret.destination === "CUSTOMER"
+                                ? "Customer"
+                                : ret.destination === "DISPATCH"
+                                  ? "Dispatch"
+                                  : ret.destination === "INTERNAL"
+                                    ? "Internal"
+                                    : ret.destination || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">
+                              {ret.reference || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right text-slate-600">
+                              {ret.rolls_count}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-900">
+                              {Number(ret.total_meters || 0).toFixed(3)} m
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">
+                              {ret.reason || "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <Link
+                                href={`/toolbox/finished-fabric/store/returns/${ret.id}`}
                                 className="text-teal-700 hover:text-teal-800 text-sm font-semibold"
                               >
                                 View &amp; Print
