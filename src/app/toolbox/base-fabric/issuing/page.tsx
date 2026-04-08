@@ -21,6 +21,7 @@ interface AvailableRoll {
   order_no: string | null;
   loom_no: string | null;
   fabric_name: string | null;
+  effective_gsm: number | null;
 }
 
 export default function BaseFabricIssuingPage() {
@@ -64,13 +65,15 @@ export default function BaseFabricIssuingPage() {
           roll_no,
           length_m,
           cut_at,
+          actual_gsm,
           current_location,
           status,
           base_fabric_orders:base_fabric_order_id (
             order_no,
             loom_no,
             base_fabric_items:base_fabric_item_id (
-              name
+              name,
+              gsm
             )
           )
         `
@@ -101,6 +104,12 @@ export default function BaseFabricIssuingPage() {
             order_no: order?.order_no ?? null,
             loom_no: order?.loom_no ?? null,
             fabric_name: item?.name ?? null,
+            effective_gsm:
+              row.actual_gsm !== null && row.actual_gsm !== undefined
+                ? Number(row.actual_gsm)
+                : item?.gsm !== null && item?.gsm !== undefined
+                  ? Number(item.gsm)
+                  : null,
           } as AvailableRoll;
         }) || [];
 
@@ -297,6 +306,7 @@ export default function BaseFabricIssuingPage() {
                     <th className="px-4 py-3 text-left font-semibold text-slate-900">QR</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-900">Order</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-900">Loom</th>
                     <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-900">Cut Time</th>
@@ -317,6 +327,9 @@ export default function BaseFabricIssuingPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-700">{roll.order_no || "N/A"}</td>
                       <td className="px-4 py-3 text-slate-700">{roll.fabric_name || "N/A"}</td>
+                      <td className="px-4 py-3 text-right text-slate-900">
+                        {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
+                      </td>
                       <td className="px-4 py-3 text-slate-700">{roll.loom_no || "-"}</td>
                       <td className="px-4 py-3 text-right text-slate-900 font-semibold">
                         {roll.length_m.toFixed(2)}

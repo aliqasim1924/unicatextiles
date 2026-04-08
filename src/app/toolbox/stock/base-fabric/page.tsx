@@ -26,6 +26,8 @@ interface BaseFabricRoll {
   cut_at: string | null;
   order_no: string | null;
   fabric_name: string | null;
+  effective_gsm: number | null;
+  gsm_change_reason: string | null;
   loom_no: number | null;
   base_fabric_order_id?: string | null;
   is_outsourced?: boolean;
@@ -71,13 +73,16 @@ export default function BaseFabricStockPage() {
           status,
           current_location,
           cut_at,
+          actual_gsm,
+          gsm_change_reason,
           base_fabric_orders:base_fabric_order_id (
             order_no,
             loom_no,
             is_outsourced,
             purchased_cost_per_m_zar,
             base_fabric_items:base_fabric_item_id (
-              name
+              name,
+              gsm
             )
           )
         `
@@ -99,11 +104,14 @@ export default function BaseFabricStockPage() {
           status,
           current_location,
           cut_at,
+          actual_gsm,
+          gsm_change_reason,
           base_fabric_orders:base_fabric_order_id (
             order_no,
             loom_no,
             base_fabric_items:base_fabric_item_id (
-              name
+              name,
+              gsm
             )
           )
         `
@@ -135,6 +143,13 @@ export default function BaseFabricStockPage() {
             cut_at: row.cut_at,
             order_no: order?.order_no || null,
             fabric_name: item?.name || null,
+            effective_gsm:
+              row.actual_gsm !== null && row.actual_gsm !== undefined
+                ? Number(row.actual_gsm)
+                : item?.gsm !== null && item?.gsm !== undefined
+                  ? Number(item.gsm)
+                  : null,
+            gsm_change_reason: row.gsm_change_reason ?? null,
             loom_no: order?.loom_no || null,
             base_fabric_order_id: row.base_fabric_order_id || null,
             is_outsourced: order?.is_outsourced ?? false,
@@ -430,6 +445,7 @@ export default function BaseFabricStockPage() {
       const tableData = inStockRolls.map((roll) => [
         roll.roll_no || roll.qr_code || "N/A",
         roll.fabric_name || "-",
+        roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "-",
         roll.order_no || "-",
         roll.loom_no?.toString() || "-",
         roll.length_m.toFixed(3),
@@ -439,7 +455,16 @@ export default function BaseFabricStockPage() {
 
       const availableWidth = pageWidth - 2 * margin;
       autoTable(doc, {
-        head: [["Roll No", "Fabric Name", "Order No", "Loom", "Length (m)", "Cost/m (ZAR)", "Valuation (ZAR)"]],
+        head: [[
+          "Roll No",
+          "Fabric Name",
+          "GSM",
+          "Order No",
+          "Loom",
+          "Length (m)",
+          "Cost/m (ZAR)",
+          "Valuation (ZAR)",
+        ]],
         body: tableData,
         startY: 30,
         margin: { left: margin, right: margin },
@@ -453,9 +478,9 @@ export default function BaseFabricStockPage() {
           fillColor: [249, 250, 251],
         },
         columnStyles: {
-          4: { halign: "right" },
           5: { halign: "right" },
           6: { halign: "right" },
+          7: { halign: "right" },
         },
         didDrawPage: function (data: any) {
           const currentPage = data.pageNumber || doc.internal.pages.length - 1;
@@ -739,6 +764,7 @@ export default function BaseFabricStockPage() {
                                             <tr className="border-b border-slate-200">
                                               <th className="px-3 py-2 text-left font-semibold text-slate-700">Roll No</th>
                                               <th className="px-3 py-2 text-left font-semibold text-slate-700">Order No</th>
+                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">GSM</th>
                                               <th className="px-3 py-2 text-right font-semibold text-slate-700">Length (m)</th>
                                               <th className="px-3 py-2 text-right font-semibold text-slate-700">Cost/m (ZAR)</th>
                                               <th className="px-3 py-2 text-right font-semibold text-slate-700">Valuation (ZAR)</th>
@@ -750,6 +776,9 @@ export default function BaseFabricStockPage() {
                                               <tr key={roll.id} className="border-b border-slate-100">
                                                 <td className="px-3 py-2 font-medium text-slate-900">{roll.roll_no || "—"}</td>
                                                 <td className="px-3 py-2 text-slate-600">{roll.order_no || "—"}</td>
+                                                <td className="px-3 py-2 text-right text-slate-900">
+                                                  {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
+                                                </td>
                                                 <td className="px-3 py-2 text-right text-slate-900">{roll.length_m.toFixed(3)}</td>
                                                 <td className="px-3 py-2 text-right text-slate-900">
                                                   {roll.yarn_cost_per_m != null ? `R ${Number(roll.yarn_cost_per_m).toFixed(2)}` : "—"}
@@ -791,6 +820,7 @@ export default function BaseFabricStockPage() {
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric Name</th>
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Order No</th>
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Loom</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Cost/m (ZAR)</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Valuation (ZAR)</th>
@@ -805,6 +835,9 @@ export default function BaseFabricStockPage() {
                                 <td className="px-4 py-3 text-slate-600">{roll.fabric_name || "—"}</td>
                                 <td className="px-4 py-3 text-slate-600">{roll.order_no || "—"}</td>
                                 <td className="px-4 py-3 text-slate-600">{roll.loom_no ? `Loom ${roll.loom_no}` : "—"}</td>
+                                <td className="px-4 py-3 text-right text-slate-900">
+                                  {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
+                                </td>
                                 <td className="px-4 py-3 text-right font-medium text-slate-900">{roll.length_m.toFixed(3)}</td>
                                 <td className="px-4 py-3 text-right text-slate-900">
                                   {roll.yarn_cost_per_m != null ? `R ${Number(roll.yarn_cost_per_m).toFixed(2)}` : "—"}
@@ -862,6 +895,9 @@ export default function BaseFabricStockPage() {
                             Order No
                           </th>
                           <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                            GSM
+                          </th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
                             Length (m)
                           </th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-900">
@@ -892,6 +928,9 @@ export default function BaseFabricStockPage() {
                             </td>
                             <td className="px-4 py-3 text-slate-600">
                               {roll.order_no || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right text-slate-900">
+                              {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
                             </td>
                             <td className="px-4 py-3 text-right font-medium text-slate-900">
                               {roll.length_m.toFixed(3)}
@@ -969,6 +1008,9 @@ export default function BaseFabricStockPage() {
                 </p>
                 <b><p className="text-slate-600">Loom Number: {selectedRoll.loom_no || "—"}</p></b>
                 <p className="text-slate-600">Fabric: {selectedRoll.fabric_name || "—"}</p>
+                <p className="text-slate-600">
+                  GSM: {selectedRoll.effective_gsm != null ? selectedRoll.effective_gsm.toFixed(2) : "—"}
+                </p>
                 <p className="text-slate-600">Length: {selectedRoll.length_m.toFixed(3)} m</p>
               </div>
             </div>

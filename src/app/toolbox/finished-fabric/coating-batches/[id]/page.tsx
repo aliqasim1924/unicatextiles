@@ -32,10 +32,12 @@ interface BaseRoll {
     roll_no: string | null;
     qr_code: string | null;
     length_m: number;
+    actual_gsm: number | null;
     base_fabric_orders: {
       order_no: string | null;
       base_fabric_items: {
         name: string | null;
+        gsm: number | null;
       } | null;
     } | null;
   };
@@ -132,6 +134,7 @@ export default function CoatingBatchDetailPage() {
     order_no: string | null;
     loom_no: string | null;
     fabric_name: string | null;
+    effective_gsm: number | null;
     total_allocated_to_batches: number;
     remaining_for_batches: number;
   }>>([]);
@@ -175,10 +178,12 @@ export default function CoatingBatchDetailPage() {
             roll_no,
             qr_code,
             length_m,
+            actual_gsm,
             base_fabric_orders (
               order_no,
               base_fabric_items (
-                name
+                name,
+                gsm
               )
             )
           )
@@ -207,10 +212,16 @@ export default function CoatingBatchDetailPage() {
             roll_no: roll?.roll_no ?? null,
             qr_code: roll?.qr_code ?? null,
             length_m: Number(roll?.length_m || 0),
+            actual_gsm:
+              roll?.actual_gsm !== null && roll?.actual_gsm !== undefined
+                ? Number(roll.actual_gsm)
+                : null,
             base_fabric_orders: order ? {
               order_no: order.order_no ?? null,
               base_fabric_items: item ? {
                 name: item.name ?? null,
+                gsm:
+                  item.gsm !== null && item.gsm !== undefined ? Number(item.gsm) : null,
               } : null,
             } : null,
           },
@@ -381,6 +392,45 @@ export default function CoatingBatchDetailPage() {
       // Filter out rolls already in this batch
       const filtered = (data || []).filter((roll: any) => !existingIds.has(roll.id));
 
+      // Enrich with effective GSM (actual GSM override if captured on roll)
+      const rollIds = filtered.map((row: any) => row.id).filter(Boolean);
+      const gsmMap = new Map<string, number | null>();
+      if (rollIds.length > 0) {
+        const { data: rollSpecData, error: rollSpecError } = await supabaseBrowserClient
+          .from("base_fabric_rolls")
+          .select(
+            `
+            id,
+            actual_gsm,
+            base_fabric_orders:base_fabric_order_id (
+              base_fabric_items:base_fabric_item_id (
+                gsm
+              )
+            )
+          `
+          )
+          .in("id", rollIds);
+        if (rollSpecError) throw rollSpecError;
+
+        (rollSpecData || []).forEach((row: any) => {
+          const order = Array.isArray(row.base_fabric_orders)
+            ? row.base_fabric_orders[0]
+            : row.base_fabric_orders;
+          const item = order?.base_fabric_items
+            ? Array.isArray(order.base_fabric_items)
+              ? order.base_fabric_items[0]
+              : order.base_fabric_items
+            : null;
+          const effectiveGsm =
+            row.actual_gsm !== null && row.actual_gsm !== undefined
+              ? Number(row.actual_gsm)
+              : item?.gsm !== null && item?.gsm !== undefined
+                ? Number(item.gsm)
+                : null;
+          gsmMap.set(row.id, effectiveGsm);
+        });
+      }
+
       setAvailableBaseRolls(
         filtered.map((row: any) => ({
           id: row.id as string,
@@ -391,6 +441,7 @@ export default function CoatingBatchDetailPage() {
           order_no: row.order_no ?? null,
           loom_no: row.loom_no ?? null,
           fabric_name: row.fabric_name ?? null,
+          effective_gsm: gsmMap.get(row.id) ?? null,
           total_allocated_to_batches: Number(row.total_allocated_to_batches || 0),
           remaining_for_batches: Number(row.remaining_for_batches || 0),
         }))
@@ -1464,6 +1515,9 @@ export default function CoatingBatchDetailPage() {
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Input Length (m)
                   </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    GSM
+                  </th>
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Order
                   </th>
@@ -1484,6 +1538,13 @@ export default function CoatingBatchDetailPage() {
                     <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
                       {br.input_length_m.toFixed(2)}
                     </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                      {br.base_fabric_rolls.actual_gsm != null
+                        ? br.base_fabric_rolls.actual_gsm.toFixed(2)
+                        : br.base_fabric_rolls.base_fabric_orders?.base_fabric_items?.gsm != null
+                          ? br.base_fabric_rolls.base_fabric_orders.base_fabric_items.gsm.toFixed(2)
+                          : "-"}
+                    </td>
                     <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
                       {br.base_fabric_rolls.base_fabric_orders?.order_no ?? "-"}
                     </td>
@@ -1501,7 +1562,7 @@ export default function CoatingBatchDetailPage() {
                   <td className="px-4 py-2 text-right text-sm font-semibold text-slate-900">
                     {totalInputLength.toFixed(2)}
                   </td>
-                  <td colSpan={2}></td>
+                  <td colSpan={3}></td>
                 </tr>
               </tfoot>
             </table>
@@ -1557,6 +1618,9 @@ export default function CoatingBatchDetailPage() {
                           Remaining (m)
                         </th>
                         <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                          GSM
+                        </th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
                           Allocation Length (m) <span className="text-red-600">*</span>
                         </th>
                         <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
@@ -1589,6 +1653,9 @@ export default function CoatingBatchDetailPage() {
                           </td>
                           <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
                             {roll.remaining_for_batches.toFixed(2)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-slate-600">
+                            {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "-"}
                           </td>
                           <td className="px-4 py-2">
                             <input

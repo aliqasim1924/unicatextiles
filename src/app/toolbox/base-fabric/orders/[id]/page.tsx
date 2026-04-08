@@ -69,6 +69,8 @@ interface Roll {
   roll_no: string | null;
   qr_code: string | null;
   length_m: number;
+  actual_gsm: number | null;
+  gsm_change_reason: string | null;
   cut_at: string;
   notes: string | null;
 }
@@ -131,6 +133,8 @@ export default function BaseFabricOrderDetailPage() {
   const [yarnReceiptPrices, setYarnReceiptPrices] = useState<YarnPriceSample[]>([]);
   const [rollForm, setRollForm] = useState({
     length_m: "",
+    actual_gsm: "",
+    gsm_change_reason: "",
     notes: "",
   });
   const [completionNote, setCompletionNote] = useState("");
@@ -219,7 +223,7 @@ export default function BaseFabricOrderDetailPage() {
       // Fetch rolls
       const { data: rollsData, error: rollsError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
-        .select("id, roll_no, qr_code, length_m, cut_at, notes")
+        .select("id, roll_no, qr_code, length_m, actual_gsm, gsm_change_reason, cut_at, notes")
         .eq("base_fabric_order_id", orderId)
         .order("cut_at", { ascending: true });
 
@@ -463,6 +467,22 @@ export default function BaseFabricOrderDetailPage() {
       return;
     }
 
+    const orderGsm = order?.base_fabric_items?.gsm ?? null;
+    const hasActualGsm = rollForm.actual_gsm.trim() !== "";
+    const actualGsm = hasActualGsm ? Number(rollForm.actual_gsm) : null;
+    if (hasActualGsm && (!Number.isFinite(actualGsm) || Number(actualGsm) <= 0)) {
+      setError("Actual GSM must be a valid number greater than zero.");
+      return;
+    }
+    const isGsmChanged =
+      actualGsm !== null && (orderGsm === null || Math.abs(Number(actualGsm) - Number(orderGsm)) > 0.001);
+    if (isGsmChanged && !rollForm.gsm_change_reason.trim()) {
+      setError(
+        "Production manager reason is required when the roll GSM differs from planned specification."
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       // Generate QR code for the new roll
@@ -473,6 +493,8 @@ export default function BaseFabricOrderDetailPage() {
         .insert({
           base_fabric_order_id: orderId,
           length_m: Number(rollForm.length_m),
+          actual_gsm: actualGsm,
+          gsm_change_reason: isGsmChanged ? rollForm.gsm_change_reason.trim() : null,
           notes: rollForm.notes || null,
           qr_code: qrCode,
         });
@@ -480,7 +502,7 @@ export default function BaseFabricOrderDetailPage() {
       if (insertError) throw insertError;
 
       setSuccess("Roll added successfully.");
-      setRollForm({ length_m: "", notes: "" });
+      setRollForm({ length_m: "", actual_gsm: "", gsm_change_reason: "", notes: "" });
       fetchOrderData();
     } catch (err: any) {
       setError(err.message || "Failed to add roll.");
@@ -2644,6 +2666,37 @@ export default function BaseFabricOrderDetailPage() {
               />
             </div>
             <div>
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Actual GSM (optional)
+              </label>
+              <input
+                name="actual_gsm"
+                type="number"
+                min="0"
+                step="0.01"
+                value={rollForm.actual_gsm}
+                onChange={handleRollFormChange}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                placeholder={
+                  order?.base_fabric_items?.gsm != null
+                    ? `Planned: ${order.base_fabric_items.gsm} GSM`
+                    : "Enter measured GSM"
+                }
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Production Manager Reason (required for GSM change)
+              </label>
+              <input
+                name="gsm_change_reason"
+                value={rollForm.gsm_change_reason}
+                onChange={handleRollFormChange}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                placeholder="Explain why actual GSM differs (e.g. yarn changeover to 280 GSM)"
+              />
+            </div>
+            <div>
               <label className="block text-sm font-semibold text-slate-900 mb-2">Notes</label>
               <input
                 name="notes"
@@ -2695,8 +2748,10 @@ export default function BaseFabricOrderDetailPage() {
                 <tr className="border-b border-slate-200">
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">QR Code</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Cut Time</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Manager Reason</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Notes</th>
                 </tr>
               </thead>
@@ -2707,6 +2762,13 @@ export default function BaseFabricOrderDetailPage() {
                       {roll.roll_no || "-"}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{roll.qr_code || "-"}</td>
+                    <td className="px-4 py-3 text-right text-slate-900">
+                      {roll.actual_gsm != null
+                        ? `${Number(roll.actual_gsm).toFixed(2)}`
+                        : order?.base_fabric_items?.gsm != null
+                          ? `${Number(order.base_fabric_items.gsm).toFixed(2)} (planned)`
+                          : "-"}
+                    </td>
                     <td className="px-4 py-3 text-right font-medium text-slate-900">
                       {roll.length_m.toFixed(2)}
                     </td>
@@ -2719,6 +2781,7 @@ export default function BaseFabricOrderDetailPage() {
                         minute: "2-digit",
                       })}
                     </td>
+                    <td className="px-4 py-3 text-slate-600">{roll.gsm_change_reason || "-"}</td>
                     <td className="px-4 py-3 text-slate-600">{roll.notes || "-"}</td>
                   </tr>
                 ))}
