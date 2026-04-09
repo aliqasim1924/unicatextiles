@@ -43,6 +43,14 @@ interface ChemicalRow {
   uom: string | null;
 }
 
+interface LinkedIssueSlip {
+  id: string;
+  slip_no: string | null;
+  issued_at: string;
+  notes: string | null;
+  lines_count: number;
+}
+
 export default function CoatingBatchReportPage() {
   const params = useParams();
   const batchId = params.id as string;
@@ -50,6 +58,7 @@ export default function CoatingBatchReportPage() {
   const [batch, setBatch] = useState<CoatingBatch | null>(null);
   const [baseRolls, setBaseRolls] = useState<BaseRoll[]>([]);
   const [chemicals, setChemicals] = useState<ChemicalRow[]>([]);
+  const [linkedIssueSlips, setLinkedIssueSlips] = useState<LinkedIssueSlip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,6 +126,34 @@ export default function CoatingBatchReportPage() {
           uom: row.uom ?? null,
         })) as ChemicalRow[]
       );
+
+      const { data: slipData, error: slipError } = await supabaseBrowserClient
+        .from("dye_issue_slips")
+        .select(
+          `
+          id,
+          slip_no,
+          issued_at,
+          notes,
+          dye_issue_lines ( id )
+        `
+        )
+        .eq("coating_batch_id", batchId)
+        .order("issued_at", { ascending: false });
+
+      if (!slipError) {
+        setLinkedIssueSlips(
+          ((slipData || []) as any[]).map((row) => ({
+            id: row.id as string,
+            slip_no: row.slip_no ?? null,
+            issued_at: row.issued_at,
+            notes: row.notes ?? null,
+            lines_count: Array.isArray(row.dye_issue_lines) ? row.dye_issue_lines.length : 0,
+          }))
+        );
+      } else {
+        setLinkedIssueSlips([]);
+      }
     } catch (err: any) {
       setError(err.message || "Failed to load report.");
     } finally {
@@ -321,6 +358,41 @@ export default function CoatingBatchReportPage() {
                         <Td>{chem.chemical_name || "-"}</Td>
                         <Td>{chem.quantity !== null ? chem.quantity : "-"}</Td>
                         <Td>{chem.uom || "-"}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Linked issue slips table */}
+          <div className="mt-8">
+            <h3 className="text-lg font-semibold text-slate-900">
+              Linked Dyes/Chemicals Issue Slips
+            </h3>
+            {linkedIssueSlips.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-600">
+                No linked issue slips recorded for this batch.
+              </p>
+            ) : (
+              <div className="mt-3">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50">
+                      <Th>Issued At</Th>
+                      <Th>Slip No</Th>
+                      <Th className="text-right">Items</Th>
+                      <Th>Notes</Th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {linkedIssueSlips.map((slip) => (
+                      <tr key={slip.id}>
+                        <Td>{formatDate(slip.issued_at)}</Td>
+                        <Td>{slip.slip_no || "-"}</Td>
+                        <Td className="text-right">{slip.lines_count}</Td>
+                        <Td>{slip.notes || "-"}</Td>
                       </tr>
                     ))}
                   </tbody>

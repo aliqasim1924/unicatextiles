@@ -28,6 +28,7 @@ interface CoatingBatch {
 
 interface BaseRoll {
   id: string;
+  base_fabric_roll_id: string | null;
   base_fabric_rolls: {
     roll_no: string | null;
     qr_code: string | null;
@@ -73,6 +74,14 @@ interface AvailableChemical {
   remaining_for_batches: number;
 }
 
+interface LinkedIssueSlip {
+  id: string;
+  slip_no: string | null;
+  issued_at: string;
+  notes: string | null;
+  lines_count: number;
+}
+
 export default function CoatingBatchDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -83,6 +92,7 @@ export default function CoatingBatchDetailPage() {
   const [finishedRolls, setFinishedRolls] = useState<FinishedRoll[]>([]);
   const [batchChemicals, setBatchChemicals] = useState<BatchChemical[]>([]);
   const [availableChemicals, setAvailableChemicals] = useState<AvailableChemical[]>([]);
+  const [linkedIssueSlips, setLinkedIssueSlips] = useState<LinkedIssueSlip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -173,6 +183,7 @@ export default function CoatingBatchDetailPage() {
         .select(
           `
           id,
+          base_fabric_roll_id,
           input_length_m,
           base_fabric_rolls (
             roll_no,
@@ -207,6 +218,7 @@ export default function CoatingBatchDetailPage() {
         
         return {
           id: row.id,
+          base_fabric_roll_id: row.base_fabric_roll_id ?? null,
           input_length_m: Number(row.input_length_m || 0),
           base_fabric_rolls: {
             roll_no: roll?.roll_no ?? null,
@@ -334,6 +346,36 @@ export default function CoatingBatchDetailPage() {
           remaining_for_batches: Number(row.remaining_for_batches || 0),
         })) as AvailableChemical[]
       );
+
+      // Fetch linked dyes/chemicals issue slips (for traceability-only reference).
+      const { data: slipData, error: slipError } = await supabaseBrowserClient
+        .from("dye_issue_slips")
+        .select(
+          `
+          id,
+          slip_no,
+          issued_at,
+          notes,
+          dye_issue_lines ( id )
+        `
+        )
+        .eq("coating_batch_id", batchId)
+        .order("issued_at", { ascending: false });
+
+      if (!slipError) {
+        setLinkedIssueSlips(
+          ((slipData || []) as any[]).map((row) => ({
+            id: row.id as string,
+            slip_no: row.slip_no ?? null,
+            issued_at: row.issued_at,
+            notes: row.notes ?? null,
+            lines_count: Array.isArray(row.dye_issue_lines) ? row.dye_issue_lines.length : 0,
+          }))
+        );
+      } else {
+        // Keep page usable in environments where linkage column may not exist yet.
+        setLinkedIssueSlips([]);
+      }
     } catch (err: any) {
       console.error("Failed to load batch", err);
       setError(err.message || "Failed to load batch.");
@@ -546,6 +588,82 @@ export default function CoatingBatchDetailPage() {
       setError(err.message || "Failed to add base fabric rolls.");
     } finally {
       setIsAddingBaseRolls(false);
+    }
+  }
+
+  async function handleRemoveBaseRoll(
+    allocationId: string,
+    baseFabricRollId: string | null,
+    rollNo: string | null
+  ) {
+    if (batch?.status === "COMPLETED") {
+      setError("Rolls cannot be unselected from a COMPLETED batch.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Unselect roll ${rollNo || "this roll"} from this batch?\n\n` +
+        "It will immediately become available for selection in other coating batches."
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setSuccess(null);
+    try {
+      const { error: deleteByAllocationError } = await supabaseBrowserClient
+        .from("coating_batch_base_rolls")
+        .delete()
+        .eq("batch_id", batchId)
+        .eq("id", allocationId);
+
+      if (deleteByAllocationError) throw deleteByAllocationError;
+
+      // Verify if allocation still exists after delete attempt.
+      let stillExists = false;
+      {
+        const { data: stillThere, error: verifyError } = await supabaseBrowserClient
+          .from("coating_batch_base_rolls")
+          .select("id")
+          .eq("batch_id", batchId)
+          .eq("id", allocationId)
+          .limit(1);
+        if (verifyError) throw verifyError;
+        stillExists = (stillThere || []).length > 0;
+      }
+
+      if (stillExists && baseFabricRollId) {
+        // Fallback: remove linkage by roll id in this batch, in case allocation id is stale.
+        const { error: deleteByRollError } = await supabaseBrowserClient
+          .from("coating_batch_base_rolls")
+          .delete()
+          .eq("batch_id", batchId)
+          .eq("base_fabric_roll_id", baseFabricRollId);
+        if (deleteByRollError) throw deleteByRollError;
+      }
+
+      const { data: finalCheck, error: finalCheckError } = await supabaseBrowserClient
+        .from("coating_batch_base_rolls")
+        .select("id")
+        .eq("batch_id", batchId)
+        .eq("id", allocationId)
+        .limit(1);
+      if (finalCheckError) throw finalCheckError;
+      if ((finalCheck || []).length > 0) {
+        throw new Error(
+          `Unselect did not remove any linkage for ${rollNo || "the roll"}. Please refresh and try again.`
+        );
+      }
+
+      setSuccess(
+        `Roll ${rollNo || ""} unselected from this batch and is now available for re-allocation.`
+      );
+      await fetchData();
+      if (showAddBaseRolls) {
+        await fetchAvailableBaseRolls();
+      }
+    } catch (err: any) {
+      console.error("Failed to unselect base roll", err);
+      setError(err.message || "Failed to unselect base roll.");
     }
   }
 
@@ -1246,6 +1364,7 @@ export default function CoatingBatchDetailPage() {
   // Check if rolling is complete
   const isRollingComplete = actualCoated !== null && totalFinishedLength >= actualCoated;
   const canAddMoreRolls = !isRollingComplete && batch.status !== "COMPLETED";
+  const canUnselectBaseRolls = batch.status !== "COMPLETED";
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
@@ -1524,6 +1643,11 @@ export default function CoatingBatchDetailPage() {
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Fabric
                   </th>
+                  {canUnselectBaseRolls && (
+                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Action
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -1549,8 +1673,37 @@ export default function CoatingBatchDetailPage() {
                       {br.base_fabric_rolls.base_fabric_orders?.order_no ?? "-"}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
-                      {br.base_fabric_rolls.base_fabric_orders?.base_fabric_items?.name ?? "-"}
+                      {(() => {
+                        const fabricName =
+                          br.base_fabric_rolls.base_fabric_orders?.base_fabric_items?.name ?? "-";
+                        const plannedGsm =
+                          br.base_fabric_rolls.base_fabric_orders?.base_fabric_items?.gsm ?? null;
+                        const actualGsm = br.base_fabric_rolls.actual_gsm ?? null;
+                        const hasOverride =
+                          actualGsm !== null &&
+                          (plannedGsm === null || Math.abs(actualGsm - plannedGsm) > 0.001);
+                        return hasOverride
+                          ? `${fabricName} (GSM ${actualGsm.toFixed(0)})`
+                          : fabricName;
+                      })()}
                     </td>
+                    {canUnselectBaseRolls && (
+                      <td className="whitespace-nowrap px-4 py-2 text-sm">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleRemoveBaseRoll(
+                              br.id,
+                              br.base_fabric_roll_id,
+                              br.base_fabric_rolls.roll_no ?? null
+                            )
+                          }
+                          className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                        >
+                          Unselect
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1562,11 +1715,16 @@ export default function CoatingBatchDetailPage() {
                   <td className="px-4 py-2 text-right text-sm font-semibold text-slate-900">
                     {totalInputLength.toFixed(2)}
                   </td>
-                  <td colSpan={3}></td>
+                  <td colSpan={canUnselectBaseRolls ? 4 : 3}></td>
                 </tr>
               </tfoot>
             </table>
           </div>
+        )}
+        {!canUnselectBaseRolls && baseRolls.length > 0 && (
+          <p className="mt-3 text-xs text-amber-700">
+            Unselect is disabled only after the batch is COMPLETED.
+          </p>
         )}
 
         {/* Add Base Fabric Rolls Form */}
@@ -1674,7 +1832,13 @@ export default function CoatingBatchDetailPage() {
                             {roll.order_no ?? "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-2 text-sm text-slate-600">
-                            {roll.fabric_name ?? "-"}
+                            {roll.fabric_name
+                              ? `${roll.fabric_name}${
+                                  roll.effective_gsm != null
+                                    ? ` (GSM ${roll.effective_gsm.toFixed(0)})`
+                                    : ""
+                                }`
+                              : "-"}
                           </td>
                         </tr>
                       ))}
@@ -1955,6 +2119,77 @@ export default function CoatingBatchDetailPage() {
       </motion.section>
 
       {/* Dyes & Chemicals */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.14 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
+          Linked Dyes/Chemicals Issue Slips
+        </h2>
+        {linkedIssueSlips.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No linked issue slips for this coating batch yet.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Issued At
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Slip No
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Items
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Notes
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {linkedIssueSlips.map((slip) => (
+                  <tr key={slip.id}>
+                    <td className="whitespace-nowrap px-4 py-2 text-slate-600">
+                      {new Date(slip.issued_at).toLocaleString("en-ZA", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-900">
+                      {slip.slip_no || "-"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-slate-600">
+                      {slip.lines_count}
+                    </td>
+                    <td className="px-4 py-2 text-slate-600">{slip.notes || "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-2">
+                      <Link
+                        href={`/toolbox/dyes/issuing/slip/${slip.id}`}
+                        target="_blank"
+                        className="text-sm font-semibold text-teal-700 hover:text-teal-800"
+                      >
+                        Open Slip
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </motion.section>
+
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

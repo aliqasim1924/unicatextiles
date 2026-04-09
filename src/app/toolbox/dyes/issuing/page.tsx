@@ -33,7 +33,14 @@ interface IssueRow {
   issued_at: string;
   slip_no: string | null;
   issued_to_department: string;
+  coating_batch_no: string | null;
   lines_count: number;
+}
+
+interface CoatingBatchOption {
+  id: string;
+  batch_no: string;
+  status: string;
 }
 
 const DESTINATION_OPTIONS = [
@@ -53,6 +60,10 @@ export default function DyesIssuingPage() {
   const [success, setSuccess] = useState<{ message: string; id?: string; slip_no?: string } | null>(null);
   const [recentIssues, setRecentIssues] = useState<IssueRow[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [batchSearchInput, setBatchSearchInput] = useState("");
+  const [selectedBatch, setSelectedBatch] = useState<CoatingBatchOption | null>(null);
+  const [batchSearchResults, setBatchSearchResults] = useState<CoatingBatchOption[]>([]);
+  const [isSearchingBatch, setIsSearchingBatch] = useState(false);
 
   useEffect(() => {
     fetchItems();
@@ -103,6 +114,7 @@ export default function DyesIssuingPage() {
           slip_no,
           issued_at,
           issued_to_department,
+          coating_batches:coating_batch_id ( batch_no ),
           dye_issue_lines (id)
         `
         )
@@ -116,12 +128,60 @@ export default function DyesIssuingPage() {
         slip_no: row.slip_no,
         issued_at: row.issued_at,
         issued_to_department: row.issued_to_department,
+        coating_batch_no: Array.isArray(row.coating_batches)
+          ? row.coating_batches[0]?.batch_no ?? null
+          : row.coating_batches?.batch_no ?? null,
         lines_count: Array.isArray(row.dye_issue_lines) ? row.dye_issue_lines.length : 0,
       })) as IssueRow[];
 
       setRecentIssues(processed);
     } catch (err: any) {
       console.error("Failed to load recent issues:", err);
+    }
+  }
+
+  async function handleSearchBatch(e?: React.FormEvent) {
+    e?.preventDefault();
+    const input = batchSearchInput.trim();
+    if (!input) {
+      setBatchSearchResults([]);
+      setSelectedBatch(null);
+      return;
+    }
+
+    setError(null);
+    setIsSearchingBatch(true);
+    try {
+      const rawUpper = input.toUpperCase().replace(/\s+/g, "");
+      const compact = rawUpper.replace(/-/g, "");
+
+      const { data, error: searchError } = await supabaseBrowserClient
+        .from("coating_batches")
+        .select("id, batch_no, status")
+        .or(
+          `batch_no.ilike.%${rawUpper}%,batch_no.ilike.%${compact}%`
+        )
+        .neq("status", "CANCELLED")
+        .order("batch_no", { ascending: true })
+        .limit(8);
+
+      if (searchError) throw searchError;
+      const rows = ((data || []) as any[]).map((r) => ({
+        id: r.id as string,
+        batch_no: r.batch_no as string,
+        status: r.status as string,
+      }));
+      setBatchSearchResults(rows);
+      // Never auto-select: user must explicitly choose one batch from results.
+      setSelectedBatch((prev) =>
+        prev && rows.some((r) => r.id === prev.id) ? prev : null
+      );
+    } catch (err: any) {
+      setError(err.message || "Failed to search coating batches.");
+      setBatchSearchResults([]);
+      setSelectedBatch(null);
+    } finally {
+      setIsSearchingBatch(false);
     }
   }
 
@@ -236,6 +296,7 @@ export default function DyesIssuingPage() {
           issued_to_department: issuedToDepartment,
           issued_at: new Date().toISOString(),
           created_by: user?.id || null,
+          coating_batch_id: selectedBatch?.id || null,
           notes: notes || null,
         })
         .select("id")
@@ -360,6 +421,76 @@ export default function DyesIssuingPage() {
             </div>
 
             <div className="sm:col-span-2">
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Link to Coating Batch (optional)
+              </label>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input
+                  type="text"
+                  value={batchSearchInput}
+                  onChange={(e) => setBatchSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleSearchBatch();
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                  placeholder="Enter batch number (e.g. CBT-000026 or CBT000026) and press Enter"
+                />
+                <Button type="button" variant="secondary" disabled={isSearchingBatch} onClick={() => void handleSearchBatch()}>
+                  {isSearchingBatch ? "Searching..." : "Search"}
+                </Button>
+              </div>
+              {batchSearchResults.length > 0 && (
+                <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                  {batchSearchResults.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedBatch((prev) => (prev?.id === b.id ? null : b))
+                      }
+                      className={`block w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 ${
+                        selectedBatch?.id === b.id
+                          ? "bg-teal-50 text-teal-800 font-semibold"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span className="inline-flex w-full items-center justify-between gap-2">
+                        <span>
+                          {b.batch_no} ({b.status})
+                        </span>
+                        <span
+                          className={`rounded px-2 py-0.5 text-xs ${
+                            selectedBatch?.id === b.id
+                              ? "bg-teal-700 text-white"
+                              : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {selectedBatch?.id === b.id ? "Selected" : "Select"}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedBatch && (
+                <p className="mt-2 text-xs text-green-700">
+                  Linked batch selected: <span className="font-semibold">{selectedBatch.batch_no}</span>
+                </p>
+              )}
+              {!selectedBatch && batchSearchResults.length > 0 && (
+                <p className="mt-2 text-xs text-slate-600">
+                  No batch selected. Click a batch to select it.
+                </p>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Press Enter or click Search. Only non-cancelled batches are selectable.
+              </p>
+            </div>
+
+            <div className="sm:col-span-2">
               <label className="block text-sm font-semibold text-slate-900 mb-2">Notes</label>
               <textarea
                 value={notes}
@@ -462,7 +593,7 @@ export default function DyesIssuingPage() {
                             value={line.batch_no}
                             onChange={(e) => updateLine(line.id, { batch_no: e.target.value })}
                             className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                            placeholder="Optional"
+                            placeholder={selectedBatch?.batch_no || "Optional"}
                           />
                         </td>
                         <td className="px-3 py-2 text-center">
@@ -510,6 +641,7 @@ export default function DyesIssuingPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Date/Time</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Slip No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Department</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Coating Batch</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Items</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Action</th>
                 </tr>
@@ -536,6 +668,7 @@ export default function DyesIssuingPage() {
                         ? "General"
                         : row.issued_to_department || "-"}
                     </td>
+                    <td className="px-4 py-3 text-slate-600">{row.coating_batch_no || "-"}</td>
                     <td className="px-4 py-3 text-right text-slate-600">{row.lines_count} item(s)</td>
                     <td className="px-4 py-3">
                       <Link

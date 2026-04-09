@@ -23,6 +23,7 @@ interface IssueSlipData {
   slip_no: string | null;
   issued_at: string;
   issued_to_department: string;
+  coating_batch_no: string | null;
   notes: string | null;
   lines: IssueLine[];
 }
@@ -50,6 +51,7 @@ export default function DyesIssueSlipPage() {
           slip_no,
           issued_at,
           issued_to_department,
+          coating_batches:coating_batch_id ( batch_no ),
           notes,
           dye_issue_lines (
             id,
@@ -71,6 +73,9 @@ export default function DyesIssueSlipPage() {
 
       const processed = {
         ...data,
+        coating_batch_no: Array.isArray((data as any).coating_batches)
+          ? (data as any).coating_batches[0]?.batch_no ?? null
+          : (data as any).coating_batches?.batch_no ?? null,
         lines: (data.dye_issue_lines as any[]).map((line) => ({
           ...line,
           dye_items: Array.isArray(line.dye_items) ? line.dye_items[0] : line.dye_items,
@@ -221,6 +226,12 @@ export default function DyesIssueSlipPage() {
                       : slipData.issued_to_department === "GENERAL"
                       ? "General"
                       : slipData.issued_to_department || "-"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 print:text-xs">Coating Batch</p>
+                  <p className="text-sm text-slate-600 print:text-xs">
+                    {slipData.coating_batch_no || "-"}
                   </p>
                 </div>
               </div>
