@@ -135,6 +135,11 @@ export default function YarnReceivingPage() {
       return;
     }
 
+    if (!batchNo.trim()) {
+      setErrorMessage("Lot / Batch No is required.");
+      return;
+    }
+
     // If one price is entered, require the other
     if ((unitPriceUsd && !unitPriceZar) || (!unitPriceUsd && unitPriceZar)) {
       setErrorMessage("If entering pricing, both USD and ZAR prices are required.");
@@ -151,7 +156,7 @@ export default function YarnReceivingPage() {
         uom: uom,
         source: source || null,
         destination: destination || null,
-        batch_no: batchNo || null,
+        batch_no: batchNo.trim(),
         ref_document: refDocument || null,
         notes: notes || null,
         supplier_id: supplierId || null,
@@ -263,6 +268,7 @@ export default function YarnReceivingPage() {
                 value={batchNo}
                 onChange={(e) => setBatchNo(e.target.value)}
                 placeholder="Batch number"
+                required
                 disabled={isSubmitting}
               />
             </div>

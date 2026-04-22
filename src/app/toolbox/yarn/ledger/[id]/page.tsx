@@ -42,6 +42,11 @@ interface LedgerData {
   transactions: YarnTransaction[];
 }
 
+interface BatchSummaryRow {
+  batch_no: string;
+  qty: number;
+}
+
 export default function YarnLedgerPage() {
   const params = useParams();
   const yarnItemId = params.id as string;
@@ -286,6 +291,20 @@ export default function YarnLedgerPage() {
 
     return rows;
   }, [transactionsInDateRange, filteredTransactions, typeFilter]);
+
+  const batchSummaryRows = useMemo<BatchSummaryRow[]>(() => {
+    const map = new Map<string, number>();
+    transactionsWithBalance.forEach((txn) => {
+      const batch = (txn.batch_no || "").trim();
+      if (!batch) return;
+      const current = map.get(batch) || 0;
+      map.set(batch, current + txn.signedQuantity);
+    });
+    return Array.from(map.entries())
+      .map(([batch_no, qty]) => ({ batch_no, qty }))
+      .filter((row) => Math.abs(row.qty) > 0.000001)
+      .sort((a, b) => a.batch_no.localeCompare(b.batch_no));
+  }, [transactionsWithBalance]);
 
   async function generatePdf() {
     if (!ledgerData.yarnItem) return;
@@ -618,6 +637,38 @@ export default function YarnLedgerPage() {
             </Button>
           </div>
         </div>
+      </motion.section>
+
+      {/* Batch Summary */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.15 }}
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm overflow-x-auto"
+      >
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">Lot / Batch Summary</h2>
+        {batchSummaryRows.length === 0 ? (
+          <p className="text-sm text-slate-600">No batch-tagged balances available.</p>
+        ) : (
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch No</th>
+                <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                  On Hand ({ledgerData.yarnItem?.uom || "kg"})
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {batchSummaryRows.map((row) => (
+                <tr key={row.batch_no} className="border-b border-slate-100">
+                  <td className="px-4 py-3 text-slate-900 font-medium">{row.batch_no}</td>
+                  <td className="px-4 py-3 text-right text-slate-900">{row.qty.toFixed(3)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </motion.section>
 
       {/* Ledger Table */}

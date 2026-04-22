@@ -22,7 +22,13 @@ interface IssueTransaction {
     name: string;
   };
   quantity: number;
+  batch_no: string | null;
   destination: string | null;
+}
+
+interface BatchAvailability {
+  batch_no: string;
+  available_qty: number;
 }
 
 export default function YarnIssuingPage() {
@@ -55,6 +61,8 @@ export default function YarnIssuingPage() {
   // Stock tracking
   const [stockMap, setStockMap] = useState<Map<string, number>>(new Map());
   const [isLoadingStock, setIsLoadingStock] = useState(true);
+  const [batchAvailability, setBatchAvailability] = useState<BatchAvailability[]>([]);
+  const [isLoadingBatches, setIsLoadingBatches] = useState(false);
 
   useEffect(() => {
     fetchRecentIssues();
@@ -73,14 +81,59 @@ export default function YarnIssuingPage() {
   // Refresh department availability when yarn item changes
   useEffect(() => {
     if (!yarnItemId) {
+      setBatchNo("");
+      setBatchAvailability([]);
       setDeptAvailableQty(null);
       setDeptWithDeptTotal(null);
       setDeptAllocatedTotal(null);
       setDeptAllocQty("");
       return;
     }
+    fetchBatchAvailability(yarnItemId);
     fetchDeptAvailability(yarnItemId);
   }, [yarnItemId]);
+
+  async function fetchBatchAvailability(yarnId: string) {
+    try {
+      setIsLoadingBatches(true);
+      const { data, error } = await supabaseBrowserClient
+        .from("yarn_transactions")
+        .select("transaction_type, quantity, batch_no")
+        .eq("yarn_item_id", yarnId)
+        .not("batch_no", "is", null);
+
+      if (error) throw error;
+
+      const map = new Map<string, number>();
+      (data || []).forEach((row: any) => {
+        const rawBatch = String(row.batch_no || "").trim();
+        if (!rawBatch) return;
+        const current = map.get(rawBatch) || 0;
+        const qty = Number(row.quantity || 0);
+        let signed = 0;
+        if (row.transaction_type === "RECEIPT" || row.transaction_type === "RETURN") signed = qty;
+        else if (row.transaction_type === "ISSUE" || row.transaction_type === "SCRAP") signed = -qty;
+        else if (row.transaction_type === "ADJUSTMENT") signed = qty;
+        map.set(rawBatch, current + signed);
+      });
+
+      const list = Array.from(map.entries())
+        .map(([batch_no, available_qty]) => ({ batch_no, available_qty }))
+        .filter((b) => b.available_qty > 0.000001)
+        .sort((a, b) => a.batch_no.localeCompare(b.batch_no));
+
+      setBatchAvailability(list);
+      setBatchNo((prev) => {
+        if (prev && list.some((b) => b.batch_no === prev)) return prev;
+        return "";
+      });
+    } catch (err) {
+      console.error("Error fetching batch availability:", err);
+      setBatchAvailability([]);
+    } finally {
+      setIsLoadingBatches(false);
+    }
+  }
 
   async function fetchStockData() {
     try {
@@ -156,6 +209,7 @@ export default function YarnIssuingPage() {
           id,
           txn_time,
           quantity,
+          batch_no,
           destination,
           yarn_items:yarn_item_id (
             name
@@ -288,10 +342,29 @@ export default function YarnIssuingPage() {
     // Stock validation
     const stock = stockMap.get(yarnItemId) ?? 0;
     const qty = parseFloat(quantity);
+    const selectedBatchQty =
+      batchAvailability.find((b) => b.batch_no === batchNo)?.available_qty ?? null;
     
     if (qty > stock) {
       setErrorMessage(
         `Cannot issue ${qty.toFixed(3)} ${uom}. Available stock: ${stock.toFixed(3)} ${uom}.`
+      );
+      return;
+    }
+
+    if (!batchNo.trim()) {
+      setErrorMessage("Lot / Batch No is required.");
+      return;
+    }
+
+    if (selectedBatchQty === null) {
+      setErrorMessage("Please select a valid available lot/batch number.");
+      return;
+    }
+
+    if (qty > selectedBatchQty) {
+      setErrorMessage(
+        `Cannot issue ${qty.toFixed(3)} ${uom} from batch ${batchNo}. Available in this batch: ${selectedBatchQty.toFixed(3)} ${uom}.`
       );
       return;
     }
@@ -313,7 +386,7 @@ export default function YarnIssuingPage() {
           uom: uom,
           source: source || null,
           destination: destination || null,
-          batch_no: batchNo || null,
+          batch_no: batchNo.trim(),
           notes: notes || null,
           base_fabric_order_id: selectedBaseFabricOrderId || null,
         })
@@ -337,7 +410,12 @@ export default function YarnIssuingPage() {
       setSelectedBaseFabricOrderId("");
 
       // Refresh recent issues and stock
-      await Promise.all([fetchRecentIssues(), fetchStockData(), fetchRunningBaseFabricOrders()]);
+      await Promise.all([
+        fetchRecentIssues(),
+        fetchStockData(),
+        fetchRunningBaseFabricOrders(),
+        fetchBatchAvailability(yarnItemId),
+      ]);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to record yarn issue. Please try again.");
     } finally {
@@ -493,14 +571,37 @@ export default function YarnIssuingPage() {
             )}
           </div>
 
-          <Input
-            label="Lot / Batch No"
-            type="text"
-            value={batchNo}
-            onChange={(e) => setBatchNo(e.target.value)}
-            placeholder="Batch number (optional)"
-            disabled={isSubmitting}
-          />
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-1.5">
+              Lot / Batch No <span className="text-red-600">*</span>
+            </label>
+            <select
+              value={batchNo}
+              onChange={(e) => setBatchNo(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+              required
+              disabled={isSubmitting || !yarnItemId || isLoadingBatches}
+            >
+              <option value="">
+                {isLoadingBatches ? "Loading batches..." : "Select lot/batch"}
+              </option>
+              {batchAvailability.map((b) => (
+                <option key={b.batch_no} value={b.batch_no}>
+                  {b.batch_no} ({b.available_qty.toFixed(3)} {uom})
+                </option>
+              ))}
+            </select>
+            {!yarnItemId && (
+              <p className="mt-1 text-xs text-slate-500">
+                Select a yarn item first to load available batches.
+              </p>
+            )}
+            {yarnItemId && !isLoadingBatches && batchAvailability.length === 0 && (
+              <p className="mt-1 text-xs text-amber-700">
+                No available batch balance found for this yarn.
+              </p>
+            )}
+          </div>
 
           <div>
             <Input
@@ -746,6 +847,9 @@ export default function YarnIssuingPage() {
                     Quantity
                   </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                    Batch No
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
                     Destination
                   </th>
                 </tr>
@@ -764,6 +868,9 @@ export default function YarnIssuingPage() {
                     </td>
                     <td className="px-4 py-3 text-right text-slate-900">
                       {issue.quantity.toFixed(3)} kg
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {issue.batch_no || "-"}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {issue.destination || "-"}
