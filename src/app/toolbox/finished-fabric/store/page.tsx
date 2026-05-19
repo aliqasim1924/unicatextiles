@@ -376,7 +376,7 @@ export default function FinishedFabricStorePage() {
         transition={{ duration: 0.3 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Link href="/toolbox/finished-fabric/store/receive" className="w-full">
             <Button variant="primary" className="w-full">
               Receive into Store
@@ -390,6 +390,11 @@ export default function FinishedFabricStorePage() {
           <Link href="/toolbox/finished-fabric/store/returns/new" className="w-full">
             <Button variant="secondary" className="w-full">
               Return Issue Slip
+            </Button>
+          </Link>
+          <Link href="/toolbox/finished-fabric/purchased/new" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Record Purchased (OS)
             </Button>
           </Link>
         </div>

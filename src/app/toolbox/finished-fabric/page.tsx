@@ -46,6 +46,16 @@ export default function FinishedFabricPage() {
               Finished Fabric Stocktakes
             </Button>
           </Link>
+          <Link href="/toolbox/finished-fabric/purchased/new" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Record Purchased (OS)
+            </Button>
+          </Link>
+          <Link href="/toolbox/finished-fabric/store" className="w-full">
+            <Button variant="secondary" className="w-full">
+              Finished Goods Store
+            </Button>
+          </Link>
         </div>
       </motion.section>
     </div>
