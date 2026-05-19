@@ -397,10 +397,10 @@ export default function NewPurchasedFinishedFabricPage() {
             </p>
           </motion.div>
           <Link
-            href="/toolbox/finished-fabric"
+            href="/toolbox/finished-fabric/purchased"
             className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
           >
-            ← Back to Finished Fabric
+            ← Back to Purchases
           </Link>
         </div>
 

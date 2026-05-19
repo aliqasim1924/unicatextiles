@@ -392,9 +392,9 @@ export default function FinishedFabricStorePage() {
               Return Issue Slip
             </Button>
           </Link>
-          <Link href="/toolbox/finished-fabric/purchased/new" className="w-full">
+          <Link href="/toolbox/finished-fabric/purchased" className="w-full">
             <Button variant="secondary" className="w-full">
-              Record Purchased (OS)
+              Outsourced Purchases
             </Button>
           </Link>
         </div>

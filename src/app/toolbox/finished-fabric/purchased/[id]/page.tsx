@@ -167,6 +167,12 @@ export default function PurchasedFinishedFabricDetailPage() {
         </div>
         <div className="flex gap-3">
           <Link
+            href="/toolbox/finished-fabric/purchased"
+            className="text-sm font-semibold text-teal-700 hover:text-teal-800"
+          >
+            All purchases
+          </Link>
+          <Link
             href="/toolbox/finished-fabric/purchased/new"
             className="text-sm font-semibold text-teal-700 hover:text-teal-800"
           >
