@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
+import { filterBaseFabricRolls } from "@/lib/coating/filterBaseFabricRolls";
 
 const LOCATION_COATING = "COATING";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
@@ -34,6 +35,7 @@ export default function NewCoatingBatchPage() {
     notes: "",
   });
   const [availableRolls, setAvailableRolls] = useState<AvailableRoll[]>([]);
+  const [rollSearchQuery, setRollSearchQuery] = useState("");
   const [selectedRollIds, setSelectedRollIds] = useState<Set<string>>(new Set());
   const [allocatedLengths, setAllocatedLengths] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -183,19 +185,33 @@ export default function NewCoatingBatchPage() {
     setAllocatedLengths(newAllocated);
   }
 
+  const filteredRolls = useMemo(
+    () => filterBaseFabricRolls(availableRolls, rollSearchQuery),
+    [availableRolls, rollSearchQuery],
+  );
+
+  const allFilteredSelected =
+    filteredRolls.length > 0 && filteredRolls.every((roll) => selectedRollIds.has(roll.id));
+
   function toggleSelectAll() {
-    if (selectedRollIds.size === availableRolls.length) {
-      setSelectedRollIds(new Set());
-      setAllocatedLengths({});
-    } else {
-      const allIds = availableRolls.map((r) => r.id);
-      const newSelection = new Set(allIds);
-      const newAllocated: Record<string, string> = {};
-      availableRolls.forEach((roll) => {
-        newAllocated[roll.id] = roll.remaining_for_batches.toFixed(2);
+    if (allFilteredSelected) {
+      const nextSelection = new Set(selectedRollIds);
+      const nextAllocated = { ...allocatedLengths };
+      filteredRolls.forEach((roll) => {
+        nextSelection.delete(roll.id);
+        delete nextAllocated[roll.id];
       });
-      setSelectedRollIds(newSelection);
-      setAllocatedLengths(newAllocated);
+      setSelectedRollIds(nextSelection);
+      setAllocatedLengths(nextAllocated);
+    } else {
+      const nextSelection = new Set(selectedRollIds);
+      const nextAllocated = { ...allocatedLengths };
+      filteredRolls.forEach((roll) => {
+        nextSelection.add(roll.id);
+        nextAllocated[roll.id] = roll.remaining_for_batches.toFixed(2);
+      });
+      setSelectedRollIds(nextSelection);
+      setAllocatedLengths(nextAllocated);
     }
   }
 
@@ -486,20 +502,41 @@ export default function NewCoatingBatchPage() {
                   onClick={toggleSelectAll}
                   className="text-sm text-blue-600 hover:text-blue-700"
                 >
-                  {selectedRollIds.size === availableRolls.length ? "Deselect All" : "Select All"}
+                  {allFilteredSelected ? "Deselect All" : "Select All"}
                 </button>
               )}
             </div>
             <p className="mt-1 text-sm text-slate-600">
               Select rolls with status: {STATUS_READY_FOR_COATING} at location: {LOCATION_COATING}
             </p>
+            {availableRolls.length > 0 && (
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Search rolls
+                </label>
+                <input
+                  type="text"
+                  value={rollSearchQuery}
+                  onChange={(e) => setRollSearchQuery(e.target.value)}
+                  placeholder="e.g. BFR-000107 or 107"
+                  className="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                {rollSearchQuery.trim() && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Showing {filteredRolls.length} of {availableRolls.length} roll(s)
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {isLoading ? (
             <div className="p-8 text-center text-slate-600">Loading rolls...</div>
-          ) : availableRolls.length === 0 ? (
+          ) : filteredRolls.length === 0 ? (
             <div className="p-8 text-center text-slate-600">
-              No rolls available. Rolls must be in COATING location with READY_FOR_COATING status.
+              {rollSearchQuery.trim()
+                ? `No rolls match "${rollSearchQuery.trim()}".`
+                : "No rolls available. Rolls must be in COATING location with READY_FOR_COATING status."}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -509,7 +546,7 @@ export default function NewCoatingBatchPage() {
                     <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                       <input
                         type="checkbox"
-                        checked={selectedRollIds.size === availableRolls.length && availableRolls.length > 0}
+                        checked={allFilteredSelected}
                         onChange={toggleSelectAll}
                         className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                       />
@@ -538,7 +575,7 @@ export default function NewCoatingBatchPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 bg-white">
-                  {availableRolls.map((roll) => (
+                  {filteredRolls.map((roll) => (
                     <tr
                       key={roll.id}
                       className={selectedRollIds.has(roll.id) ? "bg-blue-50" : ""}
