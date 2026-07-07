@@ -10,8 +10,8 @@ import { motion } from "framer-motion";
 
 const STATUS_ISSUED = "ISSUED";
 const LOCATION_DISPATCHED = "DISPATCHED";
-const STATUS_RETURNED = "RETURNED";
-const LOCATION_RETURNED = "RETURNED";
+const STATUS_IN_STORE = "IN_STORE";
+const LOCATION_STORE = "FINISHED_STORE";
 
 const RETURN_REASONS = [
   { value: "", label: "— Select —" },
@@ -272,22 +272,33 @@ export default function NewCustomerReturnPage() {
         .insert(lines);
       if (linesError) throw linesError;
 
-      const { error: updateError } = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .update({
-          status: STATUS_RETURNED,
-          current_location: LOCATION_RETURNED,
-        })
-        .in("id", Array.from(selectedRollIds));
-      if (updateError) throw updateError;
+      const returnedAt = new Date().toISOString();
+      const returnedBy = userData?.user?.id ?? null;
+      for (const line of lines) {
+        const { error: updateError } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .update({
+            status: STATUS_IN_STORE,
+            current_location: LOCATION_STORE,
+            length_m: line.length_m,
+            grade: line.grade,
+            received_store_at: returnedAt,
+            received_store_by: returnedBy,
+          })
+          .eq("id", line.roll_id)
+          .eq("status", STATUS_ISSUED)
+          .eq("current_location", LOCATION_DISPATCHED);
+
+        if (updateError) throw updateError;
+      }
 
       if (disposition === "EXCHANGE") {
         setSuccess(
-          `Exchange return recorded. Exchange slip: ${(returnRow as any)?.exchange_slip_no ?? "FEX"}. Issue replacement rolls via Issue from Store using this reference.`
+          `Exchange return recorded. Exchange slip: ${(returnRow as any)?.exchange_slip_no ?? "FEX"}. Rolls moved back to Finished Store — issue replacement rolls via Issue from Store using this reference.`
         );
         router.push(`/toolbox/orders/returns/${returnRow!.id}`);
       } else {
-        setSuccess("Return recorded. Rolls marked as returned.");
+        setSuccess("Return recorded. Rolls moved back to Finished Store stock.");
         router.push(`/toolbox/orders/returns?created=${returnRow!.id}`);
       }
     } catch (err: any) {
