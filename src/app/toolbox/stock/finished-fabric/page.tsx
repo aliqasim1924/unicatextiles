@@ -98,7 +98,7 @@ export default function FinishedFabricStockPage() {
         }
       }
 
-      const inStockSelect = includeQr ? inStockSelectWithQr : inStockSelectWithoutQr;
+      const inStockSelect: string = includeQr ? inStockSelectWithQr : inStockSelectWithoutQr;
       const inStockData = await fetchAllRows<any>((from, to) =>
         supabaseBrowserClient
           .from("finished_fabric_rolls")
@@ -110,12 +110,8 @@ export default function FinishedFabricStockPage() {
       );
 
       // Fetch history rolls (issued/dispatched)
-      let historyData, historyError;
-      const historyResult = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .select(
-          includeQr
-            ? `
+      const historySelect: string = includeQr
+        ? `
           id,
           qr_code,
           roll_no,
@@ -132,7 +128,7 @@ export default function FinishedFabricStockPage() {
             batch_no
           )
         `
-            : `
+        : `
             id,
             roll_no,
             length_m,
@@ -147,15 +143,15 @@ export default function FinishedFabricStockPage() {
             coating_batches (
               batch_no
             )
-          `
-        )
+          `;
+
+      const { data: historyData, error: historyError } = await supabaseBrowserClient
+        .from("finished_fabric_rolls")
+        .select(historySelect)
         .eq("status", STATUS_ISSUED)
         .eq("current_location", LOCATION_DISPATCHED)
         .order("issued_store_at", { ascending: false })
         .limit(500); // Limit history to recent 500 rolls
-
-      historyData = historyResult.data;
-      historyError = historyResult.error;
 
       if (historyError) throw historyError;
 
