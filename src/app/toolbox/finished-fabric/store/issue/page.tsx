@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
+import { fetchAllRows } from "@/lib/supabase/fetchAllRows";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
@@ -138,14 +139,15 @@ export default function FinishedFabricStoreIssuePage() {
     try {
       setIsLoading(true);
       setError(null);
-      const { data, error: fetchError } = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .select("id, roll_no, length_m, grade, color, coating_type, gsm, fabric_type_id, gsm_option_id, color_option_id, width_option_id, status, current_location")
-        .eq("status", STATUS_IN_STORE)
-        .eq("current_location", LOCATION_STORE)
-        .order("created_at", { ascending: false });
-
-      if (fetchError) throw fetchError;
+      const data = await fetchAllRows<any>((from, to) =>
+        supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .select("id, roll_no, length_m, grade, color, coating_type, gsm, fabric_type_id, gsm_option_id, color_option_id, width_option_id, status, current_location")
+          .eq("status", STATUS_IN_STORE)
+          .eq("current_location", LOCATION_STORE)
+          .order("created_at", { ascending: false })
+          .range(from, to)
+      );
 
       const mapped: StoreRoll[] =
         (data || []).map((row: any) => ({

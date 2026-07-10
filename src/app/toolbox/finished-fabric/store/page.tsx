@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
+import { fetchAllRows } from "@/lib/supabase/fetchAllRows";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
 import { motion } from "framer-motion";
@@ -73,11 +74,12 @@ export default function FinishedFabricStorePage() {
 
       if (awaitingError) throw awaitingError;
 
-      // Fetch in store rolls
-      const { data: inStoreData, error: inStoreError } = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .select(
-          `
+      // Fetch in store rolls (paginate past Supabase 1000-row default)
+      const inStoreData = await fetchAllRows<any>((from, to) =>
+        supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .select(
+            `
           id,
           roll_no,
           length_m,
@@ -92,12 +94,12 @@ export default function FinishedFabricStorePage() {
             batch_no
           )
         `
-        )
-        .eq("status", STATUS_IN_STORE)
-        .eq("current_location", LOCATION_STORE)
-        .order("created_at", { ascending: false });
-
-      if (inStoreError) throw inStoreError;
+          )
+          .eq("status", STATUS_IN_STORE)
+          .eq("current_location", LOCATION_STORE)
+          .order("created_at", { ascending: false })
+          .range(from, to)
+      );
 
       const mapRolls = (data: any[]): StoreRoll[] =>
         (data || []).map((row: any) => {

@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
+import { fetchAllRows } from "@/lib/supabase/fetchAllRows";
 import { motion } from "framer-motion";
 import { QRCode } from "@/components/qr/QRCode";
 import { Button } from "@/components/ui/Button";
@@ -48,13 +49,7 @@ export default function FinishedFabricStockPage() {
       setIsLoading(true);
       setError(null);
 
-      // Fetch in-stock rolls (in store)
-      // Note: qr_code column may not exist in all databases, so we try to select it but handle gracefully
-      let inStockData, inStockError;
-      const inStockResult = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .select(
-          `
+      const inStockSelectWithQr = `
           id,
           qr_code,
           roll_no,
@@ -69,21 +64,8 @@ export default function FinishedFabricStockPage() {
           coating_batches (
             batch_no
           )
-        `
-        )
-        .eq("status", STATUS_IN_STORE)
-        .eq("current_location", LOCATION_STORE)
-        .order("created_at", { ascending: false });
-      
-      inStockData = inStockResult.data;
-      inStockError = inStockResult.error;
-
-      // If qr_code column doesn't exist, retry without it
-      if (inStockError && (inStockError.message?.includes("qr_code") || inStockError.message?.includes("column"))) {
-        const retryResult = await supabaseBrowserClient
-          .from("finished_fabric_rolls")
-          .select(
-            `
+        `;
+      const inStockSelectWithoutQr = `
             id,
             roll_no,
             length_m,
@@ -97,23 +79,43 @@ export default function FinishedFabricStockPage() {
             coating_batches (
               batch_no
             )
-          `
-          )
+          `;
+
+      // Probe once for qr_code support, then page through all in-store rolls
+      // (Supabase defaults to max 1000 rows; we currently have 1500+ in store).
+      let includeQr = true;
+      {
+        const probe = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .select(inStockSelectWithQr)
           .eq("status", STATUS_IN_STORE)
           .eq("current_location", LOCATION_STORE)
-          .order("created_at", { ascending: false });
-        inStockData = retryResult.data;
-        inStockError = retryResult.error;
+          .range(0, 0);
+        if (probe.error && (probe.error.message?.includes("qr_code") || probe.error.message?.includes("column"))) {
+          includeQr = false;
+        } else if (probe.error) {
+          throw probe.error;
+        }
       }
 
-      if (inStockError) throw inStockError;
+      const inStockSelect = includeQr ? inStockSelectWithQr : inStockSelectWithoutQr;
+      const inStockData = await fetchAllRows<any>((from, to) =>
+        supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .select(inStockSelect)
+          .eq("status", STATUS_IN_STORE)
+          .eq("current_location", LOCATION_STORE)
+          .order("created_at", { ascending: false })
+          .range(from, to)
+      );
 
       // Fetch history rolls (issued/dispatched)
       let historyData, historyError;
       const historyResult = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .select(
-          `
+          includeQr
+            ? `
           id,
           qr_code,
           roll_no,
@@ -130,21 +132,7 @@ export default function FinishedFabricStockPage() {
             batch_no
           )
         `
-        )
-        .eq("status", STATUS_ISSUED)
-        .eq("current_location", LOCATION_DISPATCHED)
-        .order("issued_store_at", { ascending: false })
-        .limit(500); // Limit history to recent 500 rolls
-      
-      historyData = historyResult.data;
-      historyError = historyResult.error;
-
-      // If qr_code column doesn't exist, retry without it
-      if (historyError && (historyError.message?.includes("qr_code") || historyError.message?.includes("column"))) {
-        const retryResult = await supabaseBrowserClient
-          .from("finished_fabric_rolls")
-          .select(
-            `
+            : `
             id,
             roll_no,
             length_m,
@@ -160,14 +148,14 @@ export default function FinishedFabricStockPage() {
               batch_no
             )
           `
-          )
-          .eq("status", STATUS_ISSUED)
-          .eq("current_location", LOCATION_DISPATCHED)
-          .order("issued_store_at", { ascending: false })
-          .limit(500);
-        historyData = retryResult.data;
-        historyError = retryResult.error;
-      }
+        )
+        .eq("status", STATUS_ISSUED)
+        .eq("current_location", LOCATION_DISPATCHED)
+        .order("issued_store_at", { ascending: false })
+        .limit(500); // Limit history to recent 500 rolls
+
+      historyData = historyResult.data;
+      historyError = historyResult.error;
 
       if (historyError) throw historyError;
 
