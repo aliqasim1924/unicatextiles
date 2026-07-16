@@ -51,6 +51,12 @@ interface LinkedIssueSlip {
   lines_count: number;
 }
 
+interface FinishedRoll {
+  id: string;
+  length_m: number;
+  grade: string | null;
+}
+
 export default function CoatingBatchReportPage() {
   const params = useParams();
   const batchId = params.id as string;
@@ -59,6 +65,7 @@ export default function CoatingBatchReportPage() {
   const [baseRolls, setBaseRolls] = useState<BaseRoll[]>([]);
   const [chemicals, setChemicals] = useState<ChemicalRow[]>([]);
   const [linkedIssueSlips, setLinkedIssueSlips] = useState<LinkedIssueSlip[]>([]);
+  const [finishedRolls, setFinishedRolls] = useState<FinishedRoll[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -154,6 +161,19 @@ export default function CoatingBatchReportPage() {
       } else {
         setLinkedIssueSlips([]);
       }
+
+      const { data: finishedData, error: finishedError } = await supabaseBrowserClient
+        .from("finished_fabric_rolls")
+        .select("id, length_m, grade")
+        .eq("batch_id", batchId);
+      if (finishedError) throw finishedError;
+      setFinishedRolls(
+        (finishedData || []).map((row: any) => ({
+          id: row.id,
+          length_m: Number(row.length_m || 0),
+          grade: row.grade ?? null,
+        })) as FinishedRoll[]
+      );
     } catch (err: any) {
       setError(err.message || "Failed to load report.");
     } finally {
@@ -162,10 +182,27 @@ export default function CoatingBatchReportPage() {
   }
 
   const totalInputMeters = baseRolls.reduce((sum, r) => sum + (r.input_length_m || 0), 0);
+  const actualCoated = batch?.actual_coated_meters ?? null;
+  const totalFinishedLength = finishedRolls.reduce((sum, r) => sum + r.length_m, 0);
+  const gradeSum = (grade: string) =>
+    finishedRolls.filter((r) => r.grade === grade).reduce((sum, r) => sum + r.length_m, 0);
+  const aMeters = gradeSum("A");
+  const bMeters = gradeSum("B");
+  const cMeters = gradeSum("C");
+  const scrapMeters = gradeSum("SCRAP");
+  const nonAGradeTotal = bMeters + cMeters + scrapMeters;
   const yieldPercent =
-    batch?.actual_coated_meters && totalInputMeters > 0
-      ? (batch.actual_coated_meters / totalInputMeters) * 100
-      : null;
+    nonAGradeTotal > 0 && aMeters > 0
+      ? (aMeters / (aMeters + nonAGradeTotal)) * 100
+      : nonAGradeTotal === 0 && aMeters > 0
+        ? 100
+        : null;
+  const percentOfCoated = (val: number) =>
+    actualCoated !== null && actualCoated > 0 ? (val / actualCoated) * 100 : null;
+  const aPercent = percentOfCoated(aMeters);
+  const bPercent = percentOfCoated(bMeters);
+  const cPercent = percentOfCoated(cMeters);
+  const scrapPercent = percentOfCoated(scrapMeters);
 
   function formatDate(dateString?: string | null) {
     if (!dateString) return "-";
@@ -289,11 +326,63 @@ export default function CoatingBatchReportPage() {
                 batch.actual_coated_meters !== null ? `${batch.actual_coated_meters.toFixed(2)} m` : "-"
               }
             />
-            <Detail
-              label="Yield %"
-              value={yieldPercent !== null ? `${yieldPercent.toFixed(1)}%` : "-"}
-            />
             <Detail label="Status" value={batch.status} />
+          </div>
+
+          {/* Yield / Grades Summary — same calculations as batch Rolling Summary */}
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">
+              Yield & Grades Summary
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+              <div>
+                <p className="font-semibold text-slate-900">A Grade</p>
+                <p className="text-slate-700">{aMeters.toFixed(2)} m</p>
+                <p className="text-xs text-slate-500">
+                  {aPercent !== null ? `${aPercent.toFixed(2)}% of coated` : "-"}
+                </p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">B Grade</p>
+                <p className="text-slate-700">{bMeters.toFixed(2)} m</p>
+                <p className="text-xs text-slate-500">
+                  {bPercent !== null ? `${bPercent.toFixed(2)}% of coated` : "-"}
+                </p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">C Grade</p>
+                <p className="text-slate-700">{cMeters.toFixed(2)} m</p>
+                <p className="text-xs text-slate-500">
+                  {cPercent !== null ? `${cPercent.toFixed(2)}% of coated` : "-"}
+                </p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Scrap</p>
+                <p className="text-slate-700">{scrapMeters.toFixed(2)} m</p>
+                <p className="text-xs text-slate-500">
+                  {scrapPercent !== null ? `${scrapPercent.toFixed(2)}% of coated` : "-"}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 text-sm border-t border-slate-200 pt-3">
+              <div>
+                <p className="font-semibold text-slate-900">Total Finished</p>
+                <p className="text-slate-700">{totalFinishedLength.toFixed(2)} m</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Yield (A Grade)</p>
+                {yieldPercent !== null ? (
+                  <>
+                    <p className="text-slate-700">{yieldPercent.toFixed(2)}%</p>
+                    <p className="text-xs text-slate-500">
+                      A: {aMeters.toFixed(2)} m / Total: {(aMeters + nonAGradeTotal).toFixed(2)} m
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-slate-500">No finished rolls</p>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Input rolls table */}
