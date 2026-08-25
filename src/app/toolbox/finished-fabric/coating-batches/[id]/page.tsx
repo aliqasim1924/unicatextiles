@@ -134,6 +134,7 @@ export default function CoatingBatchDetailPage() {
   const [editRollGrade, setEditRollGrade] = useState("A");
   const [editRollNotes, setEditRollNotes] = useState("");
   const [isUpdatingRoll, setIsUpdatingRoll] = useState(false);
+  const [printRollIds, setPrintRollIds] = useState<Set<string>>(new Set());
 
   // Base fabric roll selection state
   const [availableBaseRolls, setAvailableBaseRolls] = useState<Array<{
@@ -784,6 +785,28 @@ export default function CoatingBatchDetailPage() {
   function canEditRoll(roll: FinishedRoll): boolean {
     return roll.received_store_at == null;
   }
+
+  function togglePrintRoll(id: string) {
+    setPrintRollIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllPrintRolls() {
+    if (printRollIds.size === finishedRolls.length) {
+      setPrintRollIds(new Set());
+    } else {
+      setPrintRollIds(new Set(finishedRolls.map((r) => r.id)));
+    }
+  }
+
+  const printHref =
+    printRollIds.size > 0
+      ? `/toolbox/qr/print?rollIds=${Array.from(printRollIds).join(",")}&type=finished_fabric`
+      : `/toolbox/qr/print?rollIds=${finishedRolls.map((r) => r.id).join(",")}&type=finished_fabric`;
 
   function handleStartEditRoll(roll: FinishedRoll) {
     if (!canEditRoll(roll)) return;
@@ -1916,16 +1939,17 @@ export default function CoatingBatchDetailPage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-xl font-semibold text-slate-900">
             Finished Fabric Rolls ({finishedRolls.length})
           </h2>
           {finishedRolls.length > 0 && (
-            <Link
-              href={`/toolbox/qr/print?rollIds=${finishedRolls.map((r) => r.id).join(",")}&type=finished_fabric`}
-              target="_blank"
-            >
-              <Button variant="primary">Print QR Codes</Button>
+            <Link href={printHref} target="_blank">
+              <Button variant="primary">
+                {printRollIds.size > 0
+                  ? `Print ${printRollIds.size} label${printRollIds.size === 1 ? "" : "s"}`
+                  : "Print all labels"}
+              </Button>
             </Link>
           )}
         </div>
@@ -1940,6 +1964,14 @@ export default function CoatingBatchDetailPage() {
             <table className="w-full">
               <thead className="border-b border-slate-200 bg-slate-50">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={finishedRolls.length > 0 && printRollIds.size === finishedRolls.length}
+                      onChange={toggleAllPrintRolls}
+                      aria-label="Select all rolls for printing"
+                    />
+                  </th>
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Roll No
                   </th>
@@ -1966,6 +1998,14 @@ export default function CoatingBatchDetailPage() {
                   const editable = canEditRoll(roll);
                   return (
                     <tr key={roll.id} className={isEditing ? "bg-slate-50" : ""}>
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={printRollIds.has(roll.id)}
+                          onChange={() => togglePrintRoll(roll.id)}
+                          aria-label={`Select ${roll.roll_no ?? "roll"} for printing`}
+                        />
+                      </td>
                       <td className="whitespace-nowrap px-4 py-2 text-sm font-medium text-slate-900">
                         {roll.roll_no ?? "-"}
                       </td>

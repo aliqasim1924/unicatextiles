@@ -4,17 +4,9 @@ import { useSearchParams } from "next/navigation";
 import { QRCode } from "@/components/qr/QRCode";
 import { useEffect, useState, useRef } from "react";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
+import { generateLabelPdf, LABEL_SIZE_MM, type LabelPdfRow } from "@/lib/qr/generateLabelPdf";
 
-interface QRData {
-  qr_code: string;
-  roll_no: string | null;
-  type: "base_fabric" | "finished_fabric";
-  length_m?: number;
-  order_no?: string | null;
-  fabric_name?: string | null;
-  gsm?: number | null;
-  loom_no?: number | string | null;
-}
+type QRData = LabelPdfRow;
 
 export default function QRPrintPage() {
   const searchParams = useSearchParams();
@@ -24,13 +16,13 @@ export default function QRPrintPage() {
   const [qrData, setQrData] = useState<QRData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const hasPrintedRef = useRef(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const hasLoadedRef = useRef(false);
 
   useEffect(() => {
-    // Prevent multiple fetches
     if (hasLoadedRef.current) return;
-    
+
     if (rollIds.length === 0) {
       setError("No rolls selected for printing.");
       setIsLoading(false);
@@ -67,32 +59,36 @@ export default function QRPrintPage() {
 
           if (fetchError) throw fetchError;
 
-          const mapped = (data || []).map((row: any) => {
-            const order = Array.isArray(row.base_fabric_orders)
-              ? row.base_fabric_orders[0]
-              : row.base_fabric_orders;
-            const item = order?.base_fabric_items
-              ? Array.isArray(order.base_fabric_items)
-                ? order.base_fabric_items[0]
-                : order.base_fabric_items
-              : null;
+          const byId = new Map((data || []).map((row: any) => [row.id, row]));
+          const mapped = rollIds
+            .map((id) => byId.get(id))
+            .filter(Boolean)
+            .map((row: any) => {
+              const order = Array.isArray(row.base_fabric_orders)
+                ? row.base_fabric_orders[0]
+                : row.base_fabric_orders;
+              const item = order?.base_fabric_items
+                ? Array.isArray(order.base_fabric_items)
+                  ? order.base_fabric_items[0]
+                  : order.base_fabric_items
+                : null;
 
-            return {
-              qr_code: row.qr_code || row.roll_no || `BFR-${row.id.slice(0, 8)}`,
-              roll_no: row.roll_no,
-              type: "base_fabric" as const,
-              length_m: row.length_m,
-              order_no: order?.order_no || null,
-              fabric_name: item?.name || null,
-              gsm:
-                row.actual_gsm !== null && row.actual_gsm !== undefined
-                  ? Number(row.actual_gsm)
-                  : item?.gsm !== null && item?.gsm !== undefined
-                    ? Number(item.gsm)
-                    : null,
-              loom_no: order?.loom_no ?? null,
-            };
-          });
+              return {
+                qr_code: row.qr_code || row.roll_no || `BFR-${row.id.slice(0, 8)}`,
+                roll_no: row.roll_no,
+                type: "base_fabric" as const,
+                length_m: row.length_m,
+                order_no: order?.order_no || null,
+                fabric_name: item?.name || null,
+                gsm:
+                  row.actual_gsm !== null && row.actual_gsm !== undefined
+                    ? Number(row.actual_gsm)
+                    : item?.gsm !== null && item?.gsm !== undefined
+                      ? Number(item.gsm)
+                      : null,
+                loom_no: order?.loom_no ?? null,
+              };
+            });
 
           setQrData(mapped);
         } else {
@@ -114,16 +110,20 @@ export default function QRPrintPage() {
 
           if (fetchError) throw fetchError;
 
-          const mapped = (data || []).map((row: any) => ({
-            qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
-            roll_no: row.roll_no,
-            type: "finished_fabric" as const,
-            length_m: row.length_m,
-            grade: row.grade,
-            color: row.color,
-            coating_type: row.coating_type,
-            gsm: row.gsm,
-          }));
+          const byId = new Map((data || []).map((row: any) => [row.id, row]));
+          const mapped = rollIds
+            .map((id) => byId.get(id))
+            .filter(Boolean)
+            .map((row: any) => ({
+              qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
+              roll_no: row.roll_no,
+              type: "finished_fabric" as const,
+              length_m: row.length_m,
+              grade: row.grade,
+              color: row.color,
+              coating_type: row.coating_type,
+              gsm: row.gsm,
+            }));
 
           setQrData(mapped);
         }
@@ -138,23 +138,22 @@ export default function QRPrintPage() {
     fetchQRData();
   }, [rollIdsParam, type]);
 
-  // Optional: Auto-print when page loads (commented out to prevent issues)
-  // Users can click the "Print QR Codes" button manually when ready
-  // useEffect(() => {
-  //   if (!isLoading && qrData.length > 0 && !hasPrintedRef.current && !error) {
-  //     hasPrintedRef.current = true;
-  //     const timer = setTimeout(() => {
-  //       window.print();
-  //     }, 2000);
-  //     return () => clearTimeout(timer);
-  //   }
-  // }, [isLoading, qrData.length, error]);
+  async function handleDownloadPdf() {
+    setPdfError(null);
+    setIsGeneratingPdf(true);
+    try {
+      await generateLabelPdf(qrData, type);
+    } catch (err: any) {
+      setPdfError(err.message || "Failed to generate PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
 
-  // Don't show loading if we already have data (prevents flicker during print)
   if (isLoading && qrData.length === 0) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <p className="text-slate-600">Loading QR codes...</p>
+        <p className="text-slate-600">Loading labels...</p>
       </div>
     );
   }
@@ -175,147 +174,127 @@ export default function QRPrintPage() {
     );
   }
 
-  // Pad to multiple of 4 for grid layout
-  const paddedData = [...qrData];
-  while (paddedData.length % 4 !== 0) {
-    paddedData.push({
-      qr_code: "",
-      roll_no: null,
-      type: type,
-    } as QRData);
-  }
-
   return (
-    <div className="bg-white p-8 print:p-4">
+    <div className="label-print-root bg-slate-100 print:bg-white">
       <style jsx global>{`
+        @page {
+          size: ${LABEL_SIZE_MM}mm ${LABEL_SIZE_MM}mm;
+          margin: 0;
+        }
         @media print {
-          @page {
-            size: A4;
-            margin: 0.5cm;
-          }
+          html,
           body {
-            margin: 0;
-            padding: 0;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: white !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
           .no-print {
             display: none !important;
           }
+          .label-print-root {
+            background: white !important;
+            padding: 0 !important;
+          }
+          .qr-label {
+            width: ${LABEL_SIZE_MM}mm;
+            height: ${LABEL_SIZE_MM}mm;
+            page-break-after: always;
+            break-after: page;
+            page-break-inside: avoid;
+            break-inside: avoid;
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+            border-radius: 0 !important;
+          }
+          .qr-label:last-child {
+            page-break-after: auto;
+            break-after: auto;
+          }
         }
       `}</style>
 
-      {/* Print button (hidden when printing) */}
-      <div className="no-print mb-4 flex gap-4">
-        <button
-          onClick={() => window.print()}
-          className="rounded-lg bg-teal-700 px-4 py-2 text-white hover:bg-teal-800"
-        >
-          Print QR Codes
-        </button>
-        <button
-          onClick={() => window.close()}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-700 hover:bg-slate-50"
-        >
-          Close
-        </button>
+      <div className="no-print mx-auto max-w-xl px-4 py-6">
+        <h1 className="text-lg font-semibold text-slate-900">Roll labels ({qrData.length})</h1>
+        <p className="mt-2 text-sm text-slate-600">
+          100 × 100 mm labels for the Epson TM-C3500 (100 mm × 30 m continuous roll). Download the PDF,
+          then print at 100% scale with no margins.
+        </p>
+        {pdfError && <p className="mt-3 text-sm text-red-600">{pdfError}</p>}
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf || qrData.length === 0}
+            className="rounded-lg bg-teal-700 px-4 py-2 text-white hover:bg-teal-800 disabled:opacity-60"
+          >
+            {isGeneratingPdf ? "Building PDF..." : "Download PDF"}
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-700 hover:bg-slate-50"
+          >
+            Print from browser
+          </button>
+          <button
+            onClick={() => window.close()}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
       </div>
 
-      {/* QR Code Grid - 2x2 per page */}
-      <div className="grid grid-cols-2 gap-0 print:grid-cols-2">
-        {paddedData.map((data, index) => {
-          if (!data.qr_code) {
-            // Empty placeholder
-            return (
-              <div
-                key={`empty-${index}`}
-                className="flex min-h-[calc(297mm/2-1cm)] flex-col items-center justify-center border-b-2 border-r-2 border-dashed border-slate-300 p-4 print:min-h-[calc(297mm/2-1cm)] print:border-b-2 print:border-r-2 print:border-dashed print:border-slate-400"
-              >
-                {/* Empty space */}
+      <div className="flex flex-col items-center gap-4 p-4 print:gap-0 print:p-0">
+        {qrData.map((data) => (
+          <article
+            key={data.qr_code}
+            className="qr-label flex flex-col items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm"
+            style={{ width: `${LABEL_SIZE_MM}mm`, height: `${LABEL_SIZE_MM}mm` }}
+          >
+            <div className="flex h-[16mm] w-full items-center justify-center">
+              <img src="/Logo.png" alt="Unica Textiles" className="max-h-[16mm] max-w-[42mm] object-contain" />
+            </div>
+            <div className="flex h-[48mm] w-[48mm] items-center justify-center">
+              <QRCode value={data.qr_code} size={180} level="M" includeMargin={false} />
+            </div>
+            <div className="w-full pb-1 text-center">
+              <div className="text-xl font-bold leading-tight text-slate-900">
+                {data.roll_no || data.qr_code}
               </div>
-            );
-          }
-
-          return (
-            <div
-              key={data.qr_code}
-              className="flex min-h-[calc(297mm/2-1cm)] flex-col items-center justify-center border-b-2 border-r-2 border-dashed border-slate-300 p-4 print:min-h-[calc(297mm/2-1cm)] print:border-b-2 print:border-r-2 print:border-dashed print:border-slate-400"
-            >
-              {/* Cutting line indicator */}
-              <div className="mb-2 text-xs text-slate-400 print:text-slate-500">
-                ──── Cut Here ────
-              </div>
-
-              {/* QR Code */}
-              <div className="mb-4 flex items-center justify-center rounded-lg border-2 border-slate-200 bg-white p-4 print:border-slate-300">
-                <div data-qr-code={data.qr_code}>
-                  <QRCode value={data.qr_code} size={180} level="M" />
-                </div>
-              </div>
-
-              {/* Roll Information */}
-              <div className="text-center">
-                <div className="mb-1 text-lg font-bold text-slate-900 print:text-base">
-                  {data.roll_no || data.qr_code}
-                </div>
-                {data.type === "base_fabric" ? (
-                  data.loom_no != null && data.loom_no !== "" ? (
-                    <div className="text-sm font-semibold text-slate-700 print:text-xs">
-                      Loom Number: {String(data.loom_no)}
+              {data.type === "base_fabric" ? (
+                <>
+                  {data.loom_no != null && data.loom_no !== "" && (
+                    <div className="mt-0.5 text-sm font-semibold text-slate-800">
+                      Loom {String(data.loom_no)}
                     </div>
-                  ) : null
-                ) : (
-                  <div className="text-sm font-semibold text-slate-700 print:text-xs">
-                    {data.qr_code}
-                  </div>
-                )}
-                {data.length_m && (
-                  <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
-                    Length: {data.length_m.toFixed(2)} m
-                  </div>
-                )}
-                {data.type === "base_fabric" && (
-                  <>
-                    {data.order_no && (
-                      <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
-                        Order: {data.order_no}
-                      </div>
-                    )}
-                    {data.fabric_name && (
-                      <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
-                        {data.fabric_name}
-                      </div>
-                    )}
-                    {data.gsm != null && (
-                      <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
-                        GSM: {Number(data.gsm).toFixed(2)}
-                      </div>
-                    )}
-                  </>
-                )}
-                {data.type === "finished_fabric" && (
-                  <>
-                    {(data as any).grade && (
-                      <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
-                        Grade: {(data as any).grade}
-                      </div>
-                    )}
-                    {(data as any).color && (
-                      <div className="mt-1 text-xs text-slate-600 print:text-[10px]">
-                        Color: {(data as any).color}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Bottom cutting line */}
-              <div className="mt-4 text-xs text-slate-400 print:text-slate-500">
-                ──── Cut Here ────
+                  )}
+                  {data.fabric_name && (
+                    <div className="text-sm text-slate-700">{data.fabric_name}</div>
+                  )}
+                  {data.order_no && (
+                    <div className="text-xs text-slate-600">Order {data.order_no}</div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {data.coating_type && (
+                    <div className="mt-0.5 text-sm font-semibold text-slate-800">{data.coating_type}</div>
+                  )}
+                  {data.color && <div className="text-sm text-slate-700">{data.color}</div>}
+                  {data.grade && <div className="text-xs text-slate-600">Grade {data.grade}</div>}
+                </>
+              )}
+              <div className="mt-1 text-sm text-slate-700">
+                {data.length_m != null && <span>{Number(data.length_m).toFixed(2)} m</span>}
+                {data.length_m != null && data.gsm != null && <span> · </span>}
+                {data.gsm != null && <span>{Number(data.gsm).toFixed(0)} GSM</span>}
               </div>
             </div>
-          );
-        })}
+          </article>
+        ))}
       </div>
     </div>
   );
 }
-

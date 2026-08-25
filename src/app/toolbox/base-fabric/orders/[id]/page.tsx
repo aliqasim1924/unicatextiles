@@ -161,6 +161,7 @@ export default function BaseFabricOrderDetailPage() {
   const [cancelReason, setCancelReason] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
   const [rollsToKeep, setRollsToKeep] = useState<Set<string>>(new Set());
+  const [printRollIds, setPrintRollIds] = useState<Set<string>>(new Set());
   const [beamCancelWeights, setBeamCancelWeights] = useState<Record<string, string>>({});
   const [weftCancelKgEnd, setWeftCancelKgEnd] = useState<Record<string, string>>({});
   const [extraWeftUsed, setExtraWeftUsed] = useState<Record<string, string>>({});
@@ -456,6 +457,28 @@ export default function BaseFabricOrderDetailPage() {
     const { name, value } = e.target;
     setRollForm((prev) => ({ ...prev, [name]: value }));
   }
+
+  function togglePrintRoll(id: string) {
+    setPrintRollIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllPrintRolls() {
+    if (printRollIds.size === rolls.length) {
+      setPrintRollIds(new Set());
+    } else {
+      setPrintRollIds(new Set(rolls.map((r) => r.id)));
+    }
+  }
+
+  const printHref =
+    printRollIds.size > 0
+      ? `/toolbox/qr/print?rollIds=${Array.from(printRollIds).join(",")}&type=base_fabric`
+      : `/toolbox/qr/print?rollIds=${rolls.map((r) => r.id).join(",")}&type=base_fabric`;
 
   async function handleAddRoll(e: React.FormEvent) {
     e.preventDefault();
@@ -2725,16 +2748,17 @@ export default function BaseFabricOrderDetailPage() {
         transition={{ duration: 0.3, delay: 0.3 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden"
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-xl font-semibold text-slate-900">
             Rolls ({rolls.length} total, {totalProduced.toFixed(2)} m)
           </h2>
           {rolls.length > 0 && (
-            <Link
-              href={`/toolbox/qr/print?rollIds=${rolls.map((r) => r.id).join(",")}&type=base_fabric`}
-              target="_blank"
-            >
-              <Button variant="primary">Print QR Codes</Button>
+            <Link href={printHref} target="_blank">
+              <Button variant="primary">
+                {printRollIds.size > 0
+                  ? `Print ${printRollIds.size} label${printRollIds.size === 1 ? "" : "s"}`
+                  : "Print all labels"}
+              </Button>
             </Link>
           )}
         </div>
@@ -2746,6 +2770,14 @@ export default function BaseFabricOrderDetailPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
+                  <th className="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      checked={rolls.length > 0 && printRollIds.size === rolls.length}
+                      onChange={toggleAllPrintRolls}
+                      aria-label="Select all rolls for printing"
+                    />
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">QR Code</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
@@ -2758,6 +2790,14 @@ export default function BaseFabricOrderDetailPage() {
               <tbody>
                 {rolls.map((roll) => (
                   <tr key={roll.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={printRollIds.has(roll.id)}
+                        onChange={() => togglePrintRoll(roll.id)}
+                        aria-label={`Select ${roll.roll_no || "roll"} for printing`}
+                      />
+                    </td>
                     <td className="px-4 py-3 font-medium text-slate-900">
                       {roll.roll_no || "-"}
                     </td>
