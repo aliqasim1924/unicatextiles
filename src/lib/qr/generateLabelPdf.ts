@@ -11,7 +11,7 @@ export interface LabelPdfRow {
   qr_code: string;
   roll_no: string | null;
   type: "base_fabric" | "finished_fabric";
-  length_m?: number;
+  length_m?: number | null;
   order_no?: string | null;
   fabric_name?: string | null;
   gsm?: number | null;
@@ -19,6 +19,7 @@ export interface LabelPdfRow {
   grade?: string | null;
   color?: string | null;
   coating_type?: string | null;
+  batch_no?: string | null;
 }
 
 async function loadImage(src: string): Promise<HTMLImageElement | null> {
@@ -75,15 +76,13 @@ function drawLabel(
   logo: HTMLImageElement | null,
   qrDataUrl: string
 ) {
-  const size = LABEL_SIZE_MM;
-  const pad = 6;
-  const content = size - pad * 2;
+  const size = LABEL_SIZE_MM; // 100mm x 100mm
+  let y = 4;
 
-  let y = pad;
-
+  // 1. Header Logo
   if (logo && logo.width > 0) {
     const maxW = 42;
-    const maxH = 16;
+    const maxH = 13;
     const ratio = logo.height / logo.width || 1;
     let w = maxW;
     let h = w * ratio;
@@ -92,51 +91,126 @@ function drawLabel(
       w = h / ratio;
     }
     doc.addImage(logo, "PNG", (size - w) / 2, y, w, h);
-    y += h + 3;
+    y += h + 2;
   } else {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text("UNICA TEXTILES", size / 2, y + 5, { align: "center" });
-    y += 10;
+    doc.text("UNICA TEXTILES", size / 2, y + 4, { align: "center" });
+    y += 8;
   }
 
-  const qrMm = 48;
+  // 2. QR Code
+  const qrMm = 36;
   const qrX = (size - qrMm) / 2;
   doc.addImage(qrDataUrl, "PNG", qrX, y, qrMm, qrMm);
-  y += qrMm + 3.5;
+  y += qrMm + 4.5;
 
+  // 3. Main Title (Roll No / QR Code)
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
+  doc.setFontSize(14);
   doc.setTextColor(15, 23, 42);
   const title = data.roll_no || data.qr_code;
-  doc.text(title, size / 2, y, { align: "center", maxWidth: content });
-  y += 7;
+  doc.text(title, size / 2, y, { align: "center", maxWidth: 90 });
+  y += 3.5;
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(51, 65, 85);
+  // Horizontal Divider Line
+  doc.setDrawColor(203, 213, 225); // Slate 300 border
+  doc.setLineWidth(0.3);
+  doc.line(6, y, 94, y);
+  y += 4;
 
-  const lines: string[] = [];
+  // 4. Two-Column Grid Setup
+  const col1X = 26; // Center of Left Column
+  const col2X = 74; // Center of Right Column
+
+  // Vertical Divider between columns
+  doc.setDrawColor(226, 232, 240); // Slate 200 light border
+  doc.line(50, y - 1, 50, y + 17);
+
   if (data.type === "base_fabric") {
-    if (data.loom_no != null && data.loom_no !== "") lines.push(`Loom ${String(data.loom_no)}`);
-    if (data.fabric_name) lines.push(data.fabric_name);
-    if (data.order_no) lines.push(`Order ${data.order_no}`);
-  } else {
-    if (data.coating_type) lines.push(data.coating_type);
-    if (data.color) lines.push(data.color);
-    if (data.grade) lines.push(`Grade ${data.grade}`);
-  }
-  const meta: string[] = [];
-  if (data.length_m != null) meta.push(`${Number(data.length_m).toFixed(2)} m`);
-  if (data.gsm != null) meta.push(`${Number(data.gsm).toFixed(0)} GSM`);
-  if (meta.length) lines.push(meta.join("   "));
+    // Row 1: Loom No | Order / Fabric
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("LOOM", col1X, y, { align: "center" });
+    doc.text("ORDER / FABRIC", col2X, y, { align: "center" });
+    y += 4;
 
-  lines.forEach((line) => {
-    if (y > size - pad) return;
-    doc.text(line, size / 2, y, { align: "center", maxWidth: content });
-    y += 4.2;
-  });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    const loomText = data.loom_no != null && data.loom_no !== "" ? `Loom ${data.loom_no}` : "—";
+    const fabricText = data.fabric_name || data.order_no || "—";
+    doc.text(loomText, col1X, y, { align: "center", maxWidth: 40 });
+    doc.text(fabricText, col2X, y, { align: "center", maxWidth: 40 });
+    y += 6;
+
+    // Row 2: Length (Meters) | GSM
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("LENGTH", col1X, y, { align: "center" });
+    doc.text("WEIGHT", col2X, y, { align: "center" });
+    y += 4;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    const lengthText = data.length_m != null ? `${Number(data.length_m).toFixed(2)} m` : "—";
+    const gsmText = data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—";
+    doc.text(lengthText, col1X, y, { align: "center" });
+    doc.text(gsmText, col2X, y, { align: "center" });
+  } else {
+    // Finished Fabric Column Layout
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("COATING / COLOR", col1X, y, { align: "center" });
+    doc.text("GRADE", col2X, y, { align: "center" });
+    y += 4;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    const coatingColor = [data.coating_type, data.color].filter(Boolean).join(" · ") || "—";
+    const gradeText = data.grade ? `Grade ${data.grade}` : "—";
+    doc.text(coatingColor, col1X, y, { align: "center", maxWidth: 40 });
+    doc.text(gradeText, col2X, y, { align: "center", maxWidth: 40 });
+    y += 6;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("LENGTH", col1X, y, { align: "center" });
+    doc.text("WEIGHT", col2X, y, { align: "center" });
+    y += 4;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    const lengthText = data.length_m != null ? `${Number(data.length_m).toFixed(2)} m` : "—";
+    const gsmText = data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—";
+    doc.text(lengthText, col1X, y, { align: "center" });
+    doc.text(gsmText, col2X, y, { align: "center" });
+  }
+
+  y += 4;
+  // Bottom Horizontal Divider
+  doc.setDrawColor(203, 213, 225);
+  doc.line(6, y, 94, y);
+
+  // 5. Footer Row (Batch Number & Made in South Africa)
+  y += 4.5;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  
+  const batchDisplay = data.batch_no ? `BATCH: ${data.batch_no}` : "";
+  doc.setTextColor(71, 85, 105); // Slate 600
+  doc.text(batchDisplay, col1X, y, { align: "center", maxWidth: 42 });
+
+  doc.setTextColor(4, 120, 87); // Emerald 700 green
+  doc.text("MADE IN SOUTH AFRICA", col2X, y, { align: "center", maxWidth: 42 });
 }
 
 export async function generateLabelPdf(

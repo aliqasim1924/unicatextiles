@@ -257,7 +257,7 @@ export default function QRPrintPage() {
               <img src="/Logo.png" alt="Unica Textiles" className="max-h-[16mm] max-w-[42mm] object-contain" />
             </div>
             <div className="flex h-[48mm] w-[48mm] items-center justify-center">
-              <QRCode value={data.qr_code} size={180} level="M" includeMargin={false} />
+              <QRCode value={data.qr_code} size={120} level="M" includeMargin={false} />
             </div>
             <div className="w-full pb-1 text-center">
               <div className="text-xl font-bold leading-tight text-slate-900">
@@ -290,6 +290,10 @@ export default function QRPrintPage() {
                 {data.length_m != null && <span>{Number(data.length_m).toFixed(2)} m</span>}
                 {data.length_m != null && data.gsm != null && <span> · </span>}
                 {data.gsm != null && <span>{Number(data.gsm).toFixed(0)} GSM</span>}
+              </div>
+              {/* Added Made in South Africa tagline */}
+              <div className="mt-1 text-[10px] font-semibold tracking-wider text-slate-500 uppercase">
+                Made in South Africa
               </div>
             </div>
           </article>
