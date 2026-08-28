@@ -77,12 +77,22 @@ function drawLabel(
   qrDataUrl: string
 ) {
   const size = LABEL_SIZE_MM; // 100mm x 100mm
-  let y = 4;
+  const isCoating = data.type === "finished_fabric";
 
-  // 1. Header Logo
+  // Color theme: Teal Blue for Coating, Dark Slate for Weaving
+  const headerRgb = isCoating ? [2, 132, 199] : [51, 65, 85];
+
+  // 1. Top Header Banner
+  doc.setFillColor(headerRgb[0], headerRgb[1], headerRgb[2]);
+  doc.rect(0, 0, size, 20, "F");
+
+  // Logo Container Box
+  doc.setFillColor(255, 255, 255);
+  doc.rect(2, 2, 60, 16, "F");
+
   if (logo && logo.width > 0) {
-    const maxW = 42;
-    const maxH = 13;
+    const maxW = 54;
+    const maxH = 12;
     const ratio = logo.height / logo.width || 1;
     let w = maxW;
     let h = w * ratio;
@@ -90,127 +100,86 @@ function drawLabel(
       h = maxH;
       w = h / ratio;
     }
-    doc.addImage(logo, "PNG", (size - w) / 2, y, w, h);
-    y += h + 2;
+    doc.addImage(logo, "PNG", 2 + (60 - w) / 2, 2 + (16 - h) / 2, w, h);
   } else {
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
+    doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
-    doc.text("UNICA TEXTILES", size / 2, y + 4, { align: "center" });
-    y += 8;
+    doc.text("UNICA TEXTILES", 32, 11, { align: "center" });
   }
 
-  // 2. QR Code
-  const qrMm = 36;
-  const qrX = (size - qrMm) / 2;
-  doc.addImage(qrDataUrl, "PNG", qrX, y, qrMm, qrMm);
-  y += qrMm + 4.5;
-
-  // 3. Main Title (Roll No / QR Code)
+  // Top Right GSM Banner
+  const gsmValue = data.gsm != null ? `${Number(data.gsm).toFixed(0)}` : "—";
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.setTextColor(15, 23, 42);
-  const title = data.roll_no || data.qr_code;
-  doc.text(title, size / 2, y, { align: "center", maxWidth: 90 });
-  y += 3.5;
+  doc.setFontSize(15);
+  doc.setTextColor(255, 255, 255);
+  doc.text(gsmValue, 81, 10, { align: "center" });
+  doc.setFontSize(9);
+  doc.text("GSM", 81, 15, { align: "center" });
 
-  // Horizontal Divider Line
-  doc.setDrawColor(203, 213, 225); // Slate 300 border
-  doc.setLineWidth(0.3);
-  doc.line(6, y, 94, y);
-  y += 4;
+  // 2. Data Rows Definition
+  const rows: [string, string][] = isCoating
+    ? [
+        ["TYPE OF FABRIC", data.coating_type || data.fabric_name || "—"],
+        ["COLOUR", data.color || "—"],
+        ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
+        ["BATCH NUMBER", data.batch_no || "—"],
+        ["ROLL NUMBER", data.roll_no || data.qr_code],
+        ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
+        ["GRADE", data.grade || "A"],
+      ]
+    : [
+        ["TYPE OF FABRIC", data.fabric_name || "BASE FABRIC"],
+        ["COLOUR", "NATURAL / GREY"],
+        ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
+        ["BFO NUMBER", data.order_no || "—"],
+        ["ROLL NUMBER", data.roll_no || data.qr_code],
+        ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
+        ["LOOM NUMBER", data.loom_no != null && data.loom_no !== "" ? `LOOM ${data.loom_no}` : "—"],
+      ];
 
-  // 4. Two-Column Grid Setup
-  const col1X = 26; // Center of Left Column
-  const col2X = 74; // Center of Right Column
+  // 3. Render Table Grid (Left)
+  let yPos = 23;
+  const rowH = 8.5;
+  const tableW = 58;
 
-  // Vertical Divider between columns
-  doc.setDrawColor(226, 232, 240); // Slate 200 light border
-  doc.line(50, y - 1, 50, y + 17);
+  rows.forEach(([label, value], i) => {
+    if (i % 2 === 0) {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(4, yPos, tableW, rowH, "F");
+    }
 
-  if (data.type === "base_fabric") {
-    // Row 1: Loom No | Order / Fabric
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.3);
+    doc.rect(4, yPos, tableW, rowH);
+    doc.line(28, yPos, 28, yPos + rowH);
+
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text("LOOM", col1X, y, { align: "center" });
-    doc.text("ORDER / FABRIC", col2X, y, { align: "center" });
-    y += 4;
+    doc.setFontSize(6);
+    doc.setTextColor(71, 85, 105);
+    doc.text(label, 5, yPos + 5.5, { maxWidth: 22 });
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
+    doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
-    const loomText = data.loom_no != null && data.loom_no !== "" ? `Loom ${data.loom_no}` : "—";
-    const fabricText = data.fabric_name || data.order_no || "—";
-    doc.text(loomText, col1X, y, { align: "center", maxWidth: 40 });
-    doc.text(fabricText, col2X, y, { align: "center", maxWidth: 40 });
-    y += 6;
+    doc.text(value, 29, yPos + 5.5, { maxWidth: 32 });
 
-    // Row 2: Length (Meters) | GSM
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text("LENGTH", col1X, y, { align: "center" });
-    doc.text("WEIGHT", col2X, y, { align: "center" });
-    y += 4;
+    yPos += rowH;
+  });
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(15, 23, 42);
-    const lengthText = data.length_m != null ? `${Number(data.length_m).toFixed(2)} m` : "—";
-    const gsmText = data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—";
-    doc.text(lengthText, col1X, y, { align: "center" });
-    doc.text(gsmText, col2X, y, { align: "center" });
-  } else {
-    // Finished Fabric Column Layout
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text("COATING / COLOR", col1X, y, { align: "center" });
-    doc.text("GRADE", col2X, y, { align: "center" });
-    y += 4;
+  // 4. Render QR Code (Right Side)
+  const qrMm = 31;
+  doc.addImage(qrDataUrl, "PNG", 65, 33, qrMm, qrMm);
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(15, 23, 42);
-    const coatingColor = [data.coating_type, data.color].filter(Boolean).join(" · ") || "—";
-    const gradeText = data.grade ? `Grade ${data.grade}` : "—";
-    doc.text(coatingColor, col1X, y, { align: "center", maxWidth: 40 });
-    doc.text(gradeText, col2X, y, { align: "center", maxWidth: 40 });
-    y += 6;
+  // 5. Bottom Footer Banner
+  doc.setFillColor(headerRgb[0], headerRgb[1], headerRgb[2]);
+  doc.rect(0, 87, size, 13, "F");
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text("LENGTH", col1X, y, { align: "center" });
-    doc.text("WEIGHT", col2X, y, { align: "center" });
-    y += 4;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(15, 23, 42);
-    const lengthText = data.length_m != null ? `${Number(data.length_m).toFixed(2)} m` : "—";
-    const gsmText = data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—";
-    doc.text(lengthText, col1X, y, { align: "center" });
-    doc.text(gsmText, col2X, y, { align: "center" });
-  }
-
-  y += 4;
-  // Bottom Horizontal Divider
-  doc.setDrawColor(203, 213, 225);
-  doc.line(6, y, 94, y);
-
-  // 5. Footer Row (Batch Number & Made in South Africa)
-  y += 4.5;
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  
-  const batchDisplay = data.batch_no ? `BATCH: ${data.batch_no}` : "";
-  doc.setTextColor(71, 85, 105); // Slate 600
-  doc.text(batchDisplay, col1X, y, { align: "center", maxWidth: 42 });
-
-  doc.setTextColor(4, 120, 87); // Emerald 700 green
-  doc.text("MADE IN SOUTH AFRICA", col2X, y, { align: "center", maxWidth: 42 });
+  doc.setFontSize(10);
+  doc.setTextColor(255, 255, 255);
+  const footerText = isCoating ? "QUALITY YOU CAN TRUST" : "MADE IN SOUTH AFRICA";
+  doc.text(footerText, size / 2, 95, { align: "center" });
 }
 
 export async function generateLabelPdf(
@@ -233,6 +202,6 @@ export async function generateLabelPdf(
   }
 
   const stamp = new Date().toISOString().slice(0, 10);
-  const prefix = kind === "base_fabric" ? "base-fabric" : "finished-fabric";
+  const prefix = kind === "base_fabric" ? "weaving-base" : "coating-finished";
   doc.save(`${prefix}-labels-${stamp}.pdf`);
 }

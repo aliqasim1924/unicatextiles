@@ -77,7 +77,7 @@ export default function QRPrintPage() {
                 qr_code: row.qr_code || row.roll_no || `BFR-${row.id.slice(0, 8)}`,
                 roll_no: row.roll_no,
                 type: "base_fabric" as const,
-                length_m: row.length_m,
+                length_m: row.length_m !== null && row.length_m !== undefined ? Number(row.length_m) : null,
                 order_no: order?.order_no || null,
                 fabric_name: item?.name || null,
                 gsm:
@@ -92,6 +92,7 @@ export default function QRPrintPage() {
 
           setQrData(mapped);
         } else {
+          // Relational query joining coating_batches via batch_id
           const { data, error: fetchError } = await supabaseBrowserClient
             .from("finished_fabric_rolls")
             .select(
@@ -103,7 +104,10 @@ export default function QRPrintPage() {
               grade,
               color,
               coating_type,
-              gsm
+              gsm,
+              coating_batches:batch_id (
+                batch_no
+              )
             `
             )
             .in("id", rollIds);
@@ -114,16 +118,23 @@ export default function QRPrintPage() {
           const mapped = rollIds
             .map((id) => byId.get(id))
             .filter(Boolean)
-            .map((row: any) => ({
-              qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
-              roll_no: row.roll_no,
-              type: "finished_fabric" as const,
-              length_m: row.length_m,
-              grade: row.grade,
-              color: row.color,
-              coating_type: row.coating_type,
-              gsm: row.gsm,
-            }));
+            .map((row: any) => {
+              const batch = Array.isArray(row.coating_batches)
+                ? row.coating_batches[0]
+                : row.coating_batches;
+
+              return {
+                qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
+                roll_no: row.roll_no,
+                type: "finished_fabric" as const,
+                length_m: row.length_m !== null && row.length_m !== undefined ? Number(row.length_m) : null,
+                grade: row.grade,
+                color: row.color,
+                coating_type: row.coating_type,
+                gsm: row.gsm,
+                batch_no: batch?.batch_no || null,
+              };
+            });
 
           setQrData(mapped);
         }
@@ -247,57 +258,89 @@ export default function QRPrintPage() {
       </div>
 
       <div className="flex flex-col items-center gap-4 p-4 print:gap-0 print:p-0">
-        {qrData.map((data) => (
-          <article
-            key={data.qr_code}
-            className="qr-label flex flex-col items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm"
-            style={{ width: `${LABEL_SIZE_MM}mm`, height: `${LABEL_SIZE_MM}mm` }}
-          >
-            <div className="flex h-[16mm] w-full items-center justify-center">
-              <img src="/Logo.png" alt="Unica Textiles" className="max-h-[16mm] max-w-[42mm] object-contain" />
-            </div>
-            <div className="flex h-[48mm] w-[48mm] items-center justify-center">
-              <QRCode value={data.qr_code} size={120} level="M" includeMargin={false} />
-            </div>
-            <div className="w-full pb-1 text-center">
-              <div className="text-xl font-bold leading-tight text-slate-900">
-                {data.roll_no || data.qr_code}
+        {qrData.map((data) => {
+          const isCoating = data.type === "finished_fabric";
+          const tableRows: [string, string][] = isCoating
+            ? [
+                ["TYPE OF FABRIC", data.coating_type || data.fabric_name || "—"],
+                ["COLOUR", data.color || "—"],
+                ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
+                ["BATCH NUMBER", data.batch_no || "—"],
+                ["ROLL NUMBER", data.roll_no || data.qr_code],
+                ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
+                ["GRADE", data.grade || "A"],
+              ]
+            : [
+                ["TYPE OF FABRIC", data.fabric_name || "BASE FABRIC"],
+                ["COLOUR", "NATURAL / GREY"],
+                ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
+                ["BFO NUMBER", data.order_no || "—"],
+                ["ROLL NUMBER", data.roll_no || data.qr_code],
+                ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
+                ["LOOM NUMBER", data.loom_no != null && data.loom_no !== "" ? `LOOM ${data.loom_no}` : "—"],
+              ];
+
+          return (
+            <article
+              key={data.qr_code}
+              className="qr-label relative flex flex-col justify-between overflow-hidden border border-slate-300 bg-white shadow-sm"
+              style={{ width: `${LABEL_SIZE_MM}mm`, height: `${LABEL_SIZE_MM}mm` }}
+            >
+              {/* Header Banner Block */}
+              <div
+                className={`flex h-[20mm] w-full items-center justify-between px-2 ${
+                  isCoating ? "bg-sky-600" : "bg-slate-700"
+                }`}
+              >
+                <div className="flex h-[16mm] w-[58mm] items-center justify-center rounded bg-white p-1">
+                  <img src="/Logo.png" alt="Unica" className="max-h-full max-w-full object-contain" />
+                </div>
+                <div className="flex flex-col items-center justify-center text-white pr-2">
+                  <span className="text-xl font-black leading-none">
+                    {data.gsm != null ? Number(data.gsm).toFixed(0) : "—"}
+                  </span>
+                  <span className="text-[10px] font-bold tracking-wider">GSM</span>
+                </div>
               </div>
-              {data.type === "base_fabric" ? (
-                <>
-                  {data.loom_no != null && data.loom_no !== "" && (
-                    <div className="mt-0.5 text-sm font-semibold text-slate-800">
-                      Loom {String(data.loom_no)}
+
+              {/* Data Grid & QR Code Body */}
+              <div className="flex h-[67mm] w-full items-center px-2 py-1">
+                {/* Grid Table */}
+                <div className="w-[58mm] border border-slate-300">
+                  {tableRows.map(([label, value], idx) => (
+                    <div
+                      key={label}
+                      className={`flex h-[8.5mm] border-b border-slate-300 last:border-b-0 ${
+                        idx % 2 === 0 ? "bg-slate-50" : "bg-white"
+                      }`}
+                    >
+                      <div className="flex w-[24mm] items-center border-r border-slate-300 px-1 text-[7px] font-extrabold text-slate-500 uppercase">
+                        {label}
+                      </div>
+                      <div className="flex w-[34mm] items-center truncate px-1.5 text-[9px] font-extrabold text-slate-900">
+                        {value}
+                      </div>
                     </div>
-                  )}
-                  {data.fabric_name && (
-                    <div className="text-sm text-slate-700">{data.fabric_name}</div>
-                  )}
-                  {data.order_no && (
-                    <div className="text-xs text-slate-600">Order {data.order_no}</div>
-                  )}
-                </>
-              ) : (
-                <>
-                  {data.coating_type && (
-                    <div className="mt-0.5 text-sm font-semibold text-slate-800">{data.coating_type}</div>
-                  )}
-                  {data.color && <div className="text-sm text-slate-700">{data.color}</div>}
-                  {data.grade && <div className="text-xs text-slate-600">Grade {data.grade}</div>}
-                </>
-              )}
-              <div className="mt-1 text-sm text-slate-700">
-                {data.length_m != null && <span>{Number(data.length_m).toFixed(2)} m</span>}
-                {data.length_m != null && data.gsm != null && <span> · </span>}
-                {data.gsm != null && <span>{Number(data.gsm).toFixed(0)} GSM</span>}
+                  ))}
+                </div>
+
+                {/* QR Code */}
+                <div className="flex w-[38mm] justify-center items-center pl-1">
+                  <QRCode value={data.qr_code} size={120} level="M" includeMargin={false} />
+                </div>
               </div>
-              {/* Added Made in South Africa tagline */}
-              <div className="mt-1 text-[10px] font-semibold tracking-wider text-slate-500 uppercase">
-                Made in South Africa
+
+              {/* Bottom Banner */}
+              <div
+                className={`flex h-[13mm] w-full items-center justify-center text-xs font-black tracking-wider text-white ${
+                  isCoating ? "bg-sky-600" : "bg-slate-700"
+                }`}
+              >
+                {isCoating ? "QUALITY YOU CAN TRUST" : "MADE IN SOUTH AFRICA"}
               </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     </div>
   );
