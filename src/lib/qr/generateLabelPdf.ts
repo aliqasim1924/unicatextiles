@@ -70,20 +70,20 @@ function qrCodePngDataUrl(value: string, sizePx = 512): Promise<string> {
   });
 }
 
-// Helper function to determine color based on GSM
+// Helper function to determine color based on GSM (matches Tailwind colors)
 function getHeaderColorByGsm(
-  gsm: number | null | undefined
+  gsm: number | string | null | undefined
 ): [number, number, number] {
-  // For coated rolls, use GSM to determine color
-  if (gsm === 400) {
-    return [59, 246, 90]; // Green for 400 GSM
-  } else if (gsm === 500) {
-    return [32, 68, 232]; // Blue for 500 GSM
+  const numericGsm = gsm != null ? Number(gsm) : null;
+
+  if (numericGsm === 400) {
+    return [22, 163, 74]; // Green 600 (#16a34a) for 400 GSM
+  } else if (numericGsm === 500) {
+    return [37, 99, 235]; // Blue 600 (#2563eb) for 500 GSM
   }
   // Default/fallback for other GSM values
-  return [232, 32, 59]; // Red for unknown GSM
+  return [220, 38, 38]; // Red 600 (#dc2626) for unknown GSM
 }
-
 
 function drawLabel(
   doc: jsPDF,
@@ -94,11 +94,10 @@ function drawLabel(
   const size = LABEL_SIZE_MM; // 100mm x 100mm
   const isCoating = data.type === "finished_fabric";
 
-   // Color theme: Blue for 400 GSM, Red for 500 GSM (coated), Dark Slate for Weaving
-const colorRgb = isCoating
-? getHeaderColorByGsm(data.gsm)
-: [51, 65, 85]; // Keep dark slate for all weaving labels
-
+  // Color theme: Green for 400 GSM, Blue for 500 GSM, Red for other Coating, Dark Slate for Weaving
+  const colorRgb = isCoating
+    ? getHeaderColorByGsm(data.gsm)
+    : [51, 65, 85]; // Dark slate for all weaving labels
 
   // 1. Top Header Banner
   doc.setFillColor(colorRgb[0], colorRgb[1], colorRgb[2]);
@@ -196,8 +195,7 @@ const colorRgb = isCoating
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(255, 255, 255);
-  const footerText = isCoating ? "QUALITY YOU CAN TRUST" : "MADE IN SOUTH AFRICA";
-  doc.text(footerText, size / 2, 95, { align: "center" });
+  doc.text("MADE IN SOUTH AFRICA", size / 2, 95, { align: "center" });
 }
 
 export async function generateLabelPdf(
@@ -220,6 +218,24 @@ export async function generateLabelPdf(
   }
 
   const stamp = new Date().toISOString().slice(0, 10);
+  
+  // Extract identifier (Batch number for coating, Order/BFO number for weaving)
+  let refName = "";
+  if (kind === "finished_fabric") {
+    // Check if all selected rows share the same batch number
+    const uniqueBatches = Array.from(new Set(rows.map((r) => r.batch_no).filter(Boolean)));
+    if (uniqueBatches.length === 1) {
+      refName = `-${uniqueBatches[0]}`;
+    }
+  } else {
+    // Check if all selected rows share the same BFO order number
+    const uniqueOrders = Array.from(new Set(rows.map((r) => r.order_no).filter(Boolean)));
+    if (uniqueOrders.length === 1) {
+      refName = `-${uniqueOrders[0]}`;
+    }
+  }
+
   const prefix = kind === "base_fabric" ? "weaving-base" : "coating-finished";
-  doc.save(`${prefix}-labels-${stamp}.pdf`);
+  // Generates e.g.: coating-finished-CBT-00102-2026-08-31.pdf
+  doc.save(`${prefix}${refName}-labels-${stamp}.pdf`);
 }

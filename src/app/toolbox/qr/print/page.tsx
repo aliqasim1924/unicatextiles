@@ -8,6 +8,19 @@ import { generateLabelPdf, LABEL_SIZE_MM, type LabelPdfRow } from "@/lib/qr/gene
 
 type QRData = LabelPdfRow;
 
+// Helper function to get color class based on GSM
+function getHeaderColorClass(gsm: number | string | null | undefined): string {
+  const numericGsm = gsm != null ? Number(gsm) : null;
+
+  if (numericGsm === 400) {
+    return "bg-green-600"; // Green for 400 GSM
+  } else if (numericGsm === 500) {
+    return "bg-blue-600"; // Blue for 500 GSM
+  }
+  // Default/fallback for other GSM values
+  return "bg-red-600"; // Red for unknown GSM
+}
+
 export default function QRPrintPage() {
   const searchParams = useSearchParams();
   const rollIdsParam = searchParams.get("rollIds");
@@ -260,6 +273,8 @@ export default function QRPrintPage() {
       <div className="flex flex-col items-center gap-4 p-4 print:gap-0 print:p-0">
         {qrData.map((data) => {
           const isCoating = data.type === "finished_fabric";
+          const headerColorClass = isCoating ? getHeaderColorClass(data.gsm) : "bg-slate-700";
+
           const tableRows: [string, string][] = isCoating
             ? [
                 ["TYPE OF FABRIC", data.coating_type || data.fabric_name || "—"],
@@ -288,9 +303,7 @@ export default function QRPrintPage() {
             >
               {/* Header Banner Block */}
               <div
-                className={`flex h-[20mm] w-full items-center justify-between px-2 ${
-                  isCoating ? "bg-sky-600" : "bg-slate-700"
-                }`}
+                className={`flex h-[20mm] w-full items-center justify-between px-2 ${headerColorClass}`}
               >
                 <div className="flex h-[16mm] w-[58mm] items-center justify-center rounded bg-white p-1">
                   <img src="/Logo.png" alt="Unica" className="max-h-full max-w-full object-contain" />
@@ -332,11 +345,9 @@ export default function QRPrintPage() {
 
               {/* Bottom Banner */}
               <div
-                className={`flex h-[13mm] w-full items-center justify-center text-xs font-black tracking-wider text-white ${
-                  isCoating ? "bg-sky-600" : "bg-slate-700"
-                }`}
+                className={`flex h-[13mm] w-full items-center justify-center text-xs font-black tracking-wider text-white ${headerColorClass}`}
               >
-                {isCoating ? "MADE IN SOUTH AFRICA" : "MADE IN SOUTH AFRICA"}
+                MADE IN SOUTH AFRICA
               </div>
             </article>
           );
