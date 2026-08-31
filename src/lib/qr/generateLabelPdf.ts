@@ -70,6 +70,21 @@ function qrCodePngDataUrl(value: string, sizePx = 512): Promise<string> {
   });
 }
 
+// Helper function to determine color based on GSM
+function getHeaderColorByGsm(
+  gsm: number | null | undefined
+): [number, number, number] {
+  // For coated rolls, use GSM to determine color
+  if (gsm === 400) {
+    return [59, 246, 90]; // Green for 400 GSM
+  } else if (gsm === 500) {
+    return [32, 68, 232]; // Blue for 500 GSM
+  }
+  // Default/fallback for other GSM values
+  return [232, 32, 59]; // Red for unknown GSM
+}
+
+
 function drawLabel(
   doc: jsPDF,
   data: LabelPdfRow,
@@ -79,11 +94,14 @@ function drawLabel(
   const size = LABEL_SIZE_MM; // 100mm x 100mm
   const isCoating = data.type === "finished_fabric";
 
-  // Color theme: Teal Blue for Coating, Dark Slate for Weaving
-  const headerRgb = isCoating ? [2, 132, 199] : [51, 65, 85];
+   // Color theme: Blue for 400 GSM, Red for 500 GSM (coated), Dark Slate for Weaving
+const colorRgb = isCoating
+? getHeaderColorByGsm(data.gsm)
+: [51, 65, 85]; // Keep dark slate for all weaving labels
+
 
   // 1. Top Header Banner
-  doc.setFillColor(headerRgb[0], headerRgb[1], headerRgb[2]);
+  doc.setFillColor(colorRgb[0], colorRgb[1], colorRgb[2]);
   doc.rect(0, 0, size, 20, "F");
 
   // Logo Container Box
@@ -172,7 +190,7 @@ function drawLabel(
   doc.addImage(qrDataUrl, "PNG", 65, 33, qrMm, qrMm);
 
   // 5. Bottom Footer Banner
-  doc.setFillColor(headerRgb[0], headerRgb[1], headerRgb[2]);
+  doc.setFillColor(colorRgb[0], colorRgb[1], colorRgb[2]);
   doc.rect(0, 87, size, 13, "F");
 
   doc.setFont("helvetica", "bold");
