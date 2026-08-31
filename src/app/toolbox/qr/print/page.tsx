@@ -336,7 +336,7 @@ export default function QRPrintPage() {
                   isCoating ? "bg-sky-600" : "bg-slate-700"
                 }`}
               >
-                {isCoating ? "QUALITY YOU CAN TRUST" : "MADE IN SOUTH AFRICA"}
+                {isCoating ? "MADE IN SOUTH AFRICA" : "MADE IN SOUTH AFRICA"}
               </div>
             </article>
           );
