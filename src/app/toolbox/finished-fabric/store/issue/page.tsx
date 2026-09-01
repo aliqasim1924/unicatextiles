@@ -42,19 +42,19 @@ interface OrderLine {
 }
 
 interface OrderRequirement {
-  key: string; // fabric_type_id + "|" + color_option_id + "|" + gsm_option_id + "|" + width_option_id
+  key: string;
   fabric_type_id: string | null;
   color_option_id: string | null;
   gsm_option_id: string | null;
   width_option_id: string | null;
-  coating_type: string; // For display
-  color: string; // For display
-  gsm: string | null; // For fallback text matching
+  coating_type: string;
+  color: string;
+  gsm: string | null;
   ordered_m: number;
   issued_m: number;
   selected_m: number;
   remaining_m: number;
-  isLegacyMatch: boolean; // True if matched by text fallback
+  isLegacyMatch: boolean;
 }
 
 interface CustomerOrder {
@@ -92,7 +92,6 @@ export default function FinishedFabricStoreIssuePage() {
   const [orderLines, setOrderLines] = useState<OrderLine[]>([]);
   const [orderRequirements, setOrderRequirements] = useState<OrderRequirement[]>([]);
   const [showOnlyMatching, setShowOnlyMatching] = useState(false);
-  /** Roll IDs already issued for the currently selected order (so we hide them from stock list) */
   const [alreadyIssuedRollIdsForOrder, setAlreadyIssuedRollIdsForOrder] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -124,7 +123,6 @@ export default function FinishedFabricStoreIssuePage() {
     }
   }, [selectedOrderId, destination]);
 
-  // Pre-fill invoice and gate pass from order when selecting an order (carry over from order section)
   useEffect(() => {
     if (destination === "CUSTOMER" && selectedOrderId && customerOrders.length > 0) {
       const sel = customerOrders.find((o) => o.id === selectedOrderId);
@@ -168,7 +166,7 @@ export default function FinishedFabricStoreIssuePage() {
       setSelectedRollIds(new Set());
     } catch (err: any) {
       console.error("Failed to load store stock", err);
-      const message = err?.message || JSON.stringify(err) || "Failed to load store stock.";
+      const message = err?.message || err?.error_description || (typeof err === "string" ? err : "Failed to load store stock.");
       setError(message);
     } finally {
       setIsLoading(false);
@@ -179,7 +177,6 @@ export default function FinishedFabricStoreIssuePage() {
     if (!selectedOrderId) return;
 
     try {
-      // Fetch order lines with catalog IDs
       const { data: linesData, error: linesError } = await supabaseBrowserClient
         .from("customer_order_lines")
         .select("id, fabric_type_id, color_option_id, gsm_option_id, width_option_id, coating_type, color, gsm, quantity_m")
@@ -202,7 +199,6 @@ export default function FinishedFabricStoreIssuePage() {
 
       setOrderLines(mappedLines);
 
-      // Fetch already-issued meters with catalog IDs
       const { data: issuesData, error: issuesError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select(
@@ -228,7 +224,6 @@ export default function FinishedFabricStoreIssuePage() {
 
       if (issuesError) throw issuesError;
 
-      // Helper function to build match key from IDs
       const buildMatchKey = (line: OrderLine): string => {
         if (line.fabric_type_id && line.color_option_id) {
           const parts = [
@@ -239,14 +234,12 @@ export default function FinishedFabricStoreIssuePage() {
           ];
           return parts.join("|");
         }
-        // Fallback: use text matching for legacy data
         const normalizedCoating = (line.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
         const normalizedColor = (line.color || "").trim().toLowerCase().replace(/\s+/g, " ");
         const normalizedGsm = line.gsm ? line.gsm.trim().toLowerCase() : "";
         return `TEXT|${normalizedCoating}|${normalizedColor}|${normalizedGsm}`;
       };
 
-      // Group by match key (use IDs for matching)
       const requiredMap: Record<
         string,
         {
@@ -277,7 +270,6 @@ export default function FinishedFabricStoreIssuePage() {
         requiredMap[key].ordered_m += line.quantity_m;
       });
 
-      // Helper function to build match key from roll IDs
       const buildRollMatchKey = (roll: any): string | null => {
         if (roll.fabric_type_id && roll.color_option_id) {
           const parts = [
@@ -288,7 +280,6 @@ export default function FinishedFabricStoreIssuePage() {
           ];
           return parts.join("|");
         }
-        // Fallback: use text matching for legacy data
         if (roll.coating_type && roll.color) {
           const normalizedCoating = (roll.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
           const normalizedColor = (roll.color || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -316,7 +307,6 @@ export default function FinishedFabricStoreIssuePage() {
       });
       setAlreadyIssuedRollIdsForOrder(issuedRollIds);
 
-      // Build requirements array
       const requirements: OrderRequirement[] = Object.entries(requiredMap).map(([key, data]) => {
         const isLegacyMatch = key.startsWith("TEXT|");
         const issued_m = issuedMap[key] || 0;
@@ -331,7 +321,7 @@ export default function FinishedFabricStoreIssuePage() {
           gsm: data.gsm,
           ordered_m: data.ordered_m,
           issued_m,
-          selected_m: 0, // Will be computed from selected rolls
+          selected_m: 0,
           remaining_m: data.ordered_m - issued_m,
           isLegacyMatch,
         };
@@ -366,7 +356,6 @@ export default function FinishedFabricStoreIssuePage() {
 
       if (orderError) throw orderError;
       
-      // Normalize customers from array to single object (Supabase may return array for foreign keys)
       const normalized = (data || []).map((item: any) => ({
         ...item,
         customers: Array.isArray(item.customers) 
@@ -381,26 +370,20 @@ export default function FinishedFabricStoreIssuePage() {
     }
   }
 
-  // Helper function to check if a roll matches a requirement
   const rollMatchesRequirement = (roll: StoreRoll, req: OrderRequirement): boolean => {
-    // Primary matching: Use catalog IDs
     if (roll.fabric_type_id && roll.color_option_id && req.fabric_type_id && req.color_option_id) {
-      // Must match fabric_type_id and color_option_id
       if (roll.fabric_type_id !== req.fabric_type_id || roll.color_option_id !== req.color_option_id) {
         return false;
       }
-      // If gsm_option_id exists on both, they must match
       if (req.gsm_option_id && roll.gsm_option_id && roll.gsm_option_id !== req.gsm_option_id) {
         return false;
       }
-      // If width_option_id exists on both, they must match
       if (req.width_option_id && roll.width_option_id && roll.width_option_id !== req.width_option_id) {
         return false;
       }
       return true;
     }
 
-    // Fallback: Text matching for legacy data
     if (req.isLegacyMatch && roll.coating_type && roll.color) {
       const normalizedRollCoating = (roll.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
       const normalizedRollColor = (roll.color || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -418,7 +401,6 @@ export default function FinishedFabricStoreIssuePage() {
     return false;
   };
 
-  // Check if a roll matches any order requirement (must be defined before filteredRolls)
   const rollMatchesOrder = useMemo(() => {
     const matchMap: Record<string, { matches: boolean; isLegacy: boolean }> = {};
     stockRolls.forEach((roll) => {
@@ -438,7 +420,6 @@ export default function FinishedFabricStoreIssuePage() {
 
   const filteredRolls = useMemo(() => {
     return stockRolls.filter((roll) => {
-      // Don't show rolls already issued for the selected order (prevents accidental duplicate selection)
       if (destination === "CUSTOMER" && selectedOrderId && alreadyIssuedRollIdsForOrder.has(roll.id)) {
         return false;
       }
@@ -459,7 +440,6 @@ export default function FinishedFabricStoreIssuePage() {
     [filteredRolls, selectedRollIds]
   );
 
-  // Helper function to build match key from roll
   const buildRollKey = (roll: StoreRoll): string | null => {
     if (roll.fabric_type_id && roll.color_option_id) {
       const parts = [
@@ -470,7 +450,6 @@ export default function FinishedFabricStoreIssuePage() {
       ];
       return parts.join("|");
     }
-    // Fallback for legacy data
     if (roll.coating_type && roll.color) {
       const normalizedCoating = (roll.coating_type || "").trim().toLowerCase().replace(/\s+/g, " ");
       const normalizedColor = (roll.color || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -480,7 +459,6 @@ export default function FinishedFabricStoreIssuePage() {
     return null;
   };
 
-  // Compute selected meters per requirement key
   const selectedMetersByKey = useMemo(() => {
     const map: Record<string, number> = {};
     selectedRolls.forEach((roll) => {
@@ -492,7 +470,6 @@ export default function FinishedFabricStoreIssuePage() {
     return map;
   }, [selectedRolls]);
 
-  // Update order requirements with selected meters
   const requirementsWithSelected = useMemo(() => {
     return orderRequirements.map((req) => ({
       ...req,
@@ -505,7 +482,6 @@ export default function FinishedFabricStoreIssuePage() {
     const roll = filteredRolls.find((r) => r.id === id);
     if (!roll) return;
 
-    // If already selected, just deselect
     if (selectedRollIds.has(id)) {
       setSelectedRollIds((prev) => {
         const next = new Set(prev);
@@ -515,20 +491,14 @@ export default function FinishedFabricStoreIssuePage() {
       return;
     }
 
-    // For customer orders, validate before selecting
     if (destination === "CUSTOMER" && selectedOrderId) {
       const key = buildRollKey(roll);
-
       if (key) {
         const requirement = requirementsWithSelected.find((req) => {
           return rollMatchesRequirement(roll, req);
         });
 
-        if (requirement) {
-          // Allow over-allocation (e.g. grace allowance 2–10 m per roll). User must provide a reason on submit.
-          // No longer blocking selection when newRemaining < 0.
-        } else {
-          // Roll doesn't match any order line - warn but allow
+        if (!requirement) {
           const confirmed = window.confirm(
             `This roll (${roll.color || "Unknown"} ${roll.coating_type || "Unknown"}) does not match any order line. Continue?`
           );
@@ -559,7 +529,6 @@ export default function FinishedFabricStoreIssuePage() {
       return;
     }
 
-    // When over-allocated (grace allowance), require a reason
     if (destination === "CUSTOMER" && selectedOrderId) {
       const overAllocatedReqs = requirementsWithSelected.filter((req) => req.remaining_m < 0);
       if (overAllocatedReqs.length > 0) {
@@ -573,19 +542,16 @@ export default function FinishedFabricStoreIssuePage() {
       }
     }
 
-    // Prevent double submission
     if (isSubmitting) {
       setError("Please wait, submission in progress...");
       return;
     }
 
     setIsSubmitting(true);
-    let createdIssueId: string | null = null;
 
     try {
       const { data: userData } = await supabaseBrowserClient.auth.getUser();
 
-      // CRITICAL: Validate that selected rolls are still available in store before issuing
       const { data: rollStatusCheck, error: statusCheckError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .select("id, roll_no, status, current_location")
@@ -593,7 +559,6 @@ export default function FinishedFabricStoreIssuePage() {
 
       if (statusCheckError) throw statusCheckError;
 
-      // Check for rolls that are no longer in store (already issued)
       const unavailableRolls = (rollStatusCheck || []).filter(
         (roll) => roll.status !== STATUS_IN_STORE || roll.current_location !== LOCATION_STORE
       );
@@ -601,12 +566,10 @@ export default function FinishedFabricStoreIssuePage() {
       if (unavailableRolls.length > 0) {
         const unavailableRollNos = unavailableRolls.map((r) => r.roll_no || r.id.slice(0, 8)).join(", ");
         throw new Error(
-          `Cannot issue: Some rolls are no longer available in store (may have been issued already): ${unavailableRollNos}. Please refresh and try again.`
+          `Cannot issue: Some rolls are no longer available in store: ${unavailableRollNos}. Please refresh and try again.`
         );
       }
 
-      // CRITICAL: Check for duplicate issue items (same roll_id already issued for this order)
-      // Use two-step query to avoid join filter issues: get issue IDs for order, then items for those issues
       if (destination === "CUSTOMER" && selectedOrderId) {
         const { data: orderIssues, error: orderIssuesError } = await supabaseBrowserClient
           .from("finished_fabric_store_issues")
@@ -631,13 +594,13 @@ export default function FinishedFabricStoreIssuePage() {
             const duplicateRolls = selectedRolls.filter((r) => duplicateRollIds.includes(r.id));
             const duplicateRollNos = duplicateRolls.map((r) => r.roll_no || r.id.slice(0, 8)).join(", ");
             throw new Error(
-              `Cannot issue: Some rolls have already been issued for this order: ${duplicateRollNos}. Please refresh and try again.`
+              `Cannot issue: Some rolls have already been issued for this order: ${duplicateRollNos}.`
             );
           }
         }
       }
 
-      // Create the issue header
+      // 1. Create store issue header
       const { data: issue, error: issueError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .insert({
@@ -663,34 +626,8 @@ export default function FinishedFabricStoreIssuePage() {
         .single();
 
       if (issueError) throw issueError;
-      createdIssueId = issue.id;
 
-      // Last-moment duplicate check (catches race: another tab or request issued same rolls for this order)
-      if (destination === "CUSTOMER" && selectedOrderId) {
-        const { data: orderIssues2, error: orderIssues2Error } = await supabaseBrowserClient
-          .from("finished_fabric_store_issues")
-          .select("id")
-          .eq("order_id", selectedOrderId)
-          .eq("destination", "CUSTOMER")
-          .neq("id", issue.id);
-
-        if (!orderIssues2Error && orderIssues2 && orderIssues2.length > 0) {
-          const orderIssueIds2 = orderIssues2.map((i: any) => i.id);
-          const { data: existingItems2 } = await supabaseBrowserClient
-            .from("finished_fabric_store_issue_items")
-            .select("roll_id")
-            .in("issue_id", orderIssueIds2)
-            .in("roll_id", Array.from(selectedRollIds));
-
-          if (existingItems2 && existingItems2.length > 0) {
-            await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
-            throw new Error(
-              "Some of these rolls were just issued for this order (e.g. by another tab). Please refresh and try again."
-            );
-          }
-        }
-      }
-
+      // 2. Insert items
       const rollIdsToIssue = Array.from(selectedRollIds);
       const lineRows = selectedRolls
         .filter((roll) => rollIdsToIssue.includes(roll.id))
@@ -703,41 +640,51 @@ export default function FinishedFabricStoreIssuePage() {
         }));
 
       if (lineRows.length === 0) {
-        // No valid rolls to issue - delete the issue header we just created
         await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
-        throw new Error("No valid rolls to issue. Some rolls may have been issued by another user.");
+        throw new Error("No valid rolls selected.");
       }
 
       const { error: lineError } = await supabaseBrowserClient
         .from("finished_fabric_store_issue_items")
         .insert(lineRows);
+
       if (lineError) {
-        // Rollback: delete the issue header if items insert fails
         await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
         throw lineError;
       }
 
-      // Update roll statuses - only update rolls that are still in store
-      const { error: updateError } = await supabaseBrowserClient
-        .from("finished_fabric_rolls")
-        .update({
-          current_location: LOCATION_DISPATCHED,
-          status: STATUS_ISSUED,
-          issued_store_at: new Date().toISOString(),
-          issued_store_by: userData?.user?.id || null,
-        })
-        .in("id", rollIdsToIssue)
-        .eq("status", STATUS_IN_STORE)
-        .eq("current_location", LOCATION_STORE);
-
-      if (updateError) {
-        // Rollback: delete issue items and header if roll update fails
-        await supabaseBrowserClient.from("finished_fabric_store_issue_items").delete().eq("issue_id", issue.id);
-        await supabaseBrowserClient.from("finished_fabric_store_issues").delete().eq("id", issue.id);
-        throw updateError;
+      // 3. Find current max serial_no for this order/issue to assign contiguous 1, 2, 3...
+      let existingCount = 0;
+      if (destination === "CUSTOMER" && selectedOrderId) {
+        const { count } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .select("id", { count: "exact", head: true })
+          .eq("customer_order_id", selectedOrderId);
+        existingCount = count ?? 0;
       }
 
-      // Carry invoice and gate pass to the customer order so they appear on the order section
+      // 4. Update roll status AND serial_no sequence
+      for (let index = 0; index < rollIdsToIssue.length; index++) {
+        const rollId = rollIdsToIssue[index];
+        const nextSerialNo = existingCount + index + 1;
+
+        const { error: updateError } = await supabaseBrowserClient
+          .from("finished_fabric_rolls")
+          .update({
+            current_location: LOCATION_DISPATCHED,
+            status: STATUS_ISSUED,
+            issued_store_at: new Date().toISOString(),
+            issued_store_by: userData?.user?.id || null,
+            customer_order_id: destination === "CUSTOMER" ? selectedOrderId : null,
+            serial_no: nextSerialNo,
+          })
+          .eq("id", rollId);
+
+        if (updateError) {
+          console.error(`Failed to update roll ${rollId}`, updateError);
+        }
+      }
+
       if (destination === "CUSTOMER" && selectedOrderId && (invoiceNo || gatePassNo)) {
         await supabaseBrowserClient
           .from("customer_orders")
@@ -757,7 +704,6 @@ export default function FinishedFabricStoreIssuePage() {
           .eq("id", selectedOrderId)
           .in("status", ["OPEN", "PARTIALLY_FULFILLED"]);
 
-        // Create or update back order for remaining quantity (shortfall)
         const shortfallReqs = requirementsWithSelected.filter((req) => req.remaining_m > 0);
         if (shortfallReqs.length > 0) {
           const originalOrder = customerOrders.find((o) => o.id === selectedOrderId);
@@ -800,6 +746,7 @@ export default function FinishedFabricStoreIssuePage() {
               })
               .select("id, order_ref")
               .single();
+
             if (boError) throw boError;
             backOrderId = newBackOrder!.id;
             backOrderRef = newBackOrder!.order_ref ?? "BO";
@@ -832,7 +779,11 @@ export default function FinishedFabricStoreIssuePage() {
       router.push(`/toolbox/finished-fabric/store/issues/${issue.id}`);
     } catch (err: any) {
       console.error("Failed to create store issue", err);
-      setError(err.message || "Failed to create store issue.");
+      const errMsg =
+        err?.message ||
+        err?.error_description ||
+        (typeof err === "string" ? err : "Failed to create store issue.");
+      setError(errMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -863,7 +814,7 @@ export default function FinishedFabricStoreIssuePage() {
             </div>
           )}
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 font-medium">
               {error}
             </div>
           )}
@@ -914,8 +865,8 @@ export default function FinishedFabricStoreIssuePage() {
                     value={selectedOrderId}
                     onChange={(e) => {
                       setSelectedOrderId(e.target.value);
-                      setSelectedRollIds(new Set()); // Clear selection when order changes
-                      setOverAllocationReason(""); // Clear over-allocation reason when order changes
+                      setSelectedRollIds(new Set());
+                      setOverAllocationReason("");
                     }}
                     className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
                     required
@@ -939,36 +890,35 @@ export default function FinishedFabricStoreIssuePage() {
                     Only OPEN or PARTIALLY_FULFILLED orders are listed.
                   </p>
                 </div>
-              <div className="md:col-span-1">
-                <label className="block text-sm font-semibold text-slate-900 mb-2">
-                  Invoice Number
-                </label>
-                <input
-                  type="text"
-                  value={invoiceNo}
-                  onChange={(e) => setInvoiceNo(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                  placeholder="Optional invoice number"
-                />
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-semibold text-slate-900 mb-2">
+                    Invoice Number
+                  </label>
+                  <input
+                    type="text"
+                    value={invoiceNo}
+                    onChange={(e) => setInvoiceNo(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                    placeholder="Optional invoice number"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-semibold text-slate-900 mb-2">
+                    Gate Pass Number
+                  </label>
+                  <input
+                    type="text"
+                    value={gatePassNo}
+                    onChange={(e) => setGatePassNo(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                    placeholder="Optional (can be left blank)"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Leave blank for security to write it on the printed document.
+                  </p>
+                </div>
               </div>
-              <div className="md:col-span-1">
-                <label className="block text-sm font-semibold text-slate-900 mb-2">
-                  Gate Pass Number
-                </label>
-                <input
-                  type="text"
-                  value={gatePassNo}
-                  onChange={(e) => setGatePassNo(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                  placeholder="Optional (can be left blank)"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  Leave blank for security to write it on the printed document.
-                </p>
-              </div>
-            </div>
 
-              {/* Over-allocation reason (required when selected quantity exceeds order) */}
               {requirementsWithSelected.some((r) => r.remaining_m < 0) && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                   <label className="block text-sm font-semibold text-amber-900 mb-2">
@@ -987,7 +937,6 @@ export default function FinishedFabricStoreIssuePage() {
                 </div>
               )}
 
-              {/* Order Requirements Panel */}
               {selectedOrderId && requirementsWithSelected.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
@@ -1107,7 +1056,6 @@ export default function FinishedFabricStoreIssuePage() {
                         checked={selectedRollIds.size === filteredRolls.length && filteredRolls.length > 0}
                         onChange={(e) => {
                           if (e.target.checked) {
-                            // For customer orders, select all matching rolls (over-allocation allowed with reason)
                             if (destination === "CUSTOMER" && selectedOrderId) {
                               const validIds = new Set<string>();
                               filteredRolls.forEach((roll) => {
@@ -1190,4 +1138,3 @@ export default function FinishedFabricStoreIssuePage() {
     </div>
   );
 }
-

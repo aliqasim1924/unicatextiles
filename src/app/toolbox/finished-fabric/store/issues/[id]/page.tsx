@@ -9,9 +9,11 @@ import { BackButton } from "@/components/navigation/BackButton";
 
 interface IssueItem {
   id: string;
+  roll_id: string | null;
   roll_no: string | null;
   length_m: number | null;
   grade: string | null;
+  serial_no: number | null;
 }
 
 interface IssueHeader {
@@ -64,9 +66,13 @@ export default function FinishedFabricStoreIssueDetailPage() {
           customer_orders:order_id (*, customers:customer_id (name)),
           finished_fabric_store_issue_items (
             id,
+            roll_id,
             roll_no,
             length_m,
-            grade
+            grade,
+            finished_fabric_rolls:roll_id (
+              serial_no
+            )
           )
         `
         )
@@ -93,12 +99,19 @@ export default function FinishedFabricStoreIssueDetailPage() {
       });
 
       const mapped: IssueItem[] =
-        (data.finished_fabric_store_issue_items || []).map((row: any) => ({
-          id: row.id as string,
-          roll_no: row.roll_no ?? null,
-          length_m: row.length_m !== null ? Number(row.length_m) : null,
-          grade: row.grade ?? null,
-        })) || [];
+        (data.finished_fabric_store_issue_items || []).map((row: any) => {
+          const roll = Array.isArray(row.finished_fabric_rolls)
+            ? row.finished_fabric_rolls[0]
+            : row.finished_fabric_rolls;
+          return {
+            id: row.id as string,
+            roll_id: row.roll_id ?? null,
+            roll_no: row.roll_no ?? null,
+            length_m: row.length_m !== null ? Number(row.length_m) : null,
+            grade: row.grade ?? null,
+            serial_no: roll?.serial_no ?? null,
+          };
+        }) || [];
       setItems(mapped);
     } catch (err: any) {
       setError(err.message || "Failed to load issue.");
@@ -127,6 +140,21 @@ export default function FinishedFabricStoreIssueDetailPage() {
     }
   }
 
+  function handlePrintLabels() {
+    const rollIds = items.map((i) => i.roll_id).filter(Boolean);
+    if (rollIds.length === 0) {
+      alert("No rolls found for this issue.");
+      return;
+    }
+  
+    // Pass issueNo so the PDF label generator creates filenames like: Roll-Labels-FFSI-000201-2026-09-01.pdf
+    const issueNo = header?.issue_no ? String(header.issue_no) : "";
+    window.open(
+      `/toolbox/qr/print?type=finished_fabric&rollIds=${rollIds.join(",")}&issueNo=${issueNo}`,
+      "_blank"
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-100 print:bg-white">
@@ -153,7 +181,6 @@ export default function FinishedFabricStoreIssueDetailPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 print:bg-white print:p-0">
-      {/* Screen-only actions */}
       <div className="print:hidden mx-auto max-w-[900px] px-4 py-6 space-y-3">
         {backOrderId && (
           <div className="rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
@@ -168,21 +195,24 @@ export default function FinishedFabricStoreIssueDetailPage() {
         )}
         <div className="flex items-center justify-between">
           <BackButton href="/toolbox/finished-fabric/store" label="Back to Store" />
-        <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (issueId) {
-                window.location.href = `/toolbox/finished-fabric/store/issues/${issueId}/packing-list`;
-              }
-            }}
-          >
-            Print Packing List
-          </Button>
-          <Button variant="primary" onClick={() => window.print()}>
-            Print Issue Slip
-          </Button>
-        </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handlePrintLabels}>
+              Print Roll Labels
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (issueId) {
+                  window.location.href = `/toolbox/finished-fabric/store/issues/${issueId}/packing-list`;
+                }
+              }}
+            >
+              Print Packing List
+            </Button>
+            <Button variant="primary" onClick={() => window.print()}>
+              Print Issue Slip
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -196,10 +226,6 @@ export default function FinishedFabricStoreIssueDetailPage() {
             background: white;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
-            margin: 0;
-            padding: 0;
-          }
-          .print-slip-container {
             margin: 0;
             padding: 0;
           }
@@ -228,7 +254,6 @@ export default function FinishedFabricStoreIssueDetailPage() {
 
       <div className="mx-auto max-w-[900px] px-4 pb-8 print:p-0">
         <div className="print-slip-card flex flex-col min-h-[100vh] rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4">
-          {/* Header */}
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
               <p className="text-sm font-semibold text-teal-700">UNICA TEXTILE MILLS</p>
@@ -266,11 +291,11 @@ export default function FinishedFabricStoreIssueDetailPage() {
             {header.notes ? `Notes: ${header.notes}` : "Notes: —"}
           </div>
 
-          {/* Items */}
           <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Serial #</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Length (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
@@ -279,22 +304,28 @@ export default function FinishedFabricStoreIssueDetailPage() {
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700" colSpan={3}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={4}>
                       No items recorded.
                     </td>
                   </tr>
                 ) : (
-                  items.map((item) => (
-                    <tr key={item.id} className="border-b border-slate-100">
-                      <td className="px-4 py-3 text-slate-900 font-medium">
-                        {item.roll_no || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-900">
-                        {item.length_m !== null ? item.length_m.toFixed(3) : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-900">{item.grade || "—"}</td>
-                    </tr>
-                  ))
+                  items.map((item, idx) => {
+                    const serialStr = String(item.serial_no ?? (idx + 1)).padStart(2, "0");
+                    return (
+                      <tr key={item.id} className="border-b border-slate-100">
+                        <td className="px-4 py-3 text-slate-900 font-bold">
+                          {serialStr}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900 font-medium">
+                          {item.roll_no || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">
+                          {item.length_m !== null ? item.length_m.toFixed(3) : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">{item.grade || "—"}</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -309,4 +340,3 @@ export default function FinishedFabricStoreIssueDetailPage() {
     </div>
   );
 }
-

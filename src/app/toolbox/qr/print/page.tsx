@@ -8,17 +8,15 @@ import { generateLabelPdf, LABEL_SIZE_MM, type LabelPdfRow } from "@/lib/qr/gene
 
 type QRData = LabelPdfRow;
 
-// Helper function to get color class based on GSM
 function getHeaderColorClass(gsm: number | string | null | undefined): string {
   const numericGsm = gsm != null ? Number(gsm) : null;
 
   if (numericGsm === 400) {
-    return "bg-green-600"; // Green for 400 GSM
+    return "bg-green-600";
   } else if (numericGsm === 500) {
-    return "bg-blue-600"; // Blue for 500 GSM
+    return "bg-blue-600";
   }
-  // Default/fallback for other GSM values
-  return "bg-red-600"; // Red for unknown GSM
+  return "bg-red-600";
 }
 
 export default function QRPrintPage() {
@@ -26,6 +24,11 @@ export default function QRPrintPage() {
   const rollIdsParam = searchParams.get("rollIds");
   const rollIds = rollIdsParam?.split(",").filter(Boolean) || [];
   const type = (searchParams.get("type") || "base_fabric") as "base_fabric" | "finished_fabric";
+  
+  // Extract issue/order reference params for the PDF naming
+  const issueNoParam = searchParams.get("issueNo");
+  const orderRefParam = searchParams.get("orderRef");
+
   const [qrData, setQrData] = useState<QRData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +79,7 @@ export default function QRPrintPage() {
           const mapped = rollIds
             .map((id) => byId.get(id))
             .filter(Boolean)
-            .map((row: any) => {
+            .map((row: any, index: number) => {
               const order = Array.isArray(row.base_fabric_orders)
                 ? row.base_fabric_orders[0]
                 : row.base_fabric_orders;
@@ -88,7 +91,8 @@ export default function QRPrintPage() {
 
               return {
                 qr_code: row.qr_code || row.roll_no || `BFR-${row.id.slice(0, 8)}`,
-                roll_no: row.roll_no,
+                roll_no: row.roll_no || `BFR-${row.id.slice(0, 8)}`,
+                serial_no: index + 1,
                 type: "base_fabric" as const,
                 length_m: row.length_m !== null && row.length_m !== undefined ? Number(row.length_m) : null,
                 order_no: order?.order_no || null,
@@ -105,7 +109,6 @@ export default function QRPrintPage() {
 
           setQrData(mapped);
         } else {
-          // Relational query joining coating_batches via batch_id
           const { data, error: fetchError } = await supabaseBrowserClient
             .from("finished_fabric_rolls")
             .select(
@@ -113,6 +116,7 @@ export default function QRPrintPage() {
               id,
               qr_code,
               roll_no,
+              serial_no,
               length_m,
               grade,
               color,
@@ -131,14 +135,15 @@ export default function QRPrintPage() {
           const mapped = rollIds
             .map((id) => byId.get(id))
             .filter(Boolean)
-            .map((row: any) => {
+            .map((row: any, index: number) => {
               const batch = Array.isArray(row.coating_batches)
                 ? row.coating_batches[0]
                 : row.coating_batches;
 
               return {
                 qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
-                roll_no: row.roll_no,
+                roll_no: row.roll_no || `FFR-${row.id.slice(0, 8)}`,
+                serial_no: row.serial_no ?? (index + 1),
                 type: "finished_fabric" as const,
                 length_m: row.length_m !== null && row.length_m !== undefined ? Number(row.length_m) : null,
                 grade: row.grade,
@@ -166,7 +171,10 @@ export default function QRPrintPage() {
     setPdfError(null);
     setIsGeneratingPdf(true);
     try {
-      await generateLabelPdf(qrData, type);
+      await generateLabelPdf(qrData, type, {
+        issueNo: issueNoParam,
+        orderRef: orderRefParam,
+      });
     } catch (err: any) {
       setPdfError(err.message || "Failed to generate PDF.");
     } finally {
@@ -274,6 +282,12 @@ export default function QRPrintPage() {
         {qrData.map((data) => {
           const isCoating = data.type === "finished_fabric";
           const headerColorClass = isCoating ? getHeaderColorClass(data.gsm) : "bg-slate-700";
+          
+          const formattedSerial = data.serial_no != null 
+            ? String(data.serial_no).padStart(2, "0") 
+            : "—";
+
+          const internalRollNo = data.roll_no || data.qr_code || "—";
 
           const tableRows: [string, string][] = isCoating
             ? [
@@ -281,7 +295,8 @@ export default function QRPrintPage() {
                 ["COLOUR", data.color || "—"],
                 ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
                 ["BATCH NUMBER", data.batch_no || "—"],
-                ["ROLL NUMBER", data.roll_no || data.qr_code],
+                ["INTERNAL ROLL #", internalRollNo],
+                ["ROLL SERIAL #", formattedSerial],
                 ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
                 ["GRADE", data.grade || "A"],
               ]
@@ -290,7 +305,8 @@ export default function QRPrintPage() {
                 ["COLOUR", "NATURAL / GREY"],
                 ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
                 ["BFO NUMBER", data.order_no || "—"],
-                ["ROLL NUMBER", data.roll_no || data.qr_code],
+                ["INTERNAL ROLL #", internalRollNo],
+                ["ROLL SERIAL #", formattedSerial],
                 ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
                 ["LOOM NUMBER", data.loom_no != null && data.loom_no !== "" ? `LOOM ${data.loom_no}` : "—"],
               ];
@@ -323,14 +339,14 @@ export default function QRPrintPage() {
                   {tableRows.map(([label, value], idx) => (
                     <div
                       key={label}
-                      className={`flex h-[8.5mm] border-b border-slate-300 last:border-b-0 ${
-                        idx % 2 === 0 ? "bg-slate-50" : "bg-white"
+                      className={`flex h-[7.5mm] border-b border-slate-300 last:border-b-0 ${
+                        label === "ROLL SERIAL #" ? "bg-emerald-50" : idx % 2 === 0 ? "bg-slate-50" : "bg-white"
                       }`}
                     >
-                      <div className="flex w-[24mm] items-center border-r border-slate-300 px-1 text-[7px] font-extrabold text-slate-500 uppercase">
+                      <div className="flex w-[24mm] items-center border-r border-slate-300 px-1 text-[6.5px] font-extrabold text-slate-500 uppercase">
                         {label}
                       </div>
-                      <div className="flex w-[34mm] items-center truncate px-1.5 text-[9px] font-extrabold text-slate-900">
+                      <div className="flex w-[34mm] items-center truncate px-1.5 text-[8.5px] font-extrabold text-slate-900">
                         {value}
                       </div>
                     </div>
@@ -339,7 +355,7 @@ export default function QRPrintPage() {
 
                 {/* QR Code */}
                 <div className="flex w-[38mm] justify-center items-center pl-1">
-                  <QRCode value={data.qr_code} size={120} level="M" includeMargin={false} />
+                  <QRCode value={data.qr_code} size={115} level="M" includeMargin={false} />
                 </div>
               </div>
 

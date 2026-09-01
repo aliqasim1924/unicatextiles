@@ -20,6 +20,7 @@ interface IssueItem {
     gsm?: number | null;
     color?: string | null;
     coating_type?: string | null;
+    serial_no?: number | null;
   } | null;
 }
 
@@ -82,7 +83,8 @@ export default function FinishedFabricPackingListPage() {
               grade,
               gsm,
               color,
-              coating_type
+              coating_type,
+              serial_no
             )
           )
         `
@@ -281,7 +283,7 @@ export default function FinishedFabricPackingListPage() {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9);
         doc.text(
-          `Total Rolls: ${totals.rollCount}    Total Length: ${totals.totalMeters.toFixed(3)} m`,
+          `Total Rolls: ${totals.rollCount}     Total Length: ${totals.totalMeters.toFixed(3)} m`,
           marginLeft,
           y,
         );
@@ -331,10 +333,12 @@ export default function FinishedFabricPackingListPage() {
 
       const headerBottomY = addHeader();
 
-      const body = items.map((item) => {
+      const body = items.map((item, idx) => {
         const roll = item.roll || {};
         const length = getItemLength(item);
+        const serialStr = String(roll.serial_no ?? (idx + 1)).padStart(2, "0");
         return [
+          serialStr,
           item.roll_no || roll.roll_no || "—",
           length !== null ? length.toFixed(3) : "—",
           item.grade || roll.grade || "—",
@@ -345,12 +349,12 @@ export default function FinishedFabricPackingListPage() {
       });
 
       autoTable(doc, {
-        head: [["Roll No", "Length (m)", "Grade", "GSM", "Colour", "Coating Type"]],
+        head: [["Serial #", "Roll No", "Length (m)", "Grade", "GSM", "Colour", "Coating Type"]],
         body:
           body.length > 0
             ? body
-            : [["—", "—", "—", "—", "—", "No items recorded"]],
-        foot: [["Total", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`]],
+            : [["—", "—", "—", "—", "—", "—", "No items recorded"]],
+        foot: [["Total", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`]],
         startY: headerBottomY + 2,
         margin: {
           left: marginLeft,
@@ -378,12 +382,13 @@ export default function FinishedFabricPackingListPage() {
           fontStyle: "bold",
         },
         columnStyles: {
-          0: { cellWidth: 32 },
-          1: { cellWidth: 24, halign: "right" },
-          2: { cellWidth: 18, halign: "center" },
-          3: { cellWidth: 18, halign: "right" },
-          4: { cellWidth: "auto" },
-          5: { cellWidth: 28 },
+          0: { cellWidth: 16, fontStyle: "bold", halign: "center" },
+          1: { cellWidth: 28 },
+          2: { cellWidth: 22, halign: "right" },
+          3: { cellWidth: 16, halign: "center" },
+          4: { cellWidth: 16, halign: "right" },
+          5: { cellWidth: "auto" },
+          6: { cellWidth: 26 },
         },
         showHead: "everyPage",
         showFoot: "lastPage",
@@ -498,6 +503,7 @@ export default function FinishedFabricPackingListPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="px-4 py-3 text-center font-semibold text-slate-900">Serial #</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
@@ -509,16 +515,20 @@ export default function FinishedFabricPackingListPage() {
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={7}>
                       No items recorded.
                     </td>
                   </tr>
                 ) : (
-                  items.map((item) => {
+                  items.map((item, idx) => {
                     const roll = item.roll || {};
                     const length = getItemLength(item);
+                    const serialStr = String(roll.serial_no ?? (idx + 1)).padStart(2, "0");
                     return (
                       <tr key={item.id} className="border-b border-slate-100">
+                        <td className="px-4 py-3 text-center text-slate-900 font-bold">
+                          {serialStr}
+                        </td>
                         <td className="px-4 py-3 text-slate-900 font-medium">
                           {item.roll_no || roll.roll_no || "—"}
                         </td>
@@ -536,18 +546,6 @@ export default function FinishedFabricPackingListPage() {
                   })
                 )}
               </tbody>
-              <tfoot>
-                <tr className="bg-slate-50 border-t border-slate-200">
-                  <td className="px-4 py-3 font-semibold text-slate-900">Total</td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {totals.totalMeters.toFixed(3)}
-                  </td>
-                  <td className="px-4 py-3" colSpan={3} />
-                  <td className="px-4 py-3 font-semibold text-slate-900">
-                    {totals.rollCount} roll(s)
-                  </td>
-                </tr>
-              </tfoot>
             </table>
           </div>
 

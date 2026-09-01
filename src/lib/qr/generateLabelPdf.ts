@@ -20,6 +20,12 @@ export interface LabelPdfRow {
   color?: string | null;
   coating_type?: string | null;
   batch_no?: string | null;
+  serial_no?: string | number | null;
+}
+
+export interface PdfOptions {
+  issueNo?: string | number | null;
+  orderRef?: string | null;
 }
 
 async function loadImage(src: string): Promise<HTMLImageElement | null> {
@@ -70,19 +76,17 @@ function qrCodePngDataUrl(value: string, sizePx = 512): Promise<string> {
   });
 }
 
-// Helper function to determine color based on GSM (matches Tailwind colors)
 function getHeaderColorByGsm(
   gsm: number | string | null | undefined
 ): [number, number, number] {
   const numericGsm = gsm != null ? Number(gsm) : null;
 
   if (numericGsm === 400) {
-    return [22, 163, 74]; // Green 600 (#16a34a) for 400 GSM
+    return [22, 163, 74]; // Green 600
   } else if (numericGsm === 500) {
-    return [37, 99, 235]; // Blue 600 (#2563eb) for 500 GSM
+    return [37, 99, 235]; // Blue 600
   }
-  // Default/fallback for other GSM values
-  return [220, 38, 38]; // Red 600 (#dc2626) for unknown GSM
+  return [220, 38, 38]; // Red 600
 }
 
 function drawLabel(
@@ -94,10 +98,9 @@ function drawLabel(
   const size = LABEL_SIZE_MM; // 100mm x 100mm
   const isCoating = data.type === "finished_fabric";
 
-  // Color theme: Green for 400 GSM, Blue for 500 GSM, Red for other Coating, Dark Slate for Weaving
   const colorRgb = isCoating
     ? getHeaderColorByGsm(data.gsm)
-    : [51, 65, 85]; // Dark slate for all weaving labels
+    : [51, 65, 85];
 
   // 1. Top Header Banner
   doc.setFillColor(colorRgb[0], colorRgb[1], colorRgb[2]);
@@ -134,14 +137,22 @@ function drawLabel(
   doc.setFontSize(9);
   doc.text("GSM", 81, 15, { align: "center" });
 
-  // 2. Data Rows Definition
+  // Format serial number & internal roll number
+  const formattedSerial = data.serial_no != null 
+    ? String(data.serial_no).padStart(2, "0") 
+    : "—";
+
+  const internalRollNo = data.roll_no || data.qr_code || "—";
+
+  // 2. Data Rows Definition (Includes both INTERNAL ROLL # and ROLL SERIAL #)
   const rows: [string, string][] = isCoating
     ? [
         ["TYPE OF FABRIC", data.coating_type || data.fabric_name || "—"],
         ["COLOUR", data.color || "—"],
         ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
         ["BATCH NUMBER", data.batch_no || "—"],
-        ["ROLL NUMBER", data.roll_no || data.qr_code],
+        ["INTERNAL ROLL #", internalRollNo],
+        ["ROLL SERIAL #", formattedSerial],
         ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
         ["GRADE", data.grade || "A"],
       ]
@@ -150,18 +161,22 @@ function drawLabel(
         ["COLOUR", "NATURAL / GREY"],
         ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
         ["BFO NUMBER", data.order_no || "—"],
-        ["ROLL NUMBER", data.roll_no || data.qr_code],
+        ["INTERNAL ROLL #", internalRollNo],
+        ["ROLL SERIAL #", formattedSerial],
         ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
         ["LOOM NUMBER", data.loom_no != null && data.loom_no !== "" ? `LOOM ${data.loom_no}` : "—"],
       ];
 
   // 3. Render Table Grid (Left)
-  let yPos = 23;
-  const rowH = 8.5;
+  let yPos = 22;
+  const rowH = 7.5;
   const tableW = 58;
 
   rows.forEach(([label, value], i) => {
-    if (i % 2 === 0) {
+    if (label === "ROLL SERIAL #") {
+      doc.setFillColor(236, 253, 245); // Emerald highlight for serial row
+      doc.rect(4, yPos, tableW, rowH, "F");
+    } else if (i % 2 === 0) {
       doc.setFillColor(248, 250, 252);
       doc.rect(4, yPos, tableW, rowH, "F");
     }
@@ -172,14 +187,14 @@ function drawLabel(
     doc.line(28, yPos, 28, yPos + rowH);
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(6);
+    doc.setFontSize(5.5);
     doc.setTextColor(71, 85, 105);
-    doc.text(label, 5, yPos + 5.5, { maxWidth: 22 });
+    doc.text(label, 5, yPos + 5, { maxWidth: 22 });
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
+    doc.setFontSize(7);
     doc.setTextColor(15, 23, 42);
-    doc.text(value, 29, yPos + 5.5, { maxWidth: 32 });
+    doc.text(value, 29, yPos + 5, { maxWidth: 28 });
 
     yPos += rowH;
   });
@@ -200,7 +215,8 @@ function drawLabel(
 
 export async function generateLabelPdf(
   rows: LabelPdfRow[],
-  kind: "base_fabric" | "finished_fabric"
+  kind: "base_fabric" | "finished_fabric",
+  options?: PdfOptions
 ): Promise<void> {
   if (rows.length === 0) return;
 
@@ -218,24 +234,29 @@ export async function generateLabelPdf(
   }
 
   const stamp = new Date().toISOString().slice(0, 10);
-  
-  // Extract identifier (Batch number for coating, Order/BFO number for weaving)
-  let refName = "";
-  if (kind === "finished_fabric") {
-    // Check if all selected rows share the same batch number
-    const uniqueBatches = Array.from(new Set(rows.map((r) => r.batch_no).filter(Boolean)));
-    if (uniqueBatches.length === 1) {
-      refName = `-${uniqueBatches[0]}`;
-    }
+  let fileName = "";
+
+  if (options?.issueNo) {
+    const formattedIssue = String(options.issueNo).padStart(6, "0");
+    fileName = `Roll-Labels-FFSI-${formattedIssue}-${stamp}.pdf`;
+  } else if (options?.orderRef) {
+    fileName = `Roll-Labels-ORD-${options.orderRef}-${stamp}.pdf`;
   } else {
-    // Check if all selected rows share the same BFO order number
-    const uniqueOrders = Array.from(new Set(rows.map((r) => r.order_no).filter(Boolean)));
-    if (uniqueOrders.length === 1) {
-      refName = `-${uniqueOrders[0]}`;
+    let refName = "";
+    if (kind === "finished_fabric") {
+      const uniqueBatches = Array.from(new Set(rows.map((r) => r.batch_no).filter(Boolean)));
+      if (uniqueBatches.length === 1) {
+        refName = `-${uniqueBatches[0]}`;
+      }
+    } else {
+      const uniqueOrders = Array.from(new Set(rows.map((r) => r.order_no).filter(Boolean)));
+      if (uniqueOrders.length === 1) {
+        refName = `-${uniqueOrders[0]}`;
+      }
     }
+    const prefix = kind === "base_fabric" ? "weaving-base" : "coating-finished";
+    fileName = `${prefix}${refName}-labels-${stamp}.pdf`;
   }
 
-  const prefix = kind === "base_fabric" ? "weaving-base" : "coating-finished";
-  // Generates e.g.: coating-finished-CBT-00102-2026-08-31.pdf
-  doc.save(`${prefix}${refName}-labels-${stamp}.pdf`);
+  doc.save(fileName);
 }
