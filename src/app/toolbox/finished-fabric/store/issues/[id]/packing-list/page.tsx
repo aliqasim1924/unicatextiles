@@ -372,7 +372,7 @@ export default function FinishedFabricPackingListPage() {
       });
 
       autoTable(doc, {
-        head: [["Serial #", "Roll No", "Length (m)", "Grade", "GSM", "Colour", "Coating Type", "Weight (kg)"]],
+        head: [["Roll #", "IRR #", "Length (m)", "Grade", "GSM", "Colour", "Coating Type", "Weight (kg)"]],
         body:
           body.length > 0
             ? body
