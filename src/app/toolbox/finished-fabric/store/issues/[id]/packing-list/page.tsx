@@ -8,6 +8,9 @@ import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
 
+const DEFAULT_WIDTH_M = 1.8;
+const PACKAGING_WEIGHT_KG = 0.5; // 500g tubing & packaging weight per roll
+
 interface IssueItem {
   id: string;
   roll_no: string | null;
@@ -166,11 +169,29 @@ export default function FinishedFabricPackingListPage() {
     return null;
   }
 
+  function calculateRollWeight(item: IssueItem): number | null {
+    const length = getItemLength(item);
+    const gsm = item.roll?.gsm ? Number(item.roll.gsm) : null;
+    if (length === null || !gsm) return null;
+
+    // Weight = (GSM * Length * 1.8m Width / 1000) + 0.5kg packaging
+    const fabricWeightKg = (gsm * length * DEFAULT_WIDTH_M) / 1000;
+    return fabricWeightKg + PACKAGING_WEIGHT_KG;
+  }
+
   const totals = useMemo(() => {
-    const totalMeters = items.reduce((sum, item) => sum + (getItemLength(item) ?? 0), 0);
+    let totalMeters = 0;
+    let totalWeight = 0;
+
+    items.forEach((item) => {
+      totalMeters += getItemLength(item) ?? 0;
+      totalWeight += calculateRollWeight(item) ?? 0;
+    });
+
     return {
       rollCount: items.length,
       totalMeters,
+      totalWeight,
     };
   }, [items]);
 
@@ -213,7 +234,7 @@ export default function FinishedFabricPackingListPage() {
                   pageWidth - marginRight - logoWidth,
                   marginTop,
                   logoWidth,
-                  logoHeight,
+                  logoHeight
                 );
                 headerTopOffset = Math.max(headerTopOffset, marginTop + 4);
               } catch {
@@ -283,9 +304,9 @@ export default function FinishedFabricPackingListPage() {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9);
         doc.text(
-          `Total Rolls: ${totals.rollCount}     Total Length: ${totals.totalMeters.toFixed(3)} m`,
+          `Total Rolls: ${totals.rollCount}    Total Length: ${totals.totalMeters.toFixed(3)} m    Total Weight: ${totals.totalWeight.toFixed(2)} kg`,
           marginLeft,
-          y,
+          y
         );
         y += 4;
 
@@ -304,7 +325,7 @@ export default function FinishedFabricPackingListPage() {
           `Page ${pageNumber} of ${pageCount}`,
           pageWidth - marginRight,
           pageHeight - 8,
-          { align: "right" },
+          { align: "right" }
         );
         doc.setTextColor(0, 0, 0);
       };
@@ -336,6 +357,7 @@ export default function FinishedFabricPackingListPage() {
       const body = items.map((item, idx) => {
         const roll = item.roll || {};
         const length = getItemLength(item);
+        const weight = calculateRollWeight(item);
         const serialStr = String(roll.serial_no ?? (idx + 1)).padStart(2, "0");
         return [
           serialStr,
@@ -345,16 +367,17 @@ export default function FinishedFabricPackingListPage() {
           roll.gsm !== null && roll.gsm !== undefined ? String(roll.gsm) : "—",
           roll.color || "—",
           roll.coating_type || "—",
+          weight !== null ? weight.toFixed(2) : "—",
         ];
       });
 
       autoTable(doc, {
-        head: [["Serial #", "Roll No", "Length (m)", "Grade", "GSM", "Colour", "Coating Type"]],
+        head: [["Serial #", "Roll No", "Length (m)", "Grade", "GSM", "Colour", "Coating Type", "Weight (kg)"]],
         body:
           body.length > 0
             ? body
-            : [["—", "—", "—", "—", "—", "—", "No items recorded"]],
-        foot: [["Total", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`]],
+            : [["—", "—", "—", "—", "—", "—", "—", "No items recorded"]],
+        foot: [["Total", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`, totals.totalWeight.toFixed(2)]],
         startY: headerBottomY + 2,
         margin: {
           left: marginLeft,
@@ -381,14 +404,16 @@ export default function FinishedFabricPackingListPage() {
           textColor: [15, 23, 42],
           fontStyle: "bold",
         },
+        // Column widths sum exactly to 182mm (Full Printable Width on A4 with 14mm margins)
         columnStyles: {
-          0: { cellWidth: 16, fontStyle: "bold", halign: "center" },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 22, halign: "right" },
-          3: { cellWidth: 16, halign: "center" },
-          4: { cellWidth: 16, halign: "right" },
-          5: { cellWidth: "auto" },
-          6: { cellWidth: 26 },
+          0: { cellWidth: 15, fontStyle: "bold", halign: "center" }, // Serial #
+          1: { cellWidth: 28 },                                     // Roll No
+          2: { cellWidth: 22, halign: "right" },                    // Length (m)
+          3: { cellWidth: 14, halign: "center" },                   // Grade
+          4: { cellWidth: 14, halign: "right" },                    // GSM
+          5: { cellWidth: 36 },                                     // Colour (Expanded to fill printable width)
+          6: { cellWidth: 30 },                                     // Coating Type
+          7: { cellWidth: 23, halign: "right" },                    // Weight (kg)
         },
         showHead: "everyPage",
         showFoot: "lastPage",
@@ -405,7 +430,7 @@ export default function FinishedFabricPackingListPage() {
               `${issueNoLabel} · ${getCustomerName(header.order)}`,
               pageWidth - marginRight,
               marginTop + 4,
-              { align: "right" },
+              { align: "right" }
             );
             doc.setTextColor(0, 0, 0);
           }
@@ -491,7 +516,7 @@ export default function FinishedFabricPackingListPage() {
                 <p className="mt-2 text-sm text-slate-600">Notes: {header.notes}</p>
               ) : null}
               <p className="mt-3 text-sm font-medium text-slate-900">
-                Total Rolls: {totals.rollCount} · Total Length: {totals.totalMeters.toFixed(3)} m
+                Total Rolls: {totals.rollCount} · Total Length: {totals.totalMeters.toFixed(3)} m · Total Weight: {totals.totalWeight.toFixed(2)} kg
               </p>
             </div>
             <div className="w-28 h-14 flex items-center justify-center overflow-hidden">
@@ -503,19 +528,20 @@ export default function FinishedFabricPackingListPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="px-4 py-3 text-center font-semibold text-slate-900">Serial #</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Colour</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Coating Type</th>
+                  <th className="px-3 py-3 text-center font-semibold text-slate-900">Serial #</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900">Roll No</th>
+                  <th className="px-3 py-3 text-right font-semibold text-slate-900">Length (m)</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900">Grade</th>
+                  <th className="px-3 py-3 text-right font-semibold text-slate-900">GSM</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900">Colour</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900">Coating Type</th>
+                  <th className="px-3 py-3 text-right font-semibold text-slate-900">Weight (kg)</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700" colSpan={7}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={8}>
                       No items recorded.
                     </td>
                   </tr>
@@ -523,24 +549,28 @@ export default function FinishedFabricPackingListPage() {
                   items.map((item, idx) => {
                     const roll = item.roll || {};
                     const length = getItemLength(item);
+                    const weight = calculateRollWeight(item);
                     const serialStr = String(roll.serial_no ?? (idx + 1)).padStart(2, "0");
                     return (
                       <tr key={item.id} className="border-b border-slate-100">
-                        <td className="px-4 py-3 text-center text-slate-900 font-bold">
+                        <td className="px-3 py-3 text-center text-slate-900 font-bold">
                           {serialStr}
                         </td>
-                        <td className="px-4 py-3 text-slate-900 font-medium">
+                        <td className="px-3 py-3 text-slate-900 font-medium">
                           {item.roll_no || roll.roll_no || "—"}
                         </td>
-                        <td className="px-4 py-3 text-right text-slate-900">
+                        <td className="px-3 py-3 text-right text-slate-900">
                           {length !== null ? length.toFixed(3) : "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-900">{item.grade || roll.grade || "—"}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">
+                        <td className="px-3 py-3 text-slate-900">{item.grade || roll.grade || "—"}</td>
+                        <td className="px-3 py-3 text-right text-slate-900">
                           {roll.gsm !== null && roll.gsm !== undefined ? roll.gsm : "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-900">{roll.color || "—"}</td>
-                        <td className="px-4 py-3 text-slate-900">{roll.coating_type || "—"}</td>
+                        <td className="px-3 py-3 text-slate-900 max-w-[140px] truncate">{roll.color || "—"}</td>
+                        <td className="px-3 py-3 text-slate-900">{roll.coating_type || "—"}</td>
+                        <td className="px-3 py-3 text-right text-slate-900 font-medium">
+                          {weight !== null ? weight.toFixed(2) : "—"}
+                        </td>
                       </tr>
                     );
                   })
