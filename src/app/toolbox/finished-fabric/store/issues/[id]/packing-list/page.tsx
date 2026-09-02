@@ -528,8 +528,8 @@ export default function FinishedFabricPackingListPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="px-3 py-3 text-center font-semibold text-slate-900">Serial #</th>
-                  <th className="px-3 py-3 text-left font-semibold text-slate-900">Roll No</th>
+                  <th className="px-3 py-3 text-center font-semibold text-slate-900">Roll #</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900">IRR #</th>
                   <th className="px-3 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                   <th className="px-3 py-3 text-left font-semibold text-slate-900">Grade</th>
                   <th className="px-3 py-3 text-right font-semibold text-slate-900">GSM</th>
