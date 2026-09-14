@@ -112,6 +112,10 @@ export default function FinishedFabricStoreIssueDetailPage() {
             serial_no: roll?.serial_no ?? null,
           };
         }) || [];
+
+      // Sort items strictly by serial_no ASC
+      mapped.sort((a, b) => (a.serial_no ?? 0) - (b.serial_no ?? 0));
+
       setItems(mapped);
     } catch (err: any) {
       setError(err.message || "Failed to load issue.");
@@ -146,8 +150,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
       alert("No rolls found for this issue.");
       return;
     }
-  
-    // Pass issueNo so the PDF label generator creates filenames like: Roll-Labels-FFSI-000201-2026-09-01.pdf
+
     const issueNo = header?.issue_no ? String(header.issue_no) : "";
     window.open(
       `/toolbox/qr/print?type=finished_fabric&rollIds=${rollIds.join(",")}&issueNo=${issueNo}`,

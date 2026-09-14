@@ -124,6 +124,10 @@ export default function FinishedFabricPackingListPage() {
             ? row.finished_fabric_rolls[0]
             : row.finished_fabric_rolls,
         })) || [];
+
+      // Sort mapped items strictly by roll serial_no ASC
+      mapped.sort((a, b) => (a.roll?.serial_no ?? 0) - (b.roll?.serial_no ?? 0));
+
       setItems(mapped);
     } catch (err: any) {
       console.error("Failed to load packing list", err);
@@ -379,6 +383,7 @@ export default function FinishedFabricPackingListPage() {
             : [["—", "—", "—", "—", "—", "—", "—", "No items recorded"]],
         foot: [["Total", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`, totals.totalWeight.toFixed(2)]],
         startY: headerBottomY + 2,
+        rowPageBreak: "avoid",
         margin: {
           left: marginLeft,
           right: marginRight,
@@ -404,14 +409,13 @@ export default function FinishedFabricPackingListPage() {
           textColor: [15, 23, 42],
           fontStyle: "bold",
         },
-        // Column widths sum exactly to 182mm (Full Printable Width on A4 with 14mm margins)
         columnStyles: {
-          0: { cellWidth: 15, fontStyle: "bold", halign: "center" }, // Serial #
-          1: { cellWidth: 28 },                                     // Roll No
+          0: { cellWidth: 15, fontStyle: "bold", halign: "center" }, // Roll #
+          1: { cellWidth: 28 },                                     // IRR #
           2: { cellWidth: 22, halign: "right" },                    // Length (m)
           3: { cellWidth: 14, halign: "center" },                   // Grade
           4: { cellWidth: 14, halign: "right" },                    // GSM
-          5: { cellWidth: 36 },                                     // Colour (Expanded to fill printable width)
+          5: { cellWidth: 36 },                                     // Colour
           6: { cellWidth: 30 },                                     // Coating Type
           7: { cellWidth: 23, halign: "right" },                    // Weight (kg)
         },
