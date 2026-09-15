@@ -374,13 +374,24 @@ export default function CustomerOrderDetailPage() {
           const returnedTotal = returnsByIssueId[row.id] || 0;
           const netTotal = Math.max(0, grossTotal - returnedTotal);
 
+          // Fall back to order level invoice/gate pass numbers if empty on the issue row
+          const effectiveInvoiceNo =
+            row.invoice_no && row.invoice_no.trim() !== ""
+              ? row.invoice_no
+              : (normalizedOrder.invoice_no ?? null);
+
+          const effectiveGatePassNo =
+            row.gate_pass_no && row.gate_pass_no.trim() !== ""
+              ? row.gate_pass_no
+              : (normalizedOrder.gate_pass_no ?? null);
+
           return {
             id: row.id,
             issue_no: row.issue_no ?? null,
             issue_time: row.issue_time,
             destination: row.destination ?? null,
-            invoice_no: row.invoice_no ?? null,
-            gate_pass_no: row.gate_pass_no ?? null,
+            invoice_no: effectiveInvoiceNo,
+            gate_pass_no: effectiveGatePassNo,
             total_length_m: grossTotal,
             returned_length_m: returnedTotal,
             net_length_m: netTotal,

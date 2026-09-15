@@ -115,6 +115,18 @@ export default function FinishedFabricStoreIssueDetailPage() {
       if (order && Array.isArray(order.customers)) {
         order = { ...order, customers: order.customers[0] ?? null };
       }
+
+      // Dynamic fallback to customer order invoice/gate pass numbers if null/empty on the issue slip
+      const invoiceNo =
+        data.invoice_no && data.invoice_no.trim() !== ""
+          ? data.invoice_no
+          : (order?.invoice_no ?? null);
+
+      const gatePassNo =
+        data.gate_pass_no && data.gate_pass_no.trim() !== ""
+          ? data.gate_pass_no
+          : (order?.gate_pass_no ?? null);
+
       setHeader({
         id: data.id,
         issue_no: data.issue_no ?? null,
@@ -124,8 +136,8 @@ export default function FinishedFabricStoreIssueDetailPage() {
         notes: data.notes ?? null,
         status: data.status || "ACTIVE",
         order_id: data.order_id ?? null,
-        invoice_no: data.invoice_no ?? null,
-        gate_pass_no: data.gate_pass_no ?? null,
+        invoice_no: invoiceNo,
+        gate_pass_no: gatePassNo,
         order: order ?? null,
       });
 
