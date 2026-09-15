@@ -25,9 +25,10 @@ export default function QRPrintPage() {
   const rollIds = rollIdsParam?.split(",").filter(Boolean) || [];
   const type = (searchParams.get("type") || "base_fabric") as "base_fabric" | "finished_fabric";
   
-  // Extract issue/order reference params for the PDF naming
+  // Extract issue/order reference params for the PDF naming and sequence calculation
   const issueNoParam = searchParams.get("issueNo");
   const orderRefParam = searchParams.get("orderRef");
+  const issueIdParam = searchParams.get("issueId");
 
   const [qrData, setQrData] = useState<QRData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -109,6 +110,49 @@ export default function QRPrintPage() {
 
           setQrData(mapped);
         } else {
+          // Calculate prior active rolls offset if an issueId was provided
+          let priorActiveRollsCount = 0;
+          if (issueIdParam) {
+            const { data: issueData } = await supabaseBrowserClient
+              .from("finished_fabric_store_issues")
+              .select("order_id, issue_no")
+              .eq("id", issueIdParam)
+              .single();
+
+            if (issueData?.order_id && issueData?.issue_no != null) {
+              const { data: priorIssues } = await supabaseBrowserClient
+                .from("finished_fabric_store_issues")
+                .select(`id, finished_fabric_store_issue_items ( id, roll_id )`)
+                .eq("order_id", issueData.order_id)
+                .lt("issue_no", issueData.issue_no);
+
+              const priorIssueIds = (priorIssues || []).map((i: any) => i.id);
+
+              if (priorIssueIds.length > 0) {
+                const { data: priorReturns } = await supabaseBrowserClient
+                  .from("finished_fabric_store_issue_returns")
+                  .select(`finished_fabric_store_issue_return_items ( roll_id )`)
+                  .in("issue_id", priorIssueIds)
+                  .neq("status", "REVERSED");
+
+                const priorReturnedRollIds = new Set<string>();
+                (priorReturns || []).forEach((ret: any) => {
+                  (ret.finished_fabric_store_issue_return_items || []).forEach((ri: any) => {
+                    if (ri.roll_id) priorReturnedRollIds.add(ri.roll_id);
+                  });
+                });
+
+                (priorIssues || []).forEach((pi: any) => {
+                  (pi.finished_fabric_store_issue_items || []).forEach((item: any) => {
+                    if (!item.roll_id || !priorReturnedRollIds.has(item.roll_id)) {
+                      priorActiveRollsCount += 1;
+                    }
+                  });
+                });
+              }
+            }
+          }
+
           const { data, error: fetchError } = await supabaseBrowserClient
             .from("finished_fabric_rolls")
             .select(
@@ -132,27 +176,29 @@ export default function QRPrintPage() {
           if (fetchError) throw fetchError;
 
           const byId = new Map((data || []).map((row: any) => [row.id, row]));
-          const mapped = rollIds
-            .map((id) => byId.get(id))
-            .filter(Boolean)
-            .map((row: any, index: number) => {
-              const batch = Array.isArray(row.coating_batches)
-                ? row.coating_batches[0]
-                : row.coating_batches;
+          
+          // Sort items strictly by roll serial_no ASC if printing via issue
+          const matchedRows = rollIds.map((id) => byId.get(id)).filter(Boolean);
+          matchedRows.sort((a: any, b: any) => (a?.serial_no ?? 0) - (b?.serial_no ?? 0));
 
-              return {
-                qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
-                roll_no: row.roll_no || `FFR-${row.id.slice(0, 8)}`,
-                serial_no: row.serial_no ?? (index + 1),
-                type: "finished_fabric" as const,
-                length_m: row.length_m !== null && row.length_m !== undefined ? Number(row.length_m) : null,
-                grade: row.grade,
-                color: row.color,
-                coating_type: row.coating_type,
-                gsm: row.gsm,
-                batch_no: batch?.batch_no || null,
-              };
-            });
+          const mapped = matchedRows.map((row: any, index: number) => {
+            const batch = Array.isArray(row.coating_batches)
+              ? row.coating_batches[0]
+              : row.coating_batches;
+
+            return {
+              qr_code: row.qr_code || row.roll_no || `FFR-${row.id.slice(0, 8)}`,
+              roll_no: row.roll_no || `FFR-${row.id.slice(0, 8)}`,
+              serial_no: issueIdParam ? priorActiveRollsCount + index + 1 : (row.serial_no ?? (index + 1)),
+              type: "finished_fabric" as const,
+              length_m: row.length_m !== null && row.length_m !== undefined ? Number(row.length_m) : null,
+              grade: row.grade,
+              color: row.color,
+              coating_type: row.coating_type,
+              gsm: row.gsm,
+              batch_no: batch?.batch_no || null,
+            };
+          });
 
           setQrData(mapped);
         }
@@ -165,7 +211,7 @@ export default function QRPrintPage() {
     }
 
     fetchQRData();
-  }, [rollIdsParam, type]);
+  }, [rollIdsParam, type, issueIdParam]);
 
   async function handleDownloadPdf() {
     setPdfError(null);

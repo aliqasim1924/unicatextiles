@@ -14,6 +14,7 @@ interface IssueItem {
   length_m: number | null;
   grade: string | null;
   serial_no: number | null;
+  sequence_no: number;
   is_returned?: boolean;
   return_no?: number | null;
 }
@@ -141,29 +142,84 @@ export default function FinishedFabricStoreIssueDetailPage() {
         order: order ?? null,
       });
 
-      const mapped: IssueItem[] =
-        (data.finished_fabric_store_issue_items || []).map((row: any) => {
-          const roll = Array.isArray(row.finished_fabric_rolls)
-            ? row.finished_fabric_rolls[0]
-            : row.finished_fabric_rolls;
-          const rollId = row.roll_id ?? null;
-          const isReturned = rollId ? returnedRollMap.has(rollId) : false;
-          const returnNo = rollId ? returnedRollMap.get(rollId) ?? null : null;
+      // Calculate sequence offset from all prior active dispatches for this order
+      let priorActiveRollsCount = 0;
+      if (data.order_id && data.issue_no) {
+        const { data: priorIssues } = await supabaseBrowserClient
+          .from("finished_fabric_store_issues")
+          .select(
+            `
+            id,
+            finished_fabric_store_issue_items ( id, roll_id )
+          `
+          )
+          .eq("order_id", data.order_id)
+          .lt("issue_no", data.issue_no);
 
-          return {
-            id: row.id as string,
-            roll_id: rollId,
-            roll_no: row.roll_no ?? null,
-            length_m: row.length_m !== null ? Number(row.length_m) : null,
-            grade: row.grade ?? null,
-            serial_no: roll?.serial_no ?? null,
-            is_returned: isReturned,
-            return_no: returnNo,
-          };
-        }) || [];
+        const priorIssueIds = (priorIssues || []).map((i: any) => i.id);
 
-      // Sort items strictly by serial_no ASC
-      mapped.sort((a, b) => (a.serial_no ?? 0) - (b.serial_no ?? 0));
+        if (priorIssueIds.length > 0) {
+          const { data: priorReturns } = await supabaseBrowserClient
+            .from("finished_fabric_store_issue_returns")
+            .select(
+              `
+              finished_fabric_store_issue_return_items ( roll_id )
+            `
+            )
+            .in("issue_id", priorIssueIds)
+            .neq("status", "REVERSED");
+
+          const priorReturnedRollIds = new Set<string>();
+          (priorReturns || []).forEach((ret: any) => {
+            (ret.finished_fabric_store_issue_return_items || []).forEach((ri: any) => {
+              if (ri.roll_id) priorReturnedRollIds.add(ri.roll_id);
+            });
+          });
+
+          (priorIssues || []).forEach((pi: any) => {
+            (pi.finished_fabric_store_issue_items || []).forEach((item: any) => {
+              if (!item.roll_id || !priorReturnedRollIds.has(item.roll_id)) {
+                priorActiveRollsCount += 1;
+              }
+            });
+          });
+        }
+      }
+
+      const rawItems = data.finished_fabric_store_issue_items || [];
+
+      // Sort items strictly by roll serial_no ASC
+      rawItems.sort((a: any, b: any) => {
+        const rollA = Array.isArray(a.finished_fabric_rolls) ? a.finished_fabric_rolls[0] : a.finished_fabric_rolls;
+        const rollB = Array.isArray(b.finished_fabric_rolls) ? b.finished_fabric_rolls[0] : b.finished_fabric_rolls;
+        return (rollA?.serial_no ?? 0) - (rollB?.serial_no ?? 0);
+      });
+
+      let activeCounter = 0;
+      const mapped: IssueItem[] = rawItems.map((row: any) => {
+        const roll = Array.isArray(row.finished_fabric_rolls)
+          ? row.finished_fabric_rolls[0]
+          : row.finished_fabric_rolls;
+        const rollId = row.roll_id ?? null;
+        const isReturned = rollId ? returnedRollMap.has(rollId) : false;
+        const returnNo = rollId ? returnedRollMap.get(rollId) ?? null : null;
+
+        if (!isReturned) {
+          activeCounter += 1;
+        }
+
+        return {
+          id: row.id as string,
+          roll_id: rollId,
+          roll_no: row.roll_no ?? null,
+          length_m: row.length_m !== null ? Number(row.length_m) : null,
+          grade: row.grade ?? null,
+          serial_no: roll?.serial_no ?? null,
+          sequence_no: priorActiveRollsCount + activeCounter,
+          is_returned: isReturned,
+          return_no: returnNo,
+        };
+      });
 
       setItems(mapped);
     } catch (err: any) {
@@ -202,7 +258,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
 
     const issueNo = header?.issue_no ? String(header.issue_no) : "";
     window.open(
-      `/toolbox/qr/print?type=finished_fabric&rollIds=${rollIds.join(",")}&issueNo=${issueNo}`,
+      `/toolbox/qr/print?type=finished_fabric&rollIds=${rollIds.join(",")}&issueNo=${issueNo}&issueId=${issueId}`,
       "_blank"
     );
   }
@@ -385,8 +441,8 @@ export default function FinishedFabricStoreIssueDetailPage() {
                     </td>
                   </tr>
                 ) : (
-                  items.map((item, idx) => {
-                    const serialStr = String(item.serial_no ?? (idx + 1)).padStart(2, "0");
+                  items.map((item) => {
+                    const serialStr = String(item.sequence_no).padStart(2, "0");
                     return (
                       <tr
                         key={item.id}

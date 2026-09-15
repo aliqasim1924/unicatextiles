@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
@@ -85,6 +85,125 @@ interface IssueSummary {
   returned_length_m: number;
   net_length_m: number;
   status: string;
+}
+
+interface SelectOption {
+  label: string;
+  value: string;
+}
+
+interface CustomSelectProps {
+  value: string;
+  onChange: (value: string) => void;
+  options: SelectOption[];
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+function CustomSelect({
+  value,
+  onChange,
+  options,
+  placeholder = "Select...",
+  disabled = false,
+}: CustomSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [openUpwards, setOpenUpwards] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleDropdown = () => {
+    if (disabled) return;
+    if (!isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // If less than 220px available below, pop upward instead
+      setOpenUpwards(spaceBelow < 220);
+    }
+    setIsOpen((prev) => !prev);
+  };
+
+  const selectedOption = options.find((opt) => opt.value === value);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={toggleDropdown}
+        className={`flex w-full items-center justify-between rounded-lg border bg-white px-3 py-1.5 text-xs md:text-sm transition-all duration-150 focus:outline-none ${
+          disabled
+            ? "cursor-not-allowed bg-slate-50 text-slate-400 border-slate-200"
+            : isOpen
+              ? "border-teal-600 ring-2 ring-teal-600/20 text-slate-900 shadow-sm"
+              : "border-slate-200 text-slate-900 hover:border-slate-300 shadow-xs"
+        }`}
+      >
+        <span className="truncate">{selectedOption ? selectedOption.label : placeholder}</span>
+        <svg
+          className={`ml-1.5 h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+            isOpen ? "rotate-180 text-teal-600" : ""
+          }`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && !disabled && (
+        <div
+          className={`absolute left-0 z-50 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95 duration-150 ${
+            openUpwards ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
+        >
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-slate-400">No options available</div>
+          ) : (
+            options.map((option) => {
+              const isSelected = option.value === value;
+              return (
+                <div
+                  key={option.value}
+                  onClick={() => {
+                    onChange(option.value);
+                    setIsOpen(false);
+                  }}
+                  className={`flex cursor-pointer items-center justify-between px-3 py-2 text-xs md:text-sm transition-colors ${
+                    isSelected
+                      ? "bg-teal-50 font-semibold text-teal-800"
+                      : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                  }`}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {isSelected && (
+                    <svg className="h-4 w-4 text-teal-600 shrink-0 ml-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function CustomerOrderDetailPage() {
@@ -742,21 +861,23 @@ export default function CustomerOrderDetailPage() {
         {lines.length === 0 ? (
           <p className="text-sm text-slate-600">No lines yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+          <div className="overflow-x-visible overflow-y-visible">
+            <table className="min-w-full text-sm border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900 w-[22%]">
                     Fabric Type
                   </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Colour</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">GSM</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Width (mm)</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900 w-[20%]">Colour</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900 w-[12%]">GSM</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900 w-[14%]">Width (mm)</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900 w-[12%]">
                     Quantity (m)
                   </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Unit price (R/m excl. VAT)</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900 w-[12%]">
+                    Unit Price (Excl. VAT)
+                  </th>
+                  <th className="px-3 py-3 text-center font-semibold text-slate-900 w-[8%]">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -772,79 +893,55 @@ export default function CustomerOrderDetailPage() {
                     : [];
                   return (
                     <tr key={line.id} className="border-b border-slate-100">
-                      <td className="px-4 py-3">
-                        <select
+                      <td className="px-3 py-2.5">
+                        <CustomSelect
                           value={line.fabric_type_id || ""}
-                          onChange={(e) =>
+                          onChange={(val) =>
                             handleUpdateLine(line.id, {
-                              fabric_type_id: e.target.value || null,
+                              fabric_type_id: val || null,
                               gsm_option_id: null,
                               color_option_id: null,
                               width_option_id: null,
                             })
                           }
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                        >
-                          <option value="">Select</option>
-                          {fabricTypes.map((ft) => (
-                            <option key={ft.id} value={ft.id}>
-                              {ft.name}
-                            </option>
-                          ))}
-                        </select>
+                          options={fabricTypes.map((ft) => ({ label: ft.name, value: ft.id }))}
+                          placeholder="Select"
+                        />
                       </td>
-                      <td className="px-4 py-3">
-                        <select
+                      <td className="px-3 py-2.5">
+                        <CustomSelect
                           value={line.color_option_id || ""}
-                          onChange={(e) =>
-                            handleUpdateLine(line.id, { color_option_id: e.target.value || null })
+                          onChange={(val) =>
+                            handleUpdateLine(line.id, { color_option_id: val || null })
                           }
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                          options={availableColors.map((c) => ({ label: c.color_name, value: c.id }))}
+                          placeholder="Select colour"
                           disabled={!line.fabric_type_id}
-                        >
-                          <option value="">Select colour</option>
-                          {availableColors.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.color_name}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </td>
-                      <td className="px-4 py-3">
-                        <select
+                      <td className="px-3 py-2.5">
+                        <CustomSelect
                           value={line.gsm_option_id || ""}
-                          onChange={(e) =>
-                            handleUpdateLine(line.id, { gsm_option_id: e.target.value || null })
+                          onChange={(val) =>
+                            handleUpdateLine(line.id, { gsm_option_id: val || null })
                           }
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                          options={availableGsm.map((g) => ({ label: String(g.gsm), value: g.id }))}
+                          placeholder="Select GSM"
                           disabled={!line.fabric_type_id}
-                        >
-                          <option value="">Select GSM</option>
-                          {availableGsm.map((g) => (
-                            <option key={g.id} value={g.id}>
-                              {g.gsm}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </td>
-                      <td className="px-4 py-3">
-                        <select
+                      <td className="px-3 py-2.5">
+                        <CustomSelect
                           value={line.width_option_id || ""}
-                          onChange={(e) =>
-                            handleUpdateLine(line.id, { width_option_id: e.target.value || null })
+                          onChange={(val) =>
+                            handleUpdateLine(line.id, { width_option_id: val || null })
                           }
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                          options={availableWidths.map((w) => ({ label: `${w.width_mm} mm`, value: w.id }))}
+                          placeholder="Select width"
                           disabled={!line.fabric_type_id}
-                        >
-                          <option value="">Select width</option>
-                          {availableWidths.map((w) => (
-                            <option key={w.id} value={w.id}>
-                              {w.width_mm} mm
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <input
                           type="number"
                           step="0.001"
@@ -855,10 +952,10 @@ export default function CustomerOrderDetailPage() {
                               quantity_m: Number(e.target.value || 0),
                             })
                           }
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                          className="w-28 rounded-lg border border-slate-200 px-3 py-1.5 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
                         />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <input
                           type="number"
                           step="0.01"
@@ -869,14 +966,14 @@ export default function CustomerOrderDetailPage() {
                               price_rand: Number(e.target.value || 0),
                             })
                           }
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                          className="w-32 rounded-lg border border-slate-200 px-3 py-1.5 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
                         />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5 text-center">
                         <button
                           type="button"
                           onClick={() => handleDeleteLine(line.id)}
-                          className="text-xs md:text-sm text-red-600 hover:text-red-800"
+                          className="text-xs md:text-sm font-medium text-red-600 hover:text-red-800"
                         >
                           Remove
                         </button>

@@ -17,6 +17,7 @@ interface IssueItem {
   roll_no: string | null;
   length_m: number | null;
   grade: string | null;
+  sequence_no: number;
   roll?: {
     roll_no?: string | null;
     length_m?: number | null;
@@ -100,7 +101,7 @@ export default function FinishedFabricPackingListPage() {
 
       if (fetchError) throw fetchError;
 
-      // 2. Fetch non-reversed returns to exclude returned rolls
+      // 2. Fetch non-reversed returns for THIS issue to exclude returned rolls from this slip
       const { data: returnsData } = await supabaseBrowserClient
         .from("finished_fabric_store_issue_returns")
         .select(
@@ -149,22 +150,74 @@ export default function FinishedFabricPackingListPage() {
         order: order ?? null,
       });
 
-      const mapped: IssueItem[] =
-        (data.finished_fabric_store_issue_items || [])
-          .filter((row: any) => !row.roll_id || !returnedRollIds.has(row.roll_id))
-          .map((row: any) => ({
-            id: row.id as string,
-            roll_id: row.roll_id ?? null,
-            roll_no: row.roll_no ?? null,
-            length_m: row.length_m !== null ? Number(row.length_m) : null,
-            grade: row.grade ?? null,
-            roll: Array.isArray(row.finished_fabric_rolls)
-              ? row.finished_fabric_rolls[0]
-              : row.finished_fabric_rolls,
-          })) || [];
+      // 3. Calculate sequence offset by querying prior active (non-returned) rolls linked to this order
+      let priorActiveRollsCount = 0;
+      if (data.order_id && data.issue_no) {
+        // Fetch all prior issues for this order
+        const { data: priorIssues } = await supabaseBrowserClient
+          .from("finished_fabric_store_issues")
+          .select(
+            `
+            id,
+            finished_fabric_store_issue_items ( id, roll_id )
+          `
+          )
+          .eq("order_id", data.order_id)
+          .lt("issue_no", data.issue_no);
 
-      // Sort mapped active items strictly by roll serial_no ASC
-      mapped.sort((a, b) => (a.roll?.serial_no ?? 0) - (b.roll?.serial_no ?? 0));
+        const priorIssueIds = (priorIssues || []).map((i: any) => i.id);
+
+        if (priorIssueIds.length > 0) {
+          // Fetch non-reversed returns for ALL prior issues
+          const { data: priorReturns } = await supabaseBrowserClient
+            .from("finished_fabric_store_issue_returns")
+            .select(
+              `
+              finished_fabric_store_issue_return_items ( roll_id )
+            `
+            )
+            .in("issue_id", priorIssueIds)
+            .neq("status", "REVERSED");
+
+          const priorReturnedRollIds = new Set<string>();
+          (priorReturns || []).forEach((ret: any) => {
+            (ret.finished_fabric_store_issue_return_items || []).forEach((ri: any) => {
+              if (ri.roll_id) priorReturnedRollIds.add(ri.roll_id);
+            });
+          });
+
+          // Sum only active (non-returned) rolls across prior dispatches
+          (priorIssues || []).forEach((pi: any) => {
+            (pi.finished_fabric_store_issue_items || []).forEach((item: any) => {
+              if (!item.roll_id || !priorReturnedRollIds.has(item.roll_id)) {
+                priorActiveRollsCount += 1;
+              }
+            });
+          });
+        }
+      }
+
+      const rawItems = (data.finished_fabric_store_issue_items || [])
+        .filter((row: any) => !row.roll_id || !returnedRollIds.has(row.roll_id));
+
+      // Sort current active items strictly by roll serial_no ASC
+      rawItems.sort((a: any, b: any) => {
+        const rollA = Array.isArray(a.finished_fabric_rolls) ? a.finished_fabric_rolls[0] : a.finished_fabric_rolls;
+        const rollB = Array.isArray(b.finished_fabric_rolls) ? b.finished_fabric_rolls[0] : b.finished_fabric_rolls;
+        return (rollA?.serial_no ?? 0) - (rollB?.serial_no ?? 0);
+      });
+
+      const mapped: IssueItem[] = rawItems.map((row: any, idx: number) => ({
+        id: row.id as string,
+        roll_id: row.roll_id ?? null,
+        roll_no: row.roll_no ?? null,
+        length_m: row.length_m !== null ? Number(row.length_m) : null,
+        grade: row.grade ?? null,
+        sequence_no: priorActiveRollsCount + idx + 1,
+        roll: Array.isArray(row.finished_fabric_rolls)
+          ? row.finished_fabric_rolls[0]
+          : row.finished_fabric_rolls,
+      }));
 
       setItems(mapped);
     } catch (err: any) {
@@ -395,11 +448,11 @@ export default function FinishedFabricPackingListPage() {
 
       const headerBottomY = addHeader();
 
-      const body = items.map((item, idx) => {
+      const body = items.map((item) => {
         const roll = item.roll || {};
         const length = getItemLength(item);
         const weight = calculateRollWeight(item);
-        const serialStr = String(roll.serial_no ?? (idx + 1)).padStart(2, "0");
+        const serialStr = String(item.sequence_no).padStart(2, "0");
         return [
           serialStr,
           item.roll_no || roll.roll_no || "—",
@@ -587,11 +640,11 @@ export default function FinishedFabricPackingListPage() {
                     </td>
                   </tr>
                 ) : (
-                  items.map((item, idx) => {
+                  items.map((item) => {
                     const roll = item.roll || {};
                     const length = getItemLength(item);
                     const weight = calculateRollWeight(item);
-                    const serialStr = String(roll.serial_no ?? (idx + 1)).padStart(2, "0");
+                    const serialStr = String(item.sequence_no).padStart(2, "0");
                     return (
                       <tr key={item.id} className="border-b border-slate-100">
                         <td className="px-3 py-3 text-center text-slate-900 font-bold">
