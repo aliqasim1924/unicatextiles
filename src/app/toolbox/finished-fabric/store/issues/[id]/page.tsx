@@ -14,6 +14,8 @@ interface IssueItem {
   length_m: number | null;
   grade: string | null;
   serial_no: number | null;
+  is_returned?: boolean;
+  return_no?: number | null;
 }
 
 interface IssueHeader {
@@ -23,6 +25,7 @@ interface IssueHeader {
   destination: string | null;
   reference: string | null;
   notes: string | null;
+  status: "ACTIVE" | "PARTIALLY_RETURNED" | "RETURNED";
   order_id?: string | null;
   invoice_no?: string | null;
   gate_pass_no?: string | null;
@@ -50,6 +53,8 @@ export default function FinishedFabricStoreIssueDetailPage() {
     try {
       setIsLoading(true);
       setError(null);
+
+      // Fetch issue header and items
       const { data, error: fetchError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select(
@@ -60,6 +65,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
           destination,
           reference,
           notes,
+          status,
           order_id,
           invoice_no,
           gate_pass_no,
@@ -81,6 +87,30 @@ export default function FinishedFabricStoreIssueDetailPage() {
 
       if (fetchError) throw fetchError;
 
+      // Fetch non-reversed returns for this issue to identify returned rolls
+      const { data: returnsData } = await supabaseBrowserClient
+        .from("finished_fabric_store_issue_returns")
+        .select(
+          `
+          return_no,
+          status,
+          finished_fabric_store_issue_return_items (
+            roll_id
+          )
+        `
+        )
+        .eq("issue_id", issueId)
+        .neq("status", "REVERSED");
+
+      const returnedRollMap = new Map<string, number | null>();
+      (returnsData || []).forEach((ret: any) => {
+        (ret.finished_fabric_store_issue_return_items || []).forEach((ri: any) => {
+          if (ri.roll_id) {
+            returnedRollMap.set(ri.roll_id, ret.return_no ?? null);
+          }
+        });
+      });
+
       let order = Array.isArray(data.customer_orders) ? data.customer_orders[0] : data.customer_orders;
       if (order && Array.isArray(order.customers)) {
         order = { ...order, customers: order.customers[0] ?? null };
@@ -92,6 +122,7 @@ export default function FinishedFabricStoreIssueDetailPage() {
         destination: data.destination ?? null,
         reference: data.reference ?? null,
         notes: data.notes ?? null,
+        status: data.status || "ACTIVE",
         order_id: data.order_id ?? null,
         invoice_no: data.invoice_no ?? null,
         gate_pass_no: data.gate_pass_no ?? null,
@@ -103,13 +134,19 @@ export default function FinishedFabricStoreIssueDetailPage() {
           const roll = Array.isArray(row.finished_fabric_rolls)
             ? row.finished_fabric_rolls[0]
             : row.finished_fabric_rolls;
+          const rollId = row.roll_id ?? null;
+          const isReturned = rollId ? returnedRollMap.has(rollId) : false;
+          const returnNo = rollId ? returnedRollMap.get(rollId) ?? null : null;
+
           return {
             id: row.id as string,
-            roll_id: row.roll_id ?? null,
+            roll_id: rollId,
             roll_no: row.roll_no ?? null,
             length_m: row.length_m !== null ? Number(row.length_m) : null,
             grade: row.grade ?? null,
             serial_no: roll?.serial_no ?? null,
+            is_returned: isReturned,
+            return_no: returnNo,
           };
         }) || [];
 
@@ -145,9 +182,9 @@ export default function FinishedFabricStoreIssueDetailPage() {
   }
 
   function handlePrintLabels() {
-    const rollIds = items.map((i) => i.roll_id).filter(Boolean);
+    const rollIds = items.filter((i) => !i.is_returned).map((i) => i.roll_id).filter(Boolean);
     if (rollIds.length === 0) {
-      alert("No rolls found for this issue.");
+      alert("No active rolls available for label printing on this issue.");
       return;
     }
 
@@ -181,6 +218,11 @@ export default function FinishedFabricStoreIssueDetailPage() {
       </div>
     );
   }
+
+  const activeMeters = items
+    .filter((i) => !i.is_returned)
+    .reduce((sum, i) => sum + (i.length_m || 0), 0);
+  const totalMeters = items.reduce((sum, i) => sum + (i.length_m || 0), 0);
 
   return (
     <div className="min-h-screen bg-slate-100 print:bg-white print:p-0">
@@ -259,8 +301,21 @@ export default function FinishedFabricStoreIssueDetailPage() {
         <div className="print-slip-card flex flex-col min-h-[100vh] rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4">
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
-              <p className="text-sm font-semibold text-teal-700">UNICA TEXTILE MILLS</p>
-              <h1 className="text-2xl font-semibold text-slate-900">
+              <div className="flex items-center gap-3">
+                <p className="text-sm font-semibold text-teal-700">UNICA TEXTILE MILLS</p>
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                    header.status === "RETURNED"
+                      ? "bg-purple-100 text-purple-800 border border-purple-200"
+                      : header.status === "PARTIALLY_RETURNED"
+                        ? "bg-amber-100 text-amber-800 border border-amber-200"
+                        : "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                  }`}
+                >
+                  {header.status}
+                </span>
+              </div>
+              <h1 className="text-2xl font-semibold text-slate-900 mt-1">
                 Finished Fabric Store Issue
               </h1>
               <p className="text-sm text-slate-600 mt-1">
@@ -290,8 +345,13 @@ export default function FinishedFabricStoreIssueDetailPage() {
             </div>
           </div>
 
-          <div className="mb-4 text-sm text-slate-700">
-            {header.notes ? `Notes: ${header.notes}` : "Notes: —"}
+          <div className="mb-4 flex items-center justify-between text-sm text-slate-700">
+            <div>{header.notes ? `Notes: ${header.notes}` : "Notes: —"}</div>
+            {header.status !== "ACTIVE" && (
+              <div className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                Active Meters: {activeMeters.toFixed(3)}m / Total Issued: {totalMeters.toFixed(3)}m
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -302,12 +362,13 @@ export default function FinishedFabricStoreIssueDetailPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Length (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700" colSpan={4}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={5}>
                       No items recorded.
                     </td>
                   </tr>
@@ -315,17 +376,31 @@ export default function FinishedFabricStoreIssueDetailPage() {
                   items.map((item, idx) => {
                     const serialStr = String(item.serial_no ?? (idx + 1)).padStart(2, "0");
                     return (
-                      <tr key={item.id} className="border-b border-slate-100">
-                        <td className="px-4 py-3 text-slate-900 font-bold">
+                      <tr
+                        key={item.id}
+                        className={`border-b border-slate-100 ${
+                          item.is_returned ? "bg-slate-50 text-slate-400 line-through" : ""
+                        }`}
+                      >
+                        <td className="px-4 py-3 font-bold">
                           {serialStr}
                         </td>
-                        <td className="px-4 py-3 text-slate-900 font-medium">
+                        <td className="px-4 py-3 font-medium">
                           {item.roll_no || "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-900">
+                        <td className="px-4 py-3">
                           {item.length_m !== null ? item.length_m.toFixed(3) : "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-900">{item.grade || "—"}</td>
+                        <td className="px-4 py-3">{item.grade || "—"}</td>
+                        <td className="px-4 py-3 no-underline">
+                          {item.is_returned ? (
+                            <span className="inline-flex items-center text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                              Returned {item.return_no ? `(FFIR-${String(item.return_no).padStart(6, "0")})` : ""}
+                            </span>
+                          ) : (
+                            <span className="text-xs font-medium text-emerald-700">Issued</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })

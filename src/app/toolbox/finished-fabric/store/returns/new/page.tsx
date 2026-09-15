@@ -108,14 +108,12 @@ export default function NewFinishedFabricIssueReturnPage() {
       return;
     }
 
-    // Reset current selection while searching
     setSelectedIssueId("");
     setIssueDetail(null);
     setSelectedRollIds(new Set());
 
     setIsLoadingIssueSearch(true);
     try {
-      // Find issue by number (take most recent if duplicates exist)
       const { data: rows, error: findError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select("id, issue_no, issue_time, destination, reference, notes")
@@ -163,7 +161,7 @@ export default function NewFinishedFabricIssueReturnPage() {
               color
             )
           )
-        `,
+        `
         )
         .eq("id", issueId)
         .single();
@@ -252,7 +250,7 @@ export default function NewFinishedFabricIssueReturnPage() {
       const { data: userData } = await supabaseBrowserClient.auth.getUser();
       const rollIds = Array.from(selectedRollIds);
 
-      // Safety check: rolls must still be in issued/dispatched state.
+      // Verify rolls state
       const { data: rollCheck, error: rollCheckError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .select("id, roll_no, status, current_location")
@@ -272,7 +270,7 @@ export default function NewFinishedFabricIssueReturnPage() {
         );
       }
 
-      // Create return header
+      // Create return header with ACTIVE status
       const { data: ret, error: retError } = await supabaseBrowserClient
         .from("finished_fabric_store_issue_returns")
         .insert({
@@ -280,13 +278,14 @@ export default function NewFinishedFabricIssueReturnPage() {
           returned_by: userData?.user?.id ?? null,
           reason: reason.trim(),
           notes: notes.trim() || null,
+          status: "ACTIVE",
         })
         .select("id, return_no")
         .single();
 
       if (retError) throw retError;
 
-      // Create return items from the issue items snapshot
+      // Create return items snapshot
       const itemsToInsert = issueDetail.items
         .filter((i) => selectedRollIds.has(i.roll_id))
         .map((i) => ({
@@ -303,18 +302,29 @@ export default function NewFinishedFabricIssueReturnPage() {
 
       if (itemsError) throw itemsError;
 
-      // Move rolls back to store so they can be re-issued correctly
+      // Move rolls back to store & CLEAR customer_order_id so they are no longer treated as active customer allocations
       const { error: updateError } = await supabaseBrowserClient
         .from("finished_fabric_rolls")
         .update({
           status: STATUS_IN_STORE,
           current_location: LOCATION_STORE,
+          customer_order_id: null, // Clear customer link to release active allocation
         })
         .in("id", rollIds)
         .eq("status", STATUS_ISSUED)
         .eq("current_location", LOCATION_DISPATCHED);
 
       if (updateError) throw updateError;
+
+      // Check if all items on the issue slip were returned to update issue slip status
+      const totalIssueRollCount = issueDetail.items.length;
+      const returnedRollCount = selectedRollIds.size;
+      const newIssueStatus = returnedRollCount >= totalIssueRollCount ? "RETURNED" : "PARTIALLY_RETURNED";
+
+      await supabaseBrowserClient
+        .from("finished_fabric_store_issues")
+        .update({ status: newIssueStatus })
+        .eq("id", selectedIssueId);
 
       setSuccess("Return recorded. Rolls moved back to Finished Store.");
       router.push(`/toolbox/finished-fabric/store/returns/${ret.id}`);
@@ -536,4 +546,3 @@ export default function NewFinishedFabricIssueReturnPage() {
     </div>
   );
 }
-

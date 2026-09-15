@@ -74,7 +74,7 @@ export default function FinishedFabricStorePage() {
 
       if (awaitingError) throw awaitingError;
 
-      // Fetch in store rolls (paginate past Supabase 1000-row default)
+      // Fetch in store rolls
       const inStoreData = await fetchAllRows<any>((from, to) =>
         supabaseBrowserClient
           .from("finished_fabric_rolls")
@@ -121,7 +121,7 @@ export default function FinishedFabricStorePage() {
       setAwaitingReceiptRolls(mapRolls(awaitingData || []));
       setInStoreRolls(mapRolls(inStoreData || []));
 
-      // Fetch issuings
+      // Fetch issuings with status
       const { data: issuingsData, error: issuingsError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select(
@@ -135,6 +135,7 @@ export default function FinishedFabricStorePage() {
           order_id,
           invoice_no,
           gate_pass_no,
+          status,
           customer_orders:order_id (
             order_ref,
             customers:customer_id (
@@ -169,6 +170,7 @@ export default function FinishedFabricStorePage() {
           destination: issue.destination,
           reference: issue.reference,
           notes: issue.notes,
+          status: issue.status || "ACTIVE",
           order_ref: order?.order_ref || null,
           customer_name: customer?.name || null,
           invoice_no: issue.invoice_no,
@@ -180,10 +182,7 @@ export default function FinishedFabricStorePage() {
 
       setIssuings(mappedIssuings);
 
-      // Fetch issue returns (last 50)
-      // NOTE: We intentionally avoid embedding finished_fabric_store_issues here because
-      // PostgREST can throw "table name specified more than once" for this relationship
-      // in some environments. We'll load issues in a second query instead.
+      // Fetch issue returns
       const { data: returnsData, error: returnsError } = await supabaseBrowserClient
         .from("finished_fabric_store_issue_returns")
         .select(
@@ -193,12 +192,13 @@ export default function FinishedFabricStorePage() {
           return_time,
           reason,
           notes,
+          status,
           issue_id,
           finished_fabric_store_issue_return_items (
             id,
             length_m
           )
-        `,
+        `
         )
         .order("return_time", { ascending: false })
         .limit(50);
@@ -234,6 +234,7 @@ export default function FinishedFabricStorePage() {
           return_no: ret.return_no ?? null,
           return_time: ret.return_time,
           reason: ret.reason ?? null,
+          status: ret.status || "ACTIVE",
           issue_no: issue?.issue_no ?? null,
           destination: issue?.destination ?? null,
           reference: issue?.reference ?? null,
@@ -257,7 +258,6 @@ export default function FinishedFabricStorePage() {
     fetchData();
   }, [fetchData]);
 
-  // Refetch when page becomes visible or window gains focus (user navigates back)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -275,7 +275,6 @@ export default function FinishedFabricStorePage() {
     };
   }, [fetchData]);
 
-  // Compute totals and breakdowns
   const awaitingTotals = useMemo(() => {
     const rollsCount = awaitingReceiptRolls.length;
     const metersTotal = awaitingReceiptRolls.reduce((sum, roll) => sum + roll.length_m, 0);
@@ -288,7 +287,6 @@ export default function FinishedFabricStorePage() {
     return { rollsCount, metersTotal };
   }, [inStoreRolls]);
 
-  // Breakdown by GSM
   const inStoreByGsm = useMemo(() => {
     const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
     inStoreRolls.forEach((roll) => {
@@ -308,7 +306,6 @@ export default function FinishedFabricStorePage() {
       });
   }, [inStoreRolls]);
 
-  // Breakdown by Colour
   const inStoreByColor = useMemo(() => {
     const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
     inStoreRolls.forEach((roll) => {
@@ -324,7 +321,6 @@ export default function FinishedFabricStorePage() {
       .sort((a, b) => a.color.localeCompare(b.color));
   }, [inStoreRolls]);
 
-  // Breakdown by Coating Type
   const inStoreByType = useMemo(() => {
     const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
     inStoreRolls.forEach((roll) => {
@@ -340,7 +336,6 @@ export default function FinishedFabricStorePage() {
       .sort((a, b) => a.type.localeCompare(b.type));
   }, [inStoreRolls]);
 
-  // Breakdown by Grade (A, B, C, Scrap)
   const inStoreByGrade = useMemo(() => {
     const grades = ["A", "B", "C", "SCRAP"] as const;
     const grouped: Record<string, { rollsCount: number; metersTotal: number }> = {};
@@ -487,7 +482,6 @@ export default function FinishedFabricStorePage() {
                   </div>
                 ) : (
                   <>
-                    {/* Summary Card */}
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -566,7 +560,6 @@ export default function FinishedFabricStorePage() {
                   </div>
                 ) : (
                   <>
-                    {/* Summary Card */}
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -574,7 +567,6 @@ export default function FinishedFabricStorePage() {
                     >
                       <h3 className="mb-4 text-lg font-semibold text-slate-900">Summary</h3>
                       
-                      {/* Totals */}
                       <div className="mb-6 grid gap-4 sm:grid-cols-2">
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                           <p className="text-xs font-medium text-slate-500">Total Rolls</p>
@@ -590,9 +582,7 @@ export default function FinishedFabricStorePage() {
                         </div>
                       </div>
 
-                      {/* Breakdown Tables */}
                       <div className="grid gap-4 lg:grid-cols-3">
-                        {/* By GSM */}
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                           <h4 className="mb-2 text-sm font-semibold text-slate-700">By GSM</h4>
                           <div className="space-y-1">
@@ -615,7 +605,6 @@ export default function FinishedFabricStorePage() {
                           </div>
                         </div>
 
-                        {/* By Colour */}
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                           <h4 className="mb-2 text-sm font-semibold text-slate-700">By Colour</h4>
                           <div className="space-y-1">
@@ -638,7 +627,6 @@ export default function FinishedFabricStorePage() {
                           </div>
                         </div>
 
-                        {/* By Coating Type */}
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                           <h4 className="mb-2 text-sm font-semibold text-slate-700">By Coating Type</h4>
                           <div className="space-y-1">
@@ -661,7 +649,6 @@ export default function FinishedFabricStorePage() {
                           </div>
                         </div>
 
-                        {/* By Grade (A, B, C, Scrap) */}
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                           <h4 className="mb-2 text-sm font-semibold text-slate-700">By Grade</h4>
                           <div className="space-y-1">
@@ -683,36 +670,36 @@ export default function FinishedFabricStorePage() {
                     </motion.div>
 
                     <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50">
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Length (m)</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Colour</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">GSM</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Coating Type</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {inStoreRolls.map((roll) => (
-                          <tr key={roll.id} className="border-b border-slate-100 hover:bg-slate-50">
-                            <td className="px-4 py-3 font-medium text-slate-900">
-                              {roll.roll_no || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-900">{roll.length_m.toFixed(3)}</td>
-                            <td className="px-4 py-3 text-slate-900">{roll.grade || "—"}</td>
-                            <td className="px-4 py-3 text-slate-900">{roll.batch_no || "—"}</td>
-                            <td className="px-4 py-3 text-slate-900">{roll.color || "—"}</td>
-                            <td className="px-4 py-3 text-slate-900">
-                              {roll.gsm ? roll.gsm.toString() : "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-900">{roll.coating_type || "—"}</td>
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50">
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">Length (m)</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">Grade</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">Colour</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">GSM</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-900">Coating Type</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {inStoreRolls.map((roll) => (
+                            <tr key={roll.id} className="border-b border-slate-100 hover:bg-slate-50">
+                              <td className="px-4 py-3 font-medium text-slate-900">
+                                {roll.roll_no || "—"}
+                              </td>
+                              <td className="px-4 py-3 text-slate-900">{roll.length_m.toFixed(3)}</td>
+                              <td className="px-4 py-3 text-slate-900">{roll.grade || "—"}</td>
+                              <td className="px-4 py-3 text-slate-900">{roll.batch_no || "—"}</td>
+                              <td className="px-4 py-3 text-slate-900">{roll.color || "—"}</td>
+                              <td className="px-4 py-3 text-slate-900">
+                                {roll.gsm ? roll.gsm.toString() : "—"}
+                              </td>
+                              <td className="px-4 py-3 text-slate-900">{roll.coating_type || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </>
                 )}
@@ -735,6 +722,7 @@ export default function FinishedFabricStorePage() {
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50">
                           <th className="px-4 py-3 text-left font-semibold text-slate-900">Issue No</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Status</th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-900">Date/Time</th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-900">Destination</th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-900">Reference</th>
@@ -750,6 +738,19 @@ export default function FinishedFabricStorePage() {
                           <tr key={issue.id} className="border-b border-slate-100 hover:bg-slate-50">
                             <td className="px-4 py-3 font-medium text-slate-900">
                               {issue.issue_no ? `FFSI-${String(issue.issue_no).padStart(6, "0")}` : "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                  issue.status === "RETURNED"
+                                    ? "bg-purple-100 text-purple-800"
+                                    : issue.status === "PARTIALLY_RETURNED"
+                                      ? "bg-amber-100 text-amber-800"
+                                      : "bg-emerald-100 text-emerald-800"
+                                }`}
+                              >
+                                {issue.status}
+                              </span>
                             </td>
                             <td className="px-4 py-3 text-slate-600">
                               {new Date(issue.issue_time).toLocaleString("en-ZA", {
@@ -813,33 +814,16 @@ export default function FinishedFabricStorePage() {
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50">
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Return No
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Date/Time
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Original Issue
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Destination
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Reference
-                          </th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                            Rolls
-                          </th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                            Meters
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Reason
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Action
-                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Return No</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Status</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Date/Time</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Original Issue</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Destination</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Reference</th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">Rolls</th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">Meters</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Reason</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -852,6 +836,17 @@ export default function FinishedFabricStorePage() {
                               {ret.return_no != null
                                 ? `FFIR-${String(ret.return_no).padStart(6, "0")}`
                                 : "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                  ret.status === "REVERSED"
+                                    ? "bg-red-100 text-red-800"
+                                    : "bg-emerald-100 text-emerald-800"
+                                }`}
+                              >
+                                {ret.status}
+                              </span>
                             </td>
                             <td className="px-4 py-3 text-slate-600">
                               {new Date(ret.return_time).toLocaleString("en-ZA", {
@@ -910,4 +905,3 @@ export default function FinishedFabricStorePage() {
     </div>
   );
 }
-

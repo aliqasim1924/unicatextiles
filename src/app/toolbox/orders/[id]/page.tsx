@@ -82,6 +82,9 @@ interface IssueSummary {
   invoice_no: string | null;
   gate_pass_no: string | null;
   total_length_m: number;
+  returned_length_m: number;
+  net_length_m: number;
+  status: string;
 }
 
 export default function CustomerOrderDetailPage() {
@@ -116,64 +119,39 @@ export default function CustomerOrderDetailPage() {
 
   async function fetchCatalogData() {
     try {
-      // Fetch fabric types
       const { data: typesData, error: typesError } = await supabaseBrowserClient
         .from("fabric_types")
         .select("id, code, name")
         .eq("is_active", true)
         .order("name", { ascending: true });
-      if (typesError) {
-        console.error("Error fetching fabric_types:", typesError);
-        throw typesError;
-      }
+      if (typesError) throw typesError;
       setFabricTypes((typesData as FabricType[]) || []);
 
-      // Fetch all GSM options
       const { data: gsmData, error: gsmError } = await supabaseBrowserClient
         .from("fabric_type_gsm_options")
         .select("id, fabric_type_id, gsm")
         .eq("is_active", true)
         .order("gsm", { ascending: true });
-      if (gsmError) {
-        console.error("Error fetching fabric_type_gsm_options:", gsmError);
-        throw gsmError;
-      }
+      if (gsmError) throw gsmError;
       setGsmOptions((gsmData as GsmOption[]) || []);
 
-      // Fetch all color options
       const { data: colorData, error: colorError } = await supabaseBrowserClient
         .from("fabric_type_color_options")
         .select("id, fabric_type_id, color_name")
         .eq("is_active", true)
         .order("color_name", { ascending: true });
-      if (colorError) {
-        console.error("Error fetching fabric_type_color_options:", colorError);
-        throw colorError;
-      }
+      if (colorError) throw colorError;
       setColorOptions((colorData as ColorOption[]) || []);
 
-      // Fetch all width options
       const { data: widthData, error: widthError } = await supabaseBrowserClient
         .from("fabric_type_width_options")
         .select("id, fabric_type_id, width_mm")
         .eq("is_active", true)
         .order("width_mm", { ascending: true });
-      if (widthError) {
-        console.error("Error fetching fabric_type_width_options:", widthError);
-        throw widthError;
-      }
+      if (widthError) throw widthError;
       setWidthOptions((widthData as WidthOption[]) || []);
     } catch (err: any) {
-      console.error("Failed to load catalog data", {
-        message: err?.message,
-        details: err?.details,
-        hint: err?.hint,
-        code: err?.code,
-        error: err
-      });
-      // Don't set error state here as it's not critical - catalog is optional for display
-      // The page can still work with text fields as fallback
-      // Initialize with empty arrays so the page doesn't break
+      console.error("Failed to load catalog data", err);
       if (fabricTypes.length === 0) setFabricTypes([]);
       if (gsmOptions.length === 0) setGsmOptions([]);
       if (colorOptions.length === 0) setColorOptions([]);
@@ -185,10 +163,9 @@ export default function CustomerOrderDetailPage() {
     try {
       setIsLoading(true);
       setError(null);
-      // Try to fetch with catalog IDs first, fallback to text-only if schema cache hasn't refreshed
       let orderData: any;
       let orderError: any;
-      
+
       try {
         const result = await supabaseBrowserClient
           .from("customer_orders")
@@ -231,8 +208,7 @@ export default function CustomerOrderDetailPage() {
         orderData = result.data;
         orderError = result.error;
       } catch (err: any) {
-        // If catalog columns don't exist yet (schema cache issue), try without them
-        if (err?.code === '42703' || err?.message?.includes('does not exist')) {
+        if (err?.code === "42703" || err?.message?.includes("does not exist")) {
           const result = await supabaseBrowserClient
             .from("customer_orders")
             .select(
@@ -302,7 +278,6 @@ export default function CustomerOrderDetailPage() {
 
       setOrder(normalizedOrder);
 
-      // Fetch back orders and parent ref only when back order columns exist (after migration)
       if (hasBackOrderColumns) {
         const { data: backOrdersData } = await supabaseBrowserClient
           .from("customer_orders")
@@ -332,12 +307,10 @@ export default function CustomerOrderDetailPage() {
       const mappedLines: OrderLine[] =
         (orderData.customer_order_lines || []).map((l: any) => ({
           id: l.id,
-          // Catalog IDs may not exist if schema cache hasn't refreshed
           fabric_type_id: l.fabric_type_id ?? null,
           gsm_option_id: l.gsm_option_id ?? null,
           color_option_id: l.color_option_id ?? null,
           width_option_id: l.width_option_id ?? null,
-          // Text fields for backward compatibility
           coating_type: l.coating_type || "",
           color: l.color || "",
           gsm: l.gsm,
@@ -346,6 +319,7 @@ export default function CustomerOrderDetailPage() {
         })) || [];
       setLines(mappedLines);
 
+      // Fetch issues linked to order
       const { data: issuesData, error: issuesError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select(
@@ -356,6 +330,7 @@ export default function CustomerOrderDetailPage() {
           destination,
           invoice_no,
           gate_pass_no,
+          status,
           finished_fabric_store_issue_items ( length_m )
         `
         )
@@ -364,12 +339,41 @@ export default function CustomerOrderDetailPage() {
         .order("issue_time", { ascending: false });
       if (issuesError) throw issuesError;
 
+      const issueIds = (issuesData || []).map((i: any) => i.id);
+
+      // Fetch active returns for these issues to subtract returned meters
+      let returnsByIssueId: Record<string, number> = {};
+      if (issueIds.length > 0) {
+        const { data: returnsData } = await supabaseBrowserClient
+          .from("finished_fabric_store_issue_returns")
+          .select(
+            `
+            issue_id,
+            status,
+            finished_fabric_store_issue_return_items ( length_m )
+          `
+          )
+          .in("issue_id", issueIds)
+          .neq("status", "REVERSED");
+
+        (returnsData || []).forEach((ret: any) => {
+          const sum = (ret.finished_fabric_store_issue_return_items || []).reduce(
+            (acc: number, item: any) => acc + Number(item.length_m || 0),
+            0
+          );
+          returnsByIssueId[ret.issue_id] = (returnsByIssueId[ret.issue_id] || 0) + sum;
+        });
+      }
+
       const mappedIssues: IssueSummary[] =
         (issuesData || []).map((row: any) => {
-          const total = (row.finished_fabric_store_issue_items || []).reduce(
+          const grossTotal = (row.finished_fabric_store_issue_items || []).reduce(
             (sum: number, line: any) => sum + Number(line.length_m || 0),
             0
           );
+          const returnedTotal = returnsByIssueId[row.id] || 0;
+          const netTotal = Math.max(0, grossTotal - returnedTotal);
+
           return {
             id: row.id,
             issue_no: row.issue_no ?? null,
@@ -377,12 +381,14 @@ export default function CustomerOrderDetailPage() {
             destination: row.destination ?? null,
             invoice_no: row.invoice_no ?? null,
             gate_pass_no: row.gate_pass_no ?? null,
-            total_length_m: total,
+            total_length_m: grossTotal,
+            returned_length_m: returnedTotal,
+            net_length_m: netTotal,
+            status: row.status || "ACTIVE",
           };
         }) || [];
       setIssues(mappedIssues);
 
-      // Auto bump to PARTIALLY_FULFILLED if open and issues exist
       if (normalizedOrder.status === "OPEN" && mappedIssues.length > 0) {
         await supabaseBrowserClient
           .from("customer_orders")
@@ -460,9 +466,9 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  const totalIssued = issues.reduce((sum, iss) => sum + (iss.total_length_m || 0), 0);
+  const netIssued = issues.reduce((sum, iss) => sum + (iss.net_length_m || 0), 0);
   const totalOrdered = lines.reduce((sum, l) => sum + (l.quantity_m || 0), 0);
-  const remaining = totalOrdered ? totalOrdered - totalIssued : null;
+  const remaining = totalOrdered ? totalOrdered - netIssued : null;
   const hasCustomerIssues = issues.length > 0;
   const canComplete = order?.status !== "COMPLETED" && hasCustomerIssues;
 
@@ -529,7 +535,6 @@ export default function CustomerOrderDetailPage() {
     try {
       const merged = { ...previousLine, ...patch };
 
-      // Resolve text values from catalog for backward compatibility
       const fabricType = merged.fabric_type_id
         ? fabricTypes.find((ft) => ft.id === merged.fabric_type_id)
         : null;
@@ -548,7 +553,6 @@ export default function CustomerOrderDetailPage() {
         gsm_option_id: merged.gsm_option_id || null,
         color_option_id: merged.color_option_id || null,
         width_option_id: merged.width_option_id || null,
-        // Backward compatibility: update text fields (use "" not null for NOT NULL columns)
         coating_type: fabricType?.code ?? merged.coating_type ?? "",
         color: colorOpt?.color_name ?? (merged.color !== undefined && merged.color !== null ? merged.color : ""),
         gsm: gsmOpt?.gsm?.toString() ?? merged.gsm ?? null,
@@ -556,7 +560,6 @@ export default function CustomerOrderDetailPage() {
         price_rand: merged.price_rand ?? 0,
       };
 
-      // If fabric_type_id changed, clear dependent options
       if (patch.fabric_type_id !== undefined && patch.fabric_type_id !== previousLine.fabric_type_id) {
         updatePayload.gsm_option_id = null;
         updatePayload.color_option_id = null;
@@ -571,7 +574,6 @@ export default function CustomerOrderDetailPage() {
     } catch (err: any) {
       console.error("Failed to update line", err);
       setError(err.message || "Failed to update line.");
-      // Revert optimistic update so dropdown doesn't jump; do not refetch (avoids refresh loop)
       setLines((prev) => prev.map((l) => (l.id === id ? previousLine : l)));
     } finally {
       setIsSavingLines(false);
@@ -638,7 +640,6 @@ export default function CustomerOrderDetailPage() {
         </div>
       )}
 
-      {/* Parent order / Back orders */}
       {(order?.is_back_order && order?.parent_order_id) || backOrders.length > 0 ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap gap-4 text-sm">
@@ -832,44 +833,44 @@ export default function CustomerOrderDetailPage() {
                           ))}
                         </select>
                       </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        step="0.001"
-                        min="0"
-                        value={line.quantity_m}
-                        onChange={(e) =>
-                          handleUpdateLine(line.id, {
-                            quantity_m: Number(e.target.value || 0),
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={line.price_rand}
-                        onChange={(e) =>
-                          handleUpdateLine(line.id, {
-                            price_rand: Number(e.target.value || 0),
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLine(line.id)}
-                        className="text-xs md:text-sm text-red-600 hover:text-red-800"
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          value={line.quantity_m}
+                          onChange={(e) =>
+                            handleUpdateLine(line.id, {
+                              quantity_m: Number(e.target.value || 0),
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={line.price_rand}
+                          onChange={(e) =>
+                            handleUpdateLine(line.id, {
+                              price_rand: Number(e.target.value || 0),
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs md:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteLine(line.id)}
+                          className="text-xs md:text-sm text-red-600 hover:text-red-800"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -880,7 +881,7 @@ export default function CustomerOrderDetailPage() {
           <div>Total ordered: {formatQuantity(totalOrdered)} m</div>
           <div>Order value: R {lines.reduce((sum, l) => sum + (l.quantity_m ?? 0) * (l.price_rand ?? 0), 0).toFixed(2)}</div>
           {remaining !== null && (
-            <div className="text-slate-600">Remaining vs issued: {formatQuantity(remaining)} m</div>
+            <div className="text-slate-600 font-medium">Remaining balance: {formatQuantity(remaining)} m</div>
           )}
         </div>
       </section>
@@ -957,14 +958,14 @@ export default function CustomerOrderDetailPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">Linked Dispatches</h2>
             <p className="text-sm text-slate-600">
-              Store issues to CUSTOMER linked to this order.
+              Store issues to CUSTOMER linked to this order (net of active returns).
             </p>
           </div>
-          <div className="text-sm text-slate-700">
-            <div>Total issued: {totalIssued.toFixed(3)} m</div>
+          <div className="text-sm text-slate-700 text-right">
+            <div>Net active issued: <span className="font-semibold text-slate-900">{netIssued.toFixed(3)} m</span></div>
             {remaining !== null && (
               <div className="text-slate-600">
-                Remaining: {remaining.toFixed(3)} m
+                Remaining balance: <span className="font-semibold text-slate-900">{remaining.toFixed(3)} m</span>
               </div>
             )}
           </div>
@@ -977,10 +978,13 @@ export default function CustomerOrderDetailPage() {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Issue No</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Status</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Date</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Invoice</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Gate Pass</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Total (m)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Gross (m)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Returned (m)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Net Issued (m)</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
                 </tr>
               </thead>
@@ -988,10 +992,27 @@ export default function CustomerOrderDetailPage() {
                 {issues.map((iss) => (
                   <tr key={iss.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3 text-slate-900 font-medium">{formatIssueNo(iss.issue_no)}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          iss.status === "RETURNED"
+                            ? "bg-purple-100 text-purple-800"
+                            : iss.status === "PARTIALLY_RETURNED"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-emerald-100 text-emerald-800"
+                        }`}
+                      >
+                        {iss.status}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-slate-900">{formatDate(iss.issue_time)}</td>
                     <td className="px-4 py-3 text-slate-900">{iss.invoice_no || "—"}</td>
                     <td className="px-4 py-3 text-slate-900">{iss.gate_pass_no || "—"}</td>
-                    <td className="px-4 py-3 text-slate-900">{iss.total_length_m.toFixed(3)}</td>
+                    <td className="px-4 py-3 text-right text-slate-600">{iss.total_length_m.toFixed(3)}</td>
+                    <td className="px-4 py-3 text-right text-purple-700 font-medium">
+                      {iss.returned_length_m > 0 ? `-${iss.returned_length_m.toFixed(3)}` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-900 font-semibold">{iss.net_length_m.toFixed(3)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
                         <Button
@@ -1022,5 +1043,3 @@ export default function CustomerOrderDetailPage() {
     </div>
   );
 }
-
-

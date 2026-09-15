@@ -13,6 +13,7 @@ const PACKAGING_WEIGHT_KG = 0.5; // 500g tubing & packaging weight per roll
 
 interface IssueItem {
   id: string;
+  roll_id: string | null;
   roll_no: string | null;
   length_m: number | null;
   grade: string | null;
@@ -60,6 +61,8 @@ export default function FinishedFabricPackingListPage() {
     try {
       setIsLoading(true);
       setError(null);
+
+      // 1. Fetch issue header and items
       const { data, error: fetchError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select(
@@ -97,6 +100,26 @@ export default function FinishedFabricPackingListPage() {
 
       if (fetchError) throw fetchError;
 
+      // 2. Fetch non-reversed returns to exclude returned rolls
+      const { data: returnsData } = await supabaseBrowserClient
+        .from("finished_fabric_store_issue_returns")
+        .select(
+          `
+          finished_fabric_store_issue_return_items (
+            roll_id
+          )
+        `
+        )
+        .eq("issue_id", issueId)
+        .neq("status", "REVERSED");
+
+      const returnedRollIds = new Set<string>();
+      (returnsData || []).forEach((ret: any) => {
+        (ret.finished_fabric_store_issue_return_items || []).forEach((ri: any) => {
+          if (ri.roll_id) returnedRollIds.add(ri.roll_id);
+        });
+      });
+
       let order = Array.isArray(data.customer_orders) ? data.customer_orders[0] : data.customer_orders;
       if (order && Array.isArray(order.customers)) {
         order = { ...order, customers: order.customers[0] ?? null };
@@ -115,17 +138,20 @@ export default function FinishedFabricPackingListPage() {
       });
 
       const mapped: IssueItem[] =
-        (data.finished_fabric_store_issue_items || []).map((row: any) => ({
-          id: row.id as string,
-          roll_no: row.roll_no ?? null,
-          length_m: row.length_m !== null ? Number(row.length_m) : null,
-          grade: row.grade ?? null,
-          roll: Array.isArray(row.finished_fabric_rolls)
-            ? row.finished_fabric_rolls[0]
-            : row.finished_fabric_rolls,
-        })) || [];
+        (data.finished_fabric_store_issue_items || [])
+          .filter((row: any) => !row.roll_id || !returnedRollIds.has(row.roll_id))
+          .map((row: any) => ({
+            id: row.id as string,
+            roll_id: row.roll_id ?? null,
+            roll_no: row.roll_no ?? null,
+            length_m: row.length_m !== null ? Number(row.length_m) : null,
+            grade: row.grade ?? null,
+            roll: Array.isArray(row.finished_fabric_rolls)
+              ? row.finished_fabric_rolls[0]
+              : row.finished_fabric_rolls,
+          })) || [];
 
-      // Sort mapped items strictly by roll serial_no ASC
+      // Sort mapped active items strictly by roll serial_no ASC
       mapped.sort((a, b) => (a.roll?.serial_no ?? 0) - (b.roll?.serial_no ?? 0));
 
       setItems(mapped);
@@ -178,7 +204,6 @@ export default function FinishedFabricPackingListPage() {
     const gsm = item.roll?.gsm ? Number(item.roll.gsm) : null;
     if (length === null || !gsm) return null;
 
-    // Weight = (GSM * Length * 1.8m Width / 1000) + 0.5kg packaging
     const fabricWeightKg = (gsm * length * DEFAULT_WIDTH_M) / 1000;
     return fabricWeightKg + PACKAGING_WEIGHT_KG;
   }
@@ -380,7 +405,7 @@ export default function FinishedFabricPackingListPage() {
         body:
           body.length > 0
             ? body
-            : [["—", "—", "—", "—", "—", "—", "—", "No items recorded"]],
+            : [["—", "—", "—", "—", "—", "—", "—", "No active items"]],
         foot: [["Total", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`, totals.totalWeight.toFixed(2)]],
         startY: headerBottomY + 2,
         rowPageBreak: "avoid",
@@ -410,14 +435,14 @@ export default function FinishedFabricPackingListPage() {
           fontStyle: "bold",
         },
         columnStyles: {
-          0: { cellWidth: 15, fontStyle: "bold", halign: "center" }, // Roll #
-          1: { cellWidth: 28 },                                     // IRR #
-          2: { cellWidth: 22, halign: "right" },                    // Length (m)
-          3: { cellWidth: 14, halign: "center" },                   // Grade
-          4: { cellWidth: 14, halign: "right" },                    // GSM
-          5: { cellWidth: 36 },                                     // Colour
-          6: { cellWidth: 30 },                                     // Coating Type
-          7: { cellWidth: 23, halign: "right" },                    // Weight (kg)
+          0: { cellWidth: 15, fontStyle: "bold", halign: "center" },
+          1: { cellWidth: 28 },
+          2: { cellWidth: 22, halign: "right" },
+          3: { cellWidth: 14, halign: "center" },
+          4: { cellWidth: 14, halign: "right" },
+          5: { cellWidth: 36 },
+          6: { cellWidth: 30 },
+          7: { cellWidth: 23, halign: "right" },
         },
         showHead: "everyPage",
         showFoot: "lastPage",
@@ -545,8 +570,8 @@ export default function FinishedFabricPackingListPage() {
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700" colSpan={8}>
-                      No items recorded.
+                    <td className="px-4 py-3 text-slate-700 text-center" colSpan={8}>
+                      No active items recorded (all rolls returned).
                     </td>
                   </tr>
                 ) : (

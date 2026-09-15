@@ -11,11 +11,15 @@ interface ReturnHeader {
   id: string;
   created_at: string;
   disposition: string;
+  status: "ACTIVE" | "REVERSED";
   pastel_credit_note_no: string | null;
   reason: string | null;
   notes: string | null;
   exchange_slip_no: string | null;
   customer_name: string;
+  issue_id: string | null;
+  reversed_at: string | null;
+  reversal_reason: string | null;
 }
 
 interface ReturnLine {
@@ -49,11 +53,15 @@ export default function CustomerReturnDetailPage() {
           id,
           created_at,
           disposition,
+          status,
           pastel_credit_note_no,
           reason,
           notes,
           exchange_slip_no,
           customer_id,
+          issue_id,
+          reversed_at,
+          reversal_reason,
           customers:customer_id ( name )
         `
         )
@@ -67,11 +75,15 @@ export default function CustomerReturnDetailPage() {
         id: (data as any).id,
         created_at: (data as any).created_at,
         disposition: (data as any).disposition,
+        status: (data as any).status ?? "ACTIVE",
         pastel_credit_note_no: (data as any).pastel_credit_note_no ?? null,
         reason: (data as any).reason ?? null,
         notes: (data as any).notes ?? null,
         exchange_slip_no: (data as any).exchange_slip_no ?? null,
         customer_name: name ?? "—",
+        issue_id: (data as any).issue_id ?? null,
+        reversed_at: (data as any).reversed_at ?? null,
+        reversal_reason: (data as any).reversal_reason ?? null,
       });
 
       const { data: linesData, error: linesError } = await supabaseBrowserClient
@@ -148,7 +160,18 @@ export default function CustomerReturnDetailPage() {
     <div className="grid gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-semibold text-slate-900">Customer Return</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-semibold text-slate-900">Customer Return</h1>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                header.status === "REVERSED"
+                  ? "bg-red-100 text-red-800 border border-red-200"
+                  : "bg-emerald-100 text-emerald-800 border border-emerald-200"
+              }`}
+            >
+              {header.status}
+            </span>
+          </div>
           <p className="mt-1 text-slate-600">
             {formatDate(header.created_at)} — {header.customer_name}
             {header.exchange_slip_no && (
@@ -157,7 +180,12 @@ export default function CustomerReturnDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {header.disposition === "EXCHANGE" && header.exchange_slip_no && (
+          {header.issue_id && (
+            <Link href={`/toolbox/finished-fabric/store/issues/${header.issue_id}`}>
+              <Button variant="outline">View Original Issue Slip</Button>
+            </Link>
+          )}
+          {header.disposition === "EXCHANGE" && header.exchange_slip_no && header.status !== "REVERSED" && (
             <>
               <Link href={`/toolbox/orders/returns/${returnId}/exchange-slip`}>
                 <Button variant="secondary">Print exchange slip</Button>
@@ -172,6 +200,15 @@ export default function CustomerReturnDetailPage() {
           <BackButton href="/toolbox/orders/returns" label="Back to Returns" />
         </div>
       </div>
+
+      {header.status === "REVERSED" && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <p className="font-semibold">This Return Slip Has Been Reversed</p>
+          <p className="mt-1 text-xs text-red-700">
+            Reversed on: {formatDate(header.reversed_at)} | Reason: {header.reversal_reason || "No reason specified"}
+          </p>
+        </div>
+      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

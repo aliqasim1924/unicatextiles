@@ -11,6 +11,7 @@ interface ReturnHeader {
   id: string;
   created_at: string;
   disposition: string;
+  status: "ACTIVE" | "REVERSED";
   exchange_slip_no: string | null;
   reason: string | null;
   notes: string | null;
@@ -47,6 +48,7 @@ export default function ExchangeSlipPage() {
           id,
           created_at,
           disposition,
+          status,
           exchange_slip_no,
           reason,
           notes,
@@ -64,6 +66,7 @@ export default function ExchangeSlipPage() {
         id: (data as any).id,
         created_at: (data as any).created_at,
         disposition: (data as any).disposition,
+        status: (data as any).status ?? "ACTIVE",
         exchange_slip_no: (data as any).exchange_slip_no ?? null,
         reason: (data as any).reason ?? null,
         notes: (data as any).notes ?? null,
@@ -148,9 +151,11 @@ export default function ExchangeSlipPage() {
       <div className="print:hidden mx-auto max-w-[900px] px-4 py-6 flex items-center justify-between">
         <BackButton href={`/toolbox/orders/returns/${returnId}`} label="Back to Return" />
         <div className="flex gap-2">
-          <Link href={`/toolbox/finished-fabric/store/issue?reference=${encodeURIComponent(header.exchange_slip_no ?? "")}`}>
-            <Button variant="outline">Issue replacement</Button>
-          </Link>
+          {header.status !== "REVERSED" && (
+            <Link href={`/toolbox/finished-fabric/store/issue?reference=${encodeURIComponent(header.exchange_slip_no ?? "")}`}>
+              <Button variant="outline">Issue replacement</Button>
+            </Link>
+          )}
           <Button variant="primary" onClick={() => window.print()}>
             Print exchange slip
           </Button>
@@ -178,6 +183,15 @@ export default function ExchangeSlipPage() {
 
       <div className="mx-auto max-w-[900px] px-4 pb-8 print:p-0">
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8 print:p-4 print:border-0 print:shadow-none">
+          {header.status === "REVERSED" && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <p className="font-semibold">Notice: Reversal Applied</p>
+              <p className="mt-1 text-xs text-red-700">
+                This exchange slip belongs to a customer return that has been marked REVERSED. Replacement issuing is disabled.
+              </p>
+            </div>
+          )}
+
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
               <p className="text-sm font-semibold text-teal-700">UNICA TEXTILE MILLS</p>
