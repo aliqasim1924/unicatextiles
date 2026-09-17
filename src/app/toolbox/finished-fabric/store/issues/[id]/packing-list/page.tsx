@@ -26,6 +26,8 @@ interface IssueItem {
     color?: string | null;
     coating_type?: string | null;
     serial_no?: number | null;
+    batch_no?: string | null;
+    coating_batches?: any | null;
   } | null;
 }
 
@@ -63,7 +65,7 @@ export default function FinishedFabricPackingListPage() {
       setIsLoading(true);
       setError(null);
 
-      // 1. Fetch issue header and items
+      // 1. Fetch issue header and items along with roll batch info
       const { data, error: fetchError } = await supabaseBrowserClient
         .from("finished_fabric_store_issues")
         .select(
@@ -91,7 +93,10 @@ export default function FinishedFabricPackingListPage() {
               gsm,
               color,
               coating_type,
-              serial_no
+              serial_no,
+              coating_batches:batch_id (
+                batch_no
+              )
             )
           )
         `
@@ -153,7 +158,6 @@ export default function FinishedFabricPackingListPage() {
       // 3. Calculate sequence offset by querying prior active (non-returned) rolls linked to this order
       let priorActiveRollsCount = 0;
       if (data.order_id && data.issue_no) {
-        // Fetch all prior issues for this order
         const { data: priorIssues } = await supabaseBrowserClient
           .from("finished_fabric_store_issues")
           .select(
@@ -168,7 +172,6 @@ export default function FinishedFabricPackingListPage() {
         const priorIssueIds = (priorIssues || []).map((i: any) => i.id);
 
         if (priorIssueIds.length > 0) {
-          // Fetch non-reversed returns for ALL prior issues
           const { data: priorReturns } = await supabaseBrowserClient
             .from("finished_fabric_store_issue_returns")
             .select(
@@ -186,7 +189,6 @@ export default function FinishedFabricPackingListPage() {
             });
           });
 
-          // Sum only active (non-returned) rolls across prior dispatches
           (priorIssues || []).forEach((pi: any) => {
             (pi.finished_fabric_store_issue_items || []).forEach((item: any) => {
               if (!item.roll_id || !priorReturnedRollIds.has(item.roll_id)) {
@@ -207,17 +209,24 @@ export default function FinishedFabricPackingListPage() {
         return (rollA?.serial_no ?? 0) - (rollB?.serial_no ?? 0);
       });
 
-      const mapped: IssueItem[] = rawItems.map((row: any, idx: number) => ({
-        id: row.id as string,
-        roll_id: row.roll_id ?? null,
-        roll_no: row.roll_no ?? null,
-        length_m: row.length_m !== null ? Number(row.length_m) : null,
-        grade: row.grade ?? null,
-        sequence_no: priorActiveRollsCount + idx + 1,
-        roll: Array.isArray(row.finished_fabric_rolls)
+      const mapped: IssueItem[] = rawItems.map((row: any, idx: number) => {
+        const rollRecord = Array.isArray(row.finished_fabric_rolls)
           ? row.finished_fabric_rolls[0]
-          : row.finished_fabric_rolls,
-      }));
+          : row.finished_fabric_rolls;
+
+        const batchObj = rollRecord?.coating_batches;
+        const batchNo = Array.isArray(batchObj) ? batchObj[0]?.batch_no : batchObj?.batch_no;
+
+        return {
+          id: row.id as string,
+          roll_id: row.roll_id ?? null,
+          roll_no: row.roll_no ?? null,
+          length_m: row.length_m !== null ? Number(row.length_m) : null,
+          grade: row.grade ?? null,
+          sequence_no: priorActiveRollsCount + idx + 1,
+          roll: rollRecord ? { ...rollRecord, batch_no: batchNo } : null,
+        };
+      });
 
       setItems(mapped);
     } catch (err: any) {
@@ -456,6 +465,7 @@ export default function FinishedFabricPackingListPage() {
         return [
           serialStr,
           item.roll_no || roll.roll_no || "—",
+          roll.batch_no || "—",
           length !== null ? length.toFixed(3) : "—",
           item.grade || roll.grade || "—",
           roll.gsm !== null && roll.gsm !== undefined ? String(roll.gsm) : "—",
@@ -466,12 +476,12 @@ export default function FinishedFabricPackingListPage() {
       });
 
       autoTable(doc, {
-        head: [["Roll #", "IRR #", "Length (m)", "Grade", "GSM", "Colour", "Coating Type", "Weight (kg)"]],
+        head: [["Roll #", "IRR #", "Batch No", "Length (m)", "Grade", "GSM", "Colour", "Coating Type", "Weight (kg)"]],
         body:
           body.length > 0
             ? body
-            : [["—", "—", "—", "—", "—", "—", "—", "No active items"]],
-        foot: [["Total", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`, totals.totalWeight.toFixed(2)]],
+            : [["—", "—", "—", "—", "—", "—", "—", "—", "No active items"]],
+        foot: [["Total", "", "", totals.totalMeters.toFixed(3), "", "", "", `${totals.rollCount} roll(s)`, totals.totalWeight.toFixed(2)]],
         startY: headerBottomY + 2,
         rowPageBreak: "avoid",
         margin: {
@@ -482,8 +492,8 @@ export default function FinishedFabricPackingListPage() {
         },
         theme: "grid",
         styles: {
-          fontSize: 8,
-          cellPadding: 1.6,
+          fontSize: 7.5,
+          cellPadding: 1.4,
           lineColor: [180, 180, 180],
           lineWidth: 0.2,
           textColor: [30, 30, 30],
@@ -500,14 +510,15 @@ export default function FinishedFabricPackingListPage() {
           fontStyle: "bold",
         },
         columnStyles: {
-          0: { cellWidth: 15, fontStyle: "bold", halign: "center" },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 22, halign: "right" },
-          3: { cellWidth: 14, halign: "center" },
-          4: { cellWidth: 14, halign: "right" },
-          5: { cellWidth: 36 },
+          0: { cellWidth: 12, fontStyle: "bold", halign: "center" },
+          1: { cellWidth: 24 },
+          2: { cellWidth: 22 },
+          3: { cellWidth: 19, halign: "right" },
+          4: { cellWidth: 12, halign: "center" },
+          5: { cellWidth: 12, halign: "right" },
           6: { cellWidth: 30 },
-          7: { cellWidth: 23, halign: "right" },
+          7: { cellWidth: 26 },
+          8: { cellWidth: 25, halign: "right" },
         },
         showHead: "everyPage",
         showFoot: "lastPage",
@@ -581,14 +592,13 @@ export default function FinishedFabricPackingListPage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <div className="mx-auto max-w-[900px] px-4 py-6 flex items-center justify-between">
-        <BackButton href={`/toolbox/finished-fabric/store/issues/${issueId}`} label="Back to Issue" />
+<div className="mx-auto max-w-5xl px-4 py-6 flex items-center justify-between">        <BackButton href={`/toolbox/finished-fabric/store/issues/${issueId}`} label="Back to Issue" />
         <Button variant="primary" onClick={generatePdf} disabled={isGeneratingPdf}>
           {isGeneratingPdf ? "Generating PDF..." : "Download Packing List PDF"}
         </Button>
       </div>
 
-      <div className="mx-auto max-w-[900px] px-4 pb-8">
+      <div className="mx-auto max-w-5xl px-4 pb-8">
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6 md:p-8">
           <div className="flex items-start justify-between gap-4 mb-6 border-b border-slate-200 pb-4">
             <div>
@@ -618,12 +628,13 @@ export default function FinishedFabricPackingListPage() {
             </div>
           </div>
 
-          <div className="overflow-hidden border border-slate-200 rounded-lg">
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
                   <th className="px-3 py-3 text-center font-semibold text-slate-900">Roll #</th>
                   <th className="px-3 py-3 text-left font-semibold text-slate-900">IRR #</th>
+                  <th className="px-3 py-3 text-left font-semibold text-slate-900">Batch No</th>
                   <th className="px-3 py-3 text-right font-semibold text-slate-900">Length (m)</th>
                   <th className="px-3 py-3 text-left font-semibold text-slate-900">Grade</th>
                   <th className="px-3 py-3 text-right font-semibold text-slate-900">GSM</th>
@@ -635,7 +646,7 @@ export default function FinishedFabricPackingListPage() {
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-3 text-slate-700 text-center" colSpan={8}>
+                    <td className="px-4 py-3 text-slate-700 text-center" colSpan={9}>
                       No active items recorded (all rolls returned).
                     </td>
                   </tr>
@@ -652,6 +663,9 @@ export default function FinishedFabricPackingListPage() {
                         </td>
                         <td className="px-3 py-3 text-slate-900 font-medium">
                           {item.roll_no || roll.roll_no || "—"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-900">
+                          {roll.batch_no || "—"}
                         </td>
                         <td className="px-3 py-3 text-right text-slate-900">
                           {length !== null ? length.toFixed(3) : "—"}
