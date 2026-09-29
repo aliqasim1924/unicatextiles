@@ -39,10 +39,7 @@ export default function YarnStockPage() {
       try {
         const [
           stockResult,
-          issuedResult,
-          deptAllocResult,
-          beamsResult,
-          weftResult,
+          transactionsResult,
           bfoResult,
         ] = await Promise.all([
           supabaseBrowserClient
@@ -60,30 +57,14 @@ export default function YarnStockPage() {
             ),
           supabaseBrowserClient
             .from("yarn_transactions")
-            .select("yarn_item_id, quantity")
-            .eq("transaction_type", "ISSUE"),
-          // Fetch dept allocations along with their base fabric order status
-          supabaseBrowserClient
-            .from("yarn_transactions")
-            .select("yarn_item_id, quantity, base_fabric_order_id, base_fabric_orders(status)")
-            .eq("transaction_type", "DEPT_TO_ORDER"),
-          supabaseBrowserClient
-            .from("base_fabric_order_beams")
-            .select("yarn_item_id, weight_ready_kg, weaving_beams:beam_id(tare_weight_kg)"),
-          supabaseBrowserClient
-            .from("base_fabric_order_weft")
-            .select("yarn_item_id, kg_start, kg_end")
-            .not("kg_end", "is", null),
+            .select("yarn_item_id, transaction_type, quantity, base_fabric_order_id, base_fabric_orders(status)"),
           supabaseBrowserClient
             .from("base_fabric_orders")
             .select("id, status"),
         ]);
 
-        const { data, error } = stockResult;
-        const { data: issuedData } = issuedResult;
-        const { data: deptAllocData } = deptAllocResult;
-        const { data: beamsData } = beamsResult;
-        const { data: weftData } = weftResult;
+        const { data: stockData, error } = stockResult;
+        const { data: txnsData } = transactionsResult;
 
         if (error) throw error;
 
@@ -93,65 +74,63 @@ export default function YarnStockPage() {
           if (bfo?.id) bfoStatusMap.set(bfo.id, bfo.status);
         });
 
-        const issuedByItem: Record<string, number> = {};
-        (issuedData || []).forEach((row: { yarn_item_id: string; quantity: number }) => {
-          const id = row.yarn_item_id;
-          const qty = Number(row.quantity || 0);
-          issuedByItem[id] = (issuedByItem[id] || 0) + qty;
+        // Compute balances directly matching ledger transaction rules from scratch
+        const storeBalances: Record<string, number> = {};
+        const deptBalances: Record<string, number> = {};
+        const allocatedBalances: Record<string, number> = {};
+
+        // Initialize all items to 0
+        (stockData || []).forEach((item: any) => {
+          storeBalances[item.yarn_item_id] = 0;
+          deptBalances[item.yarn_item_id] = 0;
+          allocatedBalances[item.yarn_item_id] = 0;
         });
 
-        // ONLY count allocations belonging to active/running/planned orders (ignore completed/closed)
-        const allocatedByItem: Record<string, number> = {};
-        (deptAllocData || []).forEach((row: any) => {
-          const id = row.yarn_item_id;
-          const qty = Number(row.quantity || 0);
-          const bfoId = row.base_fabric_order_id;
-          
-          // Check order status if linked, default to active if missing
-          const status = bfoId ? bfoStatusMap.get(bfoId) : "RUNNING";
-          const isFinished = status === "COMPLETED" || status === "CLOSED" || status === "CANCELLED";
+        // Sum transaction history accurately
+        (txnsData || []).forEach((txn: any) => {
+          const id = txn.yarn_item_id;
+          const qty = Number(txn.quantity || 0);
+          if (!id) return;
 
-          if (!isFinished && id) {
-            allocatedByItem[id] = (allocatedByItem[id] || 0) + qty;
+          // Store Balance calculation
+          if (txn.transaction_type === "RECEIPT" || txn.transaction_type === "RETURN" || txn.transaction_type === "ADJUSTMENT") {
+            storeBalances[id] = (storeBalances[id] || 0) + qty;
+          } else if (txn.transaction_type === "ISSUE" || txn.transaction_type === "SCRAP") {
+            storeBalances[id] = (storeBalances[id] || 0) - qty;
+          }
+
+          // Department Balance calculation
+          if (txn.transaction_type === "ISSUE") {
+            deptBalances[id] = (deptBalances[id] || 0) + qty;
+          } else if (txn.transaction_type === "DEPT_TO_ORDER") {
+            deptBalances[id] = (deptBalances[id] || 0) - qty;
+            
+            const bfoId = txn.base_fabric_order_id;
+            const status = bfoId ? bfoStatusMap.get(bfoId) : "RUNNING";
+            const isFinished = status === "COMPLETED" || status === "CLOSED" || status === "CANCELLED";
+            if (!isFinished) {
+              allocatedBalances[id] = (allocatedBalances[id] || 0) + qty;
+            }
+          } else if (txn.transaction_type === "RETURN") {
+            deptBalances[id] = (deptBalances[id] || 0) + qty;
           }
         });
 
-        const consumedByItem: Record<string, number> = {};
-        (beamsData || []).forEach((row: any) => {
-          const tare = row.weaving_beams != null
-            ? (Array.isArray(row.weaving_beams) ? row.weaving_beams[0]?.tare_weight_kg : row.weaving_beams?.tare_weight_kg)
-            : 0;
-          const kg = Number(row.weight_ready_kg || 0) - Number(tare || 0);
-          if (kg > 0 && row.yarn_item_id) {
-            consumedByItem[row.yarn_item_id] = (consumedByItem[row.yarn_item_id] || 0) + kg;
-          }
-        });
-        (weftData || []).forEach((row: { yarn_item_id: string; kg_start: number; kg_end: number }) => {
-          const kg = Number(row.kg_start || 0) - Number(row.kg_end || 0);
-          if (kg > 0 && row.yarn_item_id) {
-            consumedByItem[row.yarn_item_id] = (consumedByItem[row.yarn_item_id] || 0) + kg;
-          }
-        });
-
-        const processedData = (data as any[]).map((item) => {
-          const issued = issuedByItem[item.yarn_item_id] ?? 0;
-          const consumed = consumedByItem[item.yarn_item_id] ?? 0;
-          const withDept = Math.max(0, issued - consumed);
-          const activeAllocatedTotal = allocatedByItem[item.yarn_item_id] ?? 0;
-          
-          // Yarn currently locked by active orders
-          const allocatedInDept = Math.min(withDept, Math.max(0, activeAllocatedTotal));
-          // Yarn physically in department that is free to use / re-allocate
-          const unallocatedInDept = Math.max(0, withDept - allocatedInDept);
+        const processedData = (stockData as any[]).map((item) => {
+          const id = item.yarn_item_id;
+          const storeQty = storeBalances[id] ?? Number(item.stock_qty || 0);
+          const deptQty = Math.max(0, deptBalances[id] ?? 0);
+          const allocatedQty = Math.min(deptQty, allocatedBalances[id] ?? 0);
+          const unallocatedDeptQty = Math.max(0, deptQty - allocatedQty);
 
           return {
             ...item,
-            stock_qty: Number(item.stock_qty || 0),
-            issued_qty: issued,
-            consumed_qty: consumed,
-            with_department_qty: withDept,
-            allocated_to_orders_qty: allocatedInDept,
-            available_in_dept_qty: unallocatedInDept,
+            stock_qty: storeQty,
+            issued_qty: 0,
+            consumed_qty: 0,
+            with_department_qty: deptQty,
+            allocated_to_orders_qty: allocatedQty,
+            available_in_dept_qty: unallocatedDeptQty,
             yarn_items: Array.isArray(item.yarn_items) ? item.yarn_items[0] : item.yarn_items,
           };
         }) as YarnStockItem[];
@@ -295,8 +274,6 @@ export default function YarnStockPage() {
       });
       const totalItems = stockItems.length;
       const totalInStore = stockItems.reduce((sum, item) => sum + item.stock_qty, 0);
-      const totalIssued = stockItems.reduce((sum, item) => sum + (item.issued_qty ?? 0), 0);
-      const totalConsumed = stockItems.reduce((sum, item) => sum + (item.consumed_qty ?? 0), 0);
       const totalWithDept = stockItems.reduce((sum, item) => sum + (item.with_department_qty ?? 0), 0);
       const totalUnallocatedInDept = stockItems.reduce((sum, item) => sum + (item.available_in_dept_qty ?? 0), 0);
       const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
@@ -306,8 +283,7 @@ export default function YarnStockPage() {
       autoTable(doc, {
         body: [
           [`Generated: ${reportDate}`, `Total Items: ${totalItems}`],
-          [`Total In Store: ${totalInStore.toFixed(3)}`, `Total Issued: ${totalIssued.toFixed(3)}`],
-          [`Total Consumed: ${totalConsumed.toFixed(3)}`, `Total In Dept: ${totalWithDept.toFixed(3)}`],
+          [`Total In Store: ${totalInStore.toFixed(3)}`, `Total In Dept: ${totalWithDept.toFixed(3)}`],
           [``, `Unallocated in Dept: ${totalUnallocatedInDept.toFixed(3)}`],
           [`Total Valuation: R ${totalValuation.toFixed(2)}`, ""],
         ],
@@ -392,76 +368,6 @@ export default function YarnStockPage() {
         columnStyles,
       });
 
-      doc.addPage("a4", "landscape");
-      pageNumber++;
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 0, 0);
-      doc.text("Valuation Summary", margin, 20);
-
-      const valuationData = stockItems
-        .filter((item) => item.valuation_zar && item.valuation_zar > 0)
-        .map((item) => [
-          item.yarn_items?.name || "N/A",
-          item.stock_qty.toFixed(3),
-          item.yarn_items?.uom || "kg",
-          `R ${(item.avg_price_zar || 0).toFixed(4)}`,
-          `R ${(item.valuation_zar || 0).toFixed(2)}`,
-        ])
-        .sort((a, b) => {
-          const valA = parseFloat(a[4].replace("R ", "").replace(",", ""));
-          const valB = parseFloat(b[4].replace("R ", "").replace(",", ""));
-          return valB - valA;
-        });
-
-      if (valuationData.length > 0) {
-        autoTable(doc, {
-          head: [["Yarn Name", "Stock Qty", "UoM", "Avg Price (ZAR)", "Total Valuation (ZAR)"]],
-          body: valuationData,
-          startY: 30,
-          margin: { left: margin, right: margin },
-          tableWidth: availableWidth,
-          theme: "grid",
-          styles: {
-            fontSize: 7,
-            cellPadding: 1.5,
-            overflow: "ellipsize",
-            lineWidth: 0.1,
-            lineColor: [226, 232, 240],
-          },
-          headStyles: {
-            fillColor: [16, 185, 129],
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-            fontSize: 7,
-          },
-          alternateRowStyles: {
-            fillColor: [249, 250, 251],
-          },
-          columnStyles: {
-            0: { cellWidth: availableWidth * 0.35 },
-            1: { cellWidth: availableWidth * 0.15 },
-            2: { cellWidth: availableWidth * 0.1 },
-            3: { cellWidth: availableWidth * 0.2 },
-            4: { cellWidth: availableWidth * 0.2 },
-          },
-        });
-
-        const finalY = (doc as any).lastAutoTable.finalY || 30;
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.text(
-          `Grand Total Valuation: R ${totalValuation.toFixed(2)}`,
-          pageWidth - margin,
-          finalY + 10,
-          { align: "right" }
-        );
-      } else {
-        doc.setFontSize(10);
-        doc.setTextColor(100, 100, 100);
-        doc.text("No valuation data available (no pricing information found)", margin, 40);
-      }
-
       const totalPages = (doc as any).getNumberOfPages?.() ?? (doc as any).internal?.getNumberOfPages?.() ?? 1;
       const templateLabel = `1. ${templateName}`;
       for (let i = 1; i <= totalPages; i++) {
@@ -487,7 +393,7 @@ export default function YarnStockPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Stock</h1>
           <p className="mt-1 text-slate-600">
-            In-store, issued, consumed (beams + cones), total in department, and available in department.
+            Store balances and department inventory tracked via unified transaction ledgers.
           </p>
         </div>
         <div className="flex items-center gap-3">
