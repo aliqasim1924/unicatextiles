@@ -23,6 +23,7 @@ interface TransactionDetail {
   unit_price_zar: number | null;
   exchange_rate: number | null;
   yarn_item_id: string;
+  base_fabric_order_id: string | null;
   yarn_items: {
     name: string;
     denier: number | null;
@@ -31,6 +32,11 @@ interface TransactionDetail {
   };
   suppliers: {
     name: string;
+  } | null;
+  base_fabric_orders: {
+    id: string;
+    order_no?: string;
+    status?: string;
   } | null;
 }
 
@@ -71,6 +77,7 @@ export default function YarnTransactionDetailPage() {
           unit_price_zar,
           exchange_rate,
           yarn_item_id,
+          base_fabric_order_id,
           yarn_items:yarn_item_id (
             name,
             denier,
@@ -79,6 +86,11 @@ export default function YarnTransactionDetailPage() {
           ),
           suppliers:supplier_id (
             name
+          ),
+          base_fabric_orders:base_fabric_order_id (
+            id,
+            order_no,
+            status
           )
         `
         )
@@ -91,6 +103,7 @@ export default function YarnTransactionDetailPage() {
         ...data,
         yarn_items: Array.isArray(data.yarn_items) ? data.yarn_items[0] : data.yarn_items,
         suppliers: Array.isArray(data.suppliers) ? data.suppliers[0] : data.suppliers,
+        base_fabric_orders: Array.isArray(data.base_fabric_orders) ? data.base_fabric_orders[0] : data.base_fabric_orders,
       } as TransactionDetail;
 
       setTransaction(processed);
@@ -103,19 +116,19 @@ export default function YarnTransactionDetailPage() {
 
   function getTypeBadgeColor(type: string): string {
     if (type === "RECEIPT" || type === "RETURN") {
-      return "bg-green-100 text-green-800";
+      return "bg-green-100 text-green-800 border-green-200";
     } else if (type === "ISSUE" || type === "SCRAP") {
-      return "bg-red-100 text-red-800";
+      return "bg-red-100 text-red-800 border-red-200";
     } else if (type === "DEPT_TO_ORDER") {
-      return "bg-amber-100 text-amber-800";
+      return "bg-amber-100 text-amber-800 border-amber-200";
     }
-    return "bg-blue-100 text-blue-800";
+    return "bg-blue-100 text-blue-800 border-blue-200";
   }
 
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <p className="text-slate-600">Loading transaction detail...</p>
+        <p className="text-slate-600 font-medium">Loading transaction detail...</p>
       </div>
     );
   }
@@ -123,8 +136,8 @@ export default function YarnTransactionDetailPage() {
   if (error || !transaction) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-          <p className="mb-4 text-red-600">{error || "Transaction not found."}</p>
+        <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm text-center">
+          <p className="mb-4 text-red-600 font-medium">{error || "Transaction not found."}</p>
           <Link href="/toolbox/yarn/stock">
             <Button variant="primary">Back to Yarn Stock</Button>
           </Link>
@@ -137,57 +150,78 @@ export default function YarnTransactionDetailPage() {
     ? `/toolbox/yarn/ledger/${transaction.yarn_item_id}`
     : "/toolbox/yarn/stock";
 
+  const orderIdentifier = transaction.base_fabric_orders?.order_no || 
+    transaction.base_fabric_order_id;
+
+  // Clean up notes dynamically if they contain the raw UUID
+  let displayNotes = transaction.notes;
+  if (displayNotes && transaction.base_fabric_orders?.order_no) {
+    // Replace any occurrence of the raw ID with the clean order number
+    const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    displayNotes = displayNotes.replace(uuidRegex, transaction.base_fabric_orders.order_no);
+  }
+
   return (
-    <div className="grid gap-8">
+    <div className="grid gap-8 max-w-5xl mx-auto pb-12">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Transaction Detail</h1>
-          <p className="mt-1 text-slate-600">View complete transaction information</p>
+          <p className="mt-1 text-slate-600">Complete audit log and movement details</p>
         </div>
         <Link
           href={ledgerLink}
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition"
+          className="text-sm font-semibold text-teal-700 hover:text-teal-800 transition flex items-center gap-1"
         >
           ← Back to Ledger
         </Link>
       </div>
 
-      {/* Transaction Type Badge */}
+      {/* Transaction Summary Card */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm flex flex-wrap items-center justify-between gap-4"
       >
         <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-slate-600">Transaction Type:</span>
+          <span className="text-sm font-semibold text-slate-600">Type:</span>
           <span
-            className={`inline-block rounded-full px-3 py-1 text-sm font-semibold ${getTypeBadgeColor(
+            className={`inline-block rounded-full border px-3.5 py-1 text-xs font-bold uppercase tracking-wider ${getTypeBadgeColor(
               transaction.transaction_type
             )}`}
           >
             {transaction.transaction_type}
           </span>
+        </div>
+        <div className="flex items-center gap-6 text-sm text-slate-600">
           {transaction.slip_no && (
-            <span className="text-sm text-slate-600">Slip No: {transaction.slip_no}</span>
+            <div>
+              <span className="font-semibold text-slate-700">Slip No:</span> {transaction.slip_no}
+            </div>
           )}
+          <div>
+            <span className="font-semibold text-slate-700">Transaction ID:</span>{" "}
+            <span className="font-mono text-xs text-slate-500">{transaction.id}</span>
+          </div>
         </div>
       </motion.section>
 
-      {/* Transaction Details */}
+      {/* Main Details Grid */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.1 }}
         className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">Transaction Details</h2>
+        <h2 className="mb-6 text-lg font-semibold text-slate-900 border-b border-slate-100 pb-3">
+          Core Information
+        </h2>
 
-        <div className="grid gap-6 sm:grid-cols-2">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           <div>
-            <p className="text-sm font-semibold text-slate-600">Date/Time</p>
-            <p className="mt-1 text-base text-slate-900">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Date & Time</p>
+            <p className="mt-1 text-base font-medium text-slate-900">
               {new Date(transaction.txn_time).toLocaleString("en-ZA", {
                 year: "numeric",
                 month: "long",
@@ -199,63 +233,89 @@ export default function YarnTransactionDetailPage() {
           </div>
 
           <div>
-            <p className="text-sm font-semibold text-slate-600">Yarn Item</p>
-            <p className="mt-1 text-base font-medium text-slate-900">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Yarn Item</p>
+            <p className="mt-1 text-base font-semibold text-slate-900">
               {transaction.yarn_items?.name || "N/A"}
             </p>
             {transaction.yarn_items?.denier && (
-              <p className="text-sm text-slate-600">
+              <p className="text-xs text-slate-500 mt-0.5">
                 {transaction.yarn_items.denier}D
-                {transaction.yarn_items.material && ` - ${transaction.yarn_items.material}`}
+                {transaction.yarn_items.material && ` • ${transaction.yarn_items.material}`}
               </p>
             )}
           </div>
 
           <div>
-            <p className="text-sm font-semibold text-slate-600">Quantity</p>
-            <p className="mt-1 text-base font-semibold text-slate-900">
-              {transaction.quantity.toFixed(3)} {transaction.uom}
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Quantity</p>
+            <p className="mt-1 text-lg font-bold text-slate-900">
+              {transaction.quantity.toFixed(3)}{" "}
+              <span className="text-sm font-normal text-slate-600">{transaction.uom}</span>
             </p>
           </div>
 
           <div>
-            <p className="text-sm font-semibold text-slate-600">Source</p>
-            <p className="mt-1 text-base text-slate-900">{transaction.source || "-"}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Source</p>
+            <p className="mt-1 text-base font-medium text-slate-900">{transaction.source || "—"}</p>
           </div>
 
           <div>
-            <p className="text-sm font-semibold text-slate-600">Destination</p>
-            <p className="mt-1 text-base text-slate-900">{transaction.destination || "-"}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Destination</p>
+            <p className="mt-1 text-base font-medium text-slate-900">{transaction.destination || "—"}</p>
           </div>
 
           <div>
-            <p className="text-sm font-semibold text-slate-600">Batch No</p>
-            <p className="mt-1 text-base text-slate-900">{transaction.batch_no || "-"}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Batch Number</p>
+            <p className="mt-1 text-base font-medium text-slate-900">{transaction.batch_no || "—"}</p>
           </div>
 
           {transaction.suppliers && (
             <div>
-              <p className="text-sm font-semibold text-slate-600">Supplier</p>
-              <p className="mt-1 text-base text-slate-900">{transaction.suppliers.name}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Supplier</p>
+              <p className="mt-1 text-base font-medium text-slate-900">{transaction.suppliers.name}</p>
             </div>
           )}
 
           {transaction.ref_document && (
             <div>
-              <p className="text-sm font-semibold text-slate-600">Ref Document</p>
-              <p className="mt-1 text-base text-slate-900">{transaction.ref_document}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Reference Document</p>
+              <p className="mt-1 text-base font-medium text-slate-900">{transaction.ref_document}</p>
+            </div>
+          )}
+
+          {/* Linked Order Section for DEPT_TO_ORDER */}
+          {transaction.base_fabric_order_id && (
+            <div className="sm:col-span-2 lg:col-span-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mt-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-amber-800 mb-1">Linked Production Order (BFO)</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-base font-semibold text-slate-900">
+                    Order Ref: {orderIdentifier}
+                  </span>
+                  {transaction.base_fabric_orders?.status && (
+                    <span className="ml-3 inline-block rounded-full bg-amber-200 px-2.5 py-0.5 text-xs font-bold text-amber-900">
+                      {transaction.base_fabric_orders.status}
+                    </span>
+                  )}
+                </div>
+                <Link
+                  href={`/toolbox/bfo/${transaction.base_fabric_order_id}`}
+                  className="text-xs font-semibold text-teal-700 hover:underline"
+                >
+                  View Order Details →
+                </Link>
+              </div>
             </div>
           )}
         </div>
 
         {/* Pricing Information */}
         {(transaction.unit_price_usd || transaction.unit_price_zar) && (
-          <div className="mt-6 border-t border-slate-200 pt-6">
-            <h3 className="mb-4 text-lg font-semibold text-slate-900">Pricing Information</h3>
-            <div className="grid gap-4 sm:grid-cols-3">
+          <div className="mt-8 border-t border-slate-100 pt-6">
+            <h3 className="mb-4 text-base font-semibold text-slate-900">Pricing & Financials</h3>
+            <div className="grid gap-4 sm:grid-cols-3 bg-slate-50 p-4 rounded-lg border border-slate-100">
               {transaction.unit_price_usd && (
                 <div>
-                  <p className="text-sm font-semibold text-slate-600">Unit Price (USD)</p>
+                  <p className="text-xs font-semibold text-slate-500">Unit Price (USD)</p>
                   <p className="mt-1 text-base font-medium text-slate-900">
                     ${transaction.unit_price_usd.toFixed(4)}
                   </p>
@@ -263,72 +323,64 @@ export default function YarnTransactionDetailPage() {
               )}
               {transaction.unit_price_zar && (
                 <div>
-                  <p className="text-sm font-semibold text-slate-600">Unit Price (ZAR)</p>
+                  <p className="text-xs font-semibold text-slate-500">Unit Price (ZAR)</p>
                   <p className="mt-1 text-base font-medium text-slate-900">
-                    R{transaction.unit_price_zar.toFixed(4)}
+                    R {transaction.unit_price_zar.toFixed(4)}
                   </p>
                 </div>
               )}
               {transaction.exchange_rate && (
                 <div>
-                  <p className="text-sm font-semibold text-slate-600">Exchange Rate</p>
+                  <p className="text-xs font-semibold text-slate-500">Exchange Rate</p>
                   <p className="mt-1 text-base font-medium text-slate-900">
                     {transaction.exchange_rate.toFixed(6)} ZAR/USD
                   </p>
                 </div>
               )}
-              {transaction.unit_price_usd && (
-                <div className="sm:col-span-3">
-                  <p className="text-sm font-semibold text-slate-600">Total Cost</p>
-                  <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                    {transaction.unit_price_usd && (
-                      <p className="text-base font-medium text-slate-900">
-                        USD: ${(transaction.unit_price_usd * transaction.quantity).toFixed(2)}
-                      </p>
-                    )}
-                    {transaction.unit_price_zar && (
-                      <p className="text-base font-medium text-slate-900">
-                        ZAR: R{(transaction.unit_price_zar * transaction.quantity).toFixed(2)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div className="sm:col-span-3 border-t border-slate-200 pt-3 mt-1 flex flex-wrap gap-6">
+                {transaction.unit_price_usd && (
+                  <p className="text-sm font-semibold text-slate-900">
+                    Total Value (USD): <span className="text-teal-700">${(transaction.unit_price_usd * transaction.quantity).toFixed(2)}</span>
+                  </p>
+                )}
+                {transaction.unit_price_zar && (
+                  <p className="text-sm font-semibold text-slate-900">
+                    Total Value (ZAR): <span className="text-teal-700">R {(transaction.unit_price_zar * transaction.quantity).toFixed(2)}</span>
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}
 
         {/* Notes */}
-        {transaction.notes && (
-          <div className="mt-6 border-t border-slate-200 pt-6">
-            <p className="text-sm font-semibold text-slate-600 mb-2">Notes</p>
-            <p className="text-base text-slate-900 whitespace-pre-wrap">{transaction.notes}</p>
+        {displayNotes && (
+          <div className="mt-8 border-t border-slate-100 pt-6">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Notes / Remarks</p>
+            <div className="rounded-lg bg-slate-50 p-4 border border-slate-100">
+              <p className="text-sm text-slate-800 whitespace-pre-wrap">{displayNotes}</p>
+            </div>
           </div>
         )}
       </motion.section>
 
-      {/* Issue Slip Button for ISSUE transactions */}
+      {/* Issue Slip Action Button for ISSUE transactions */}
       {transaction.transaction_type === "ISSUE" && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.2 }}
-          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm flex items-center justify-between"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Yarn Issue Slip</h3>
-              <p className="mt-1 text-sm text-slate-600">
-                View and print the issue slip for this transaction
-              </p>
-            </div>
-            <Link href={`/toolbox/yarn/issuing/slip/${transaction.id}`}>
-              <Button variant="primary">View & Print Issue Slip</Button>
-            </Link>
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Yarn Issue Slip</h3>
+            <p className="text-sm text-slate-600">Access printable slip documentation for this issue record</p>
           </div>
+          <Link href={`/toolbox/yarn/issuing/slip/${transaction.id}`}>
+            <Button variant="primary">View & Print Issue Slip</Button>
+          </Link>
         </motion.section>
       )}
     </div>
   );
 }
-
