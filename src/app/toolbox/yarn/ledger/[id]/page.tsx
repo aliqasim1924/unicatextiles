@@ -33,7 +33,9 @@ interface YarnTransaction {
   base_fabric_order_id?: string | null;
   base_fabric_orders?: {
     order_no: string | null;
+    status?: string | null;
   } | null;
+  isVirtualReturn?: boolean;
 }
 
 interface LedgerData {
@@ -92,9 +94,9 @@ export default function YarnLedgerPage() {
 
       const currentStock = stockData?.stock_qty || 0;
 
-      // Fetch all transactions
-      const { data: transactionsData, error: transactionsError } =
-        await supabaseBrowserClient
+      // Fetch transactions, beam consumption, and weft consumption simultaneously
+      const [transactionsResult, beamsResult, weftResult] = await Promise.all([
+        supabaseBrowserClient
           .from("yarn_transactions")
           .select(
             `
@@ -110,25 +112,117 @@ export default function YarnLedgerPage() {
             notes,
             slip_no,
             base_fabric_order_id,
-            base_fabric_orders:base_fabric_order_id ( order_no )
+            base_fabric_orders:base_fabric_order_id ( order_no, status )
           `
           )
           .eq("yarn_item_id", yarnItemId)
-          .order("txn_time", { ascending: true });
+          .order("txn_time", { ascending: true }),
+        supabaseBrowserClient
+          .from("base_fabric_order_beams")
+          .select("base_fabric_order_id, yarn_item_id, weight_ready_kg, weaving_beams:beam_id(tare_weight_kg)")
+          .eq("yarn_item_id", yarnItemId),
+        supabaseBrowserClient
+          .from("base_fabric_order_weft")
+          .select("base_fabric_order_id, yarn_item_id, kg_start, kg_end")
+          .eq("yarn_item_id", yarnItemId)
+          .not("kg_end", "is", null),
+      ]);
 
-      if (transactionsError) throw transactionsError;
+      if (transactionsResult.error) throw transactionsResult.error;
 
-      const normalisedTransactions = ((transactionsData || []) as any[]).map((txn) => ({
+      const normalisedTransactions = ((transactionsResult.data || []) as any[]).map((txn) => ({
         ...txn,
         base_fabric_orders: Array.isArray(txn.base_fabric_orders)
           ? txn.base_fabric_orders[0]
           : txn.base_fabric_orders,
       })) as YarnTransaction[];
 
+      // Calculate total physical consumption grouped by BFO ID for this yarn item
+      const consumptionByBfo = new Map<string, number>();
+      
+      (beamsResult.data || []).forEach((row: any) => {
+        const tare = row.weaving_beams != null
+          ? (Array.isArray(row.weaving_beams) ? row.weaving_beams[0]?.tare_weight_kg : row.weaving_beams?.tare_weight_kg)
+          : 0;
+        const kg = Number(row.weight_ready_kg || 0) - Number(tare || 0);
+        if (kg > 0 && row.base_fabric_order_id) {
+          consumptionByBfo.set(
+            row.base_fabric_order_id,
+            (consumptionByBfo.get(row.base_fabric_order_id) || 0) + kg
+          );
+        }
+      });
+
+      (weftResult.data || []).forEach((row: any) => {
+        const kg = Number(row.kg_start || 0) - Number(row.kg_end || 0);
+        if (kg > 0 && row.base_fabric_order_id) {
+          consumptionByBfo.set(
+            row.base_fabric_order_id,
+            (consumptionByBfo.get(row.base_fabric_order_id) || 0) + kg
+          );
+        }
+      });
+
+      // Track total allocated/issued per finished BFO to calculate net unused variance safely
+      const orderTotals = new Map<string, { totalAllocated: number; lastTxn: YarnTransaction; consumed: number }>();
+
+      normalisedTransactions.forEach((txn) => {
+        const bfoId = txn.base_fabric_order_id;
+        const bfoStatus = txn.base_fabric_orders?.status;
+        const isFinished = bfoStatus === "COMPLETED" || bfoStatus === "CLOSED" || bfoStatus === "CANCELLED";
+
+        if (bfoId && isFinished && (txn.transaction_type === "DEPT_TO_ORDER" || txn.transaction_type === "ISSUE")) {
+          const current = orderTotals.get(bfoId) || { totalAllocated: 0, lastTxn: txn, consumed: consumptionByBfo.get(bfoId) || 0 };
+          current.totalAllocated += Number(txn.quantity || 0);
+          current.lastTxn = txn;
+          orderTotals.set(bfoId, current);
+        }
+      });
+
+      // Build expanded transactions list including virtual returns for any finished BFO with unused yarn
+      const expandedTransactions: YarnTransaction[] = [];
+      const processedBfosWithReturn = new Set<string>();
+
+      normalisedTransactions.forEach((txn) => {
+        expandedTransactions.push(txn);
+
+        const bfoId = txn.base_fabric_order_id;
+        if (bfoId && !processedBfosWithReturn.has(bfoId)) {
+          const orderData = orderTotals.get(bfoId);
+          if (orderData) {
+            processedBfosWithReturn.add(bfoId);
+            const unusedQty = orderData.totalAllocated - orderData.consumed;
+
+            if (unusedQty > 0.0009) {
+              const returnDate = new Date(new Date(orderData.lastTxn.txn_time).getTime() + 1000).toISOString();
+              expandedTransactions.push({
+                id: `${bfoId}-virtual-return`,
+                txn_time: returnDate,
+                transaction_type: "RETURN",
+                quantity: unusedQty,
+                uom: txn.uom,
+                source: "DEPARTMENT",
+                destination: "DEPARTMENT/UNALLOCATED",
+                batch_no: txn.batch_no,
+                ref_document: txn.ref_document,
+                notes: `Auto-returned unused portion from finished ${txn.base_fabric_orders?.order_no || "BFO"}`,
+                slip_no: orderData.lastTxn.slip_no ? `${orderData.lastTxn.slip_no}-RET` : null,
+                base_fabric_order_id: bfoId,
+                base_fabric_orders: txn.base_fabric_orders,
+                isVirtualReturn: true,
+              });
+            }
+          }
+        }
+      });
+
+      // Ensure strict chronological sorting
+      expandedTransactions.sort((a, b) => new Date(a.txn_time).getTime() - new Date(b.txn_time).getTime());
+
       setLedgerData({
         yarnItem: yarnItemData as YarnItem,
         currentStock,
-        transactions: normalisedTransactions,
+        transactions: expandedTransactions,
       });
     } catch (err: any) {
       setError(err.message || "Failed to load ledger data.");
@@ -137,20 +231,22 @@ export default function YarnLedgerPage() {
     }
   }
 
-  // Compute signed quantity for a transaction (store balance; DEPT_TO_ORDER is internal allocation only)
+  // Compute signed quantity for store balance
   function getSignedQuantity(txn: YarnTransaction): number {
+    if (txn.isVirtualReturn) {
+      return 0; // Does not affect main store stock balance
+    }
     if (txn.transaction_type === "RECEIPT" || txn.transaction_type === "RETURN") {
       return txn.quantity;
     } else if (txn.transaction_type === "ISSUE" || txn.transaction_type === "SCRAP") {
       return -txn.quantity;
     } else if (txn.transaction_type === "ADJUSTMENT") {
-      return txn.quantity; // Can be positive or negative
+      return txn.quantity; 
     }
-    // DEPT_TO_ORDER does not change store stock
     return 0;
   }
 
-  // Compute running balance
+  // Compute running balances & department on-hand balances
   const transactionsWithBalance = useMemo(() => {
     if (!ledgerData.transactions) return [];
 
@@ -159,11 +255,15 @@ export default function YarnLedgerPage() {
     return ledgerData.transactions.map((txn) => {
       const signedQty = getSignedQuantity(txn);
       runningBalance += signedQty;
+
       if (txn.transaction_type === "ISSUE") {
         deptRunningBalance += txn.quantity;
       } else if (txn.transaction_type === "DEPT_TO_ORDER") {
         deptRunningBalance -= txn.quantity;
+      } else if (txn.transaction_type === "RETURN" && txn.isVirtualReturn) {
+        deptRunningBalance += txn.quantity;
       }
+
       return {
         ...txn,
         signedQuantity: signedQty,
@@ -173,7 +273,7 @@ export default function YarnLedgerPage() {
     });
   }, [ledgerData.transactions]);
 
-  // Filter transactions by date range (for both on-screen and PDF)
+  // Filter transactions by date range
   const transactionsInDateRange = useMemo(() => {
     if (!dateFrom && !dateTo) return transactionsWithBalance;
     return transactionsWithBalance.filter((t) =>
@@ -181,7 +281,7 @@ export default function YarnLedgerPage() {
     );
   }, [transactionsWithBalance, dateFrom, dateTo]);
 
-  // Filter transactions by type (applied after date filter)
+  // Filter transactions by type
   const filteredTransactions = useMemo(() => {
     if (typeFilter === "ALL") return transactionsInDateRange;
     return transactionsInDateRange.filter((txn) => txn.transaction_type === typeFilter);
@@ -208,7 +308,6 @@ export default function YarnLedgerPage() {
       };
 
   const ledgerRows: LedgerRow[] = useMemo(() => {
-    // When filtering by type, just show the filtered transactions without month summaries
     if (typeFilter !== "ALL") {
       return filteredTransactions.map((txn) => ({
         kind: "transaction" as const,
@@ -254,7 +353,6 @@ export default function YarnLedgerPage() {
       const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
       if (monthKey !== currentMonthKey) {
-        // Close previous month
         if (currentMonthKey !== null) {
           pushFooter(currentMonthKey);
         }
@@ -310,47 +408,31 @@ export default function YarnLedgerPage() {
     if (!ledgerData.yarnItem) return;
     setIsGeneratingPdf(true);
     try {
+      // Overhauled to LANDSCAPE layout for a clean, non-cramped table printout
       const doc = new jsPDF({
-        orientation: "portrait",
+        orientation: "landscape",
         unit: "mm",
         format: "a4",
       });
 
       const pageWidth = doc.internal.pageSize.getWidth();
-      const marginLeft = 15;
-      const marginRight = 15;
-      const marginTop = 15;
-      const marginBottom = 20;
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginLeft = 12;
+      const marginRight = 12;
+      const marginTop = 12;
+      const marginBottom = 15;
 
       const title = "Yarn Transaction Ledger";
 
+      // Header Branding
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(14);
-      doc.text(title, pageWidth / 2, marginTop, { align: "center" });
+      doc.setFontSize(16);
+      doc.setTextColor(15, 118, 110);
+      doc.text(title, marginLeft, marginTop + 4);
 
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-
-      const item = ledgerData.yarnItem;
-      let infoY = marginTop + 8;
-
-      doc.text(`Item: ${item.name}`, marginLeft, infoY);
-      infoY += 5;
-      if (item.denier) {
-        doc.text(`Denier: ${item.denier}D`, marginLeft, infoY);
-        infoY += 5;
-      }
-      if (item.material) {
-        doc.text(`Material: ${item.material}`, marginLeft, infoY);
-        infoY += 5;
-      }
-      doc.text(
-        `Current Stock: ${ledgerData.currentStock.toFixed(3)} ${item.uom}`,
-        marginLeft,
-        infoY,
-      );
-      infoY += 6;
-
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
       const generatedAt = new Date().toLocaleString("en-ZA", {
         year: "numeric",
         month: "short",
@@ -358,132 +440,130 @@ export default function YarnLedgerPage() {
         hour: "2-digit",
         minute: "2-digit",
       });
-      doc.setFontSize(9);
-      doc.text(`Generated: ${generatedAt}`, marginLeft, infoY);
-      if (dateFrom || dateTo) {
-        infoY += 5;
-        doc.text(`Date range: ${dateFrom || "…"} to ${dateTo || "…"}`, marginLeft, infoY);
-        infoY += 5;
-      }
-      infoY += 2;
+      doc.text(`Generated: ${generatedAt}`, pageWidth - marginRight, marginTop + 4, { align: "right" });
 
-      const body = transactionsInDateRange.map((txn) => [
-        new Date(txn.txn_time).toLocaleString("en-ZA", {
+      // Item Meta Box
+      let infoY = marginTop + 10;
+      doc.setDrawColor(220, 225, 230);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(marginLeft, infoY, pageWidth - marginLeft - marginRight, 14, 2, 2, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`Item: ${ledgerData.yarnItem.name}`, marginLeft + 4, infoY + 9);
+
+      let metaX = marginLeft + 90;
+      if (ledgerData.yarnItem.denier) {
+        doc.setFont("helvetica", "normal");
+        doc.text(`Denier: ${ledgerData.yarnItem.denier}D`, metaX, infoY + 9);
+        metaX += 45;
+      }
+      if (ledgerData.yarnItem.material) {
+        doc.setFont("helvetica", "normal");
+        doc.text(`Material: ${ledgerData.yarnItem.material}`, metaX, infoY + 9);
+        metaX += 50;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 118, 110);
+      doc.text(
+        `Current Stock: ${ledgerData.currentStock.toFixed(3)} ${ledgerData.yarnItem.uom}`,
+        pageWidth - marginRight - 6,
+        infoY + 9,
+        { align: "right" }
+      );
+
+      if (dateFrom || dateTo) {
+        infoY += 4;
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Filter Date Range: ${dateFrom || "…"} to ${dateTo || "…"}`, marginLeft + 4, infoY + 14);
+      }
+
+      // Map Transactions to PDF table body rows
+      const body = transactionsInDateRange.map((txn) => {
+        const displayQty =
+          txn.transaction_type === "DEPT_TO_ORDER"
+            ? -txn.quantity
+            : txn.isVirtualReturn
+              ? txn.quantity
+              : txn.signedQuantity;
+        const isPositive = displayQty >= 0;
+
+        const dateStr = new Date(txn.txn_time).toLocaleString("en-ZA", {
           year: "numeric",
           month: "short",
           day: "numeric",
           hour: "2-digit",
           minute: "2-digit",
-        }),
-        txn.transaction_type,
-        `${txn.signedQuantity >= 0 ? "+" : ""}${txn.signedQuantity.toFixed(3)} ${txn.uom}`,
-        txn.source || "-",
-        txn.destination || "-",
-        txn.batch_no || "-",
-        txn.slip_no || "-",
-        `${txn.runningBalance.toFixed(3)} ${item.uom}`,
-      ]);
+        });
+
+        const typeStr = txn.isVirtualReturn ? "AUTO-RETURN" : txn.transaction_type;
+        const qtyStr = `${isPositive ? "+" : ""}${displayQty.toFixed(3)} ${txn.uom}`;
+        const bfoOrderText = txn.base_fabric_orders?.order_no 
+          ? `${txn.base_fabric_orders.order_no} (${txn.base_fabric_orders.status || "CLOSED"})`
+          : "-";
+
+        return [
+          dateStr,
+          typeStr,
+          qtyStr,
+          txn.source || "-",
+          txn.destination || "-",
+          txn.batch_no || "-",
+          bfoOrderText,
+          `${(txn as any).deptRunningBalance.toFixed(3)} ${ledgerData.yarnItem?.uom || "kg"}`,
+          `${txn.runningBalance.toFixed(3)} ${ledgerData.yarnItem?.uom || "kg"}`,
+        ];
+      });
 
       autoTable(doc, {
         head: [
           [
-            "Date/Time",
+            "Date / Time",
             "Type",
             "Quantity",
             "Source",
             "Destination",
-            "Batch",
-            "Slip No",
-            "Balance",
+            "Batch No",
+            "BFO Order",
+            "Dept on Hand",
+            "Store Balance",
           ],
         ],
         body,
-        startY: infoY + 4,
+        startY: infoY + 18,
         margin: {
           left: marginLeft,
           right: marginRight,
           top: marginTop,
           bottom: marginBottom,
         },
-        styles: { fontSize: 8, cellPadding: 1.5 },
+        styles: { fontSize: 8, cellPadding: 2, textColor: [30, 41, 59] },
         headStyles: {
           fillColor: [15, 118, 110],
           textColor: [255, 255, 255],
           fontStyle: "bold",
+          halign: "left",
         },
         columnStyles: {
-          2: { halign: "right" },
+          2: { halign: "right", fontStyle: "bold" },
           7: { halign: "right" },
+          8: { halign: "right", fontStyle: "bold" },
         },
         didDrawPage: (data: any) => {
           const pageNumber = data.pageNumber;
-          const pageHeight = doc.internal.pageSize.getHeight();
           doc.setFontSize(8);
-          doc.setTextColor(100, 100, 100);
-          doc.text(`Page ${pageNumber}`, marginLeft, pageHeight - 6);
-          doc.text(title, pageWidth - marginRight, pageHeight - 6, { align: "right" });
+          doc.setTextColor(150, 150, 150);
+          doc.text(`Page ${pageNumber}`, marginLeft, pageHeight - 8);
+          doc.text(
+            `Unica Textiles System — Yarn Ledger Report (${ledgerData.yarnItem?.name})`,
+            pageWidth - marginRight,
+            pageHeight - 8,
+            { align: "right" }
+          );
         },
       });
-
-      // Department allocations (DEPT_TO_ORDER) – separate table to show department activity
-      const deptAllocations = transactionsInDateRange.filter(
-        (txn) => txn.transaction_type === "DEPT_TO_ORDER",
-      );
-
-      if (deptAllocations.length > 0) {
-        const deptBody = deptAllocations.map((txn) => [
-          new Date(txn.txn_time).toLocaleString("en-ZA", {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          `${txn.quantity.toFixed(3)} ${txn.uom}`,
-          txn.destination || "-",
-          txn.batch_no || "-",
-          txn.slip_no || "-",
-          txn.notes || "-",
-        ]);
-
-        autoTable(doc, {
-          head: [
-            [
-              "Date/Time",
-              "Quantity from dept",
-              "Destination / Order",
-              "Batch",
-              "Slip No",
-              "Notes",
-            ],
-          ],
-          body: deptBody,
-          startY: ((doc as any).lastAutoTable?.finalY ?? infoY) + 8,
-          margin: {
-            left: marginLeft,
-            right: marginRight,
-            top: marginTop,
-            bottom: marginBottom,
-          },
-          styles: { fontSize: 8, cellPadding: 1.5 },
-          headStyles: {
-            fillColor: [249, 115, 22],
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-          },
-          columnStyles: {
-            1: { halign: "right" },
-          },
-          didDrawPage: (data: any) => {
-            const pageNumber = data.pageNumber;
-            const pageHeight = doc.internal.pageSize.getHeight();
-            doc.setFontSize(8);
-            doc.setTextColor(100, 100, 100);
-            doc.text(`Page ${pageNumber}`, marginLeft, pageHeight - 6);
-            doc.text(title, pageWidth - marginRight, pageHeight - 6, { align: "right" });
-          },
-        });
-      }
 
       doc.save(
         `yarn-ledger-${ledgerData.yarnItem.name.replace(/\s+/g, "-").toLowerCase()}-${new Date()
@@ -522,7 +602,6 @@ export default function YarnLedgerPage() {
 
   return (
     <div className="grid gap-4">
-      {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Transaction Ledger</h1>
@@ -547,7 +626,6 @@ export default function YarnLedgerPage() {
         </div>
       </div>
 
-      {/* Yarn Item Info Card */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -586,7 +664,6 @@ export default function YarnLedgerPage() {
         </div>
       </motion.section>
 
-      {/* Filters */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -639,7 +716,6 @@ export default function YarnLedgerPage() {
         </div>
       </motion.section>
 
-      {/* Batch Summary */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -653,8 +729,8 @@ export default function YarnLedgerPage() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className="px-4 py-3 text-left font-semibold text-slate-900">Batch No</th>
-                <th className="px-4 py-3 text-right font-semibold text-slate-900">
+                <th className="px-3 py-2.5 text-left font-semibold text-slate-900">Batch No</th>
+                <th className="px-3 py-2.5 text-right font-semibold text-slate-900">
                   On Hand ({ledgerData.yarnItem?.uom || "kg"})
                 </th>
               </tr>
@@ -662,8 +738,8 @@ export default function YarnLedgerPage() {
             <tbody>
               {batchSummaryRows.map((row) => (
                 <tr key={row.batch_no} className="border-b border-slate-100">
-                  <td className="px-4 py-3 text-slate-900 font-medium">{row.batch_no}</td>
-                  <td className="px-4 py-3 text-right text-slate-900">{row.qty.toFixed(3)}</td>
+                  <td className="px-3 py-2.5 text-slate-900 font-medium">{row.batch_no}</td>
+                  <td className="px-3 py-2.5 text-right text-slate-900">{row.qty.toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
@@ -671,7 +747,6 @@ export default function YarnLedgerPage() {
         )}
       </motion.section>
 
-      {/* Ledger Table */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -697,31 +772,19 @@ export default function YarnLedgerPage() {
                 : `No ${typeFilter} transactions found.`}
           </p>
         ) : (
-          <div className="min-w-full">
-            <table className="min-w-full text-sm">
+          <div className="w-full">
+            <table className="w-full text-sm text-left">
               <thead>
-                <tr className="border-b border-slate-200">
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                    Date/Time
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Type</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    Quantity
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">Source</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                    Destination
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                    Batch No
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                    BFO Order
-                  </th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                    Dept on hand (kg)
-                  </th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-900">Balance</th>
+                <tr className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-600">
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Date/Time</th>
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Type</th>
+                  <th className="px-3 py-2.5 font-semibold text-right whitespace-nowrap">Quantity</th>
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Source</th>
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Destination</th>
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Batch No</th>
+                  <th className="px-3 py-2.5 font-semibold whitespace-nowrap">BFO Order</th>
+                  <th className="px-3 py-2.5 font-semibold text-right whitespace-nowrap">Dept on hand</th>
+                  <th className="px-3 py-2.5 font-semibold text-right whitespace-nowrap">Balance</th>
                 </tr>
               </thead>
               <tbody>
@@ -730,8 +793,8 @@ export default function YarnLedgerPage() {
                     return (
                       <tr key={row.id} className="bg-slate-50">
                         <td
-                          className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
-                          colSpan={8}
+                          className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
+                          colSpan={9}
                         >
                           Opening balance for {row.monthLabel}:{" "}
                           <span className="font-bold text-slate-900">
@@ -746,8 +809,8 @@ export default function YarnLedgerPage() {
                     return (
                       <tr key={row.id} className="bg-slate-50 border-t border-slate-200">
                         <td
-                          className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 text-right"
-                          colSpan={8}
+                          className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 text-right"
+                          colSpan={9}
                         >
                           Closing balance for {row.monthLabel}:{" "}
                           <span className="font-bold text-slate-900">
@@ -767,15 +830,23 @@ export default function YarnLedgerPage() {
                   const displayQuantity =
                     txn.transaction_type === "DEPT_TO_ORDER"
                       ? -txn.quantity
-                      : txn.signedQuantity;
+                      : txn.isVirtualReturn
+                        ? txn.quantity
+                        : txn.signedQuantity;
                   const isPositive = displayQuantity >= 0;
+                  const isFinishedBfo = 
+                    (txn.transaction_type === "DEPT_TO_ORDER" || txn.transaction_type === "ISSUE") &&
+                    (txn.base_fabric_orders?.status === "COMPLETED" || 
+                     txn.base_fabric_orders?.status === "CLOSED" || 
+                     txn.base_fabric_orders?.status === "CANCELLED");
+
                   return (
                     <tr
                       key={row.id}
-                      onClick={() => router.push(`/toolbox/yarn/transaction/${txn.id}`)}
-                      className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                      onClick={() => !txn.isVirtualReturn && router.push(`/toolbox/yarn/transaction/${txn.id}`)}
+                      className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${txn.isVirtualReturn ? "bg-emerald-50/40" : "cursor-pointer"}`}
                     >
-                      <td className="px-4 py-3 text-slate-600">
+                      <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap text-xs">
                         {new Date(txn.txn_time).toLocaleString("en-ZA", {
                           year: "numeric",
                           month: "short",
@@ -784,9 +855,9 @@ export default function YarnLedgerPage() {
                           minute: "2-digit",
                         })}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5 whitespace-nowrap">
                         <span
-                          className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                          className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                             txn.transaction_type === "RECEIPT" || txn.transaction_type === "RETURN"
                               ? "bg-green-100 text-green-800"
                               : txn.transaction_type === "ISSUE" || txn.transaction_type === "SCRAP"
@@ -796,33 +867,43 @@ export default function YarnLedgerPage() {
                                   : "bg-blue-100 text-blue-800"
                           }`}
                         >
-                          {txn.transaction_type}
+                          {txn.isVirtualReturn ? "AUTO-RETURN" : txn.transaction_type}
                         </span>
                         {txn.slip_no && (
-                          <span className="ml-2 text-xs text-slate-500">({txn.slip_no})</span>
+                          <span className="ml-1 text-[11px] text-slate-500">({txn.slip_no})</span>
                         )}
                       </td>
                       <td
-                        className={`px-4 py-3 text-right font-medium ${
+                        className={`px-3 py-2.5 text-right font-medium whitespace-nowrap ${
                           isPositive ? "text-green-700" : "text-red-700"
                         }`}
                       >
                         {isPositive ? "+" : "-"}
                         {Math.abs(displayQuantity).toFixed(3)} {txn.uom}
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{txn.source || "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{txn.destination || "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{txn.batch_no || "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">
+                      <td className="px-3 py-2.5 text-slate-600 truncate max-w-[100px]">{txn.source || "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600 truncate max-w-[100px]">{txn.destination || "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap text-xs">{txn.batch_no || "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap text-xs">
                         {txn.base_fabric_orders?.order_no || "-"}
+                        {isFinishedBfo && !txn.isVirtualReturn && (
+                          <span className="ml-1 text-[9px] bg-slate-200 text-slate-700 px-1 py-0.2 rounded font-medium">
+                            Closed
+                          </span>
+                        )}
+                        {txn.isVirtualReturn && (
+                          <span className="ml-1 text-[9px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-medium">
+                            Refund
+                          </span>
+                        )}
                       </td>
-                      <td className="px-4 py-3 text-right text-slate-900">
+                      <td className="px-3 py-2.5 text-right text-slate-900 whitespace-nowrap text-xs">
                         {(txn as any).deptRunningBalance !== undefined
                           ? (txn as any).deptRunningBalance.toFixed(3)
                           : "0.000"}{" "}
                         {ledgerData.yarnItem?.uom ?? txn.uom}
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      <td className="px-3 py-2.5 text-right font-semibold text-slate-900 whitespace-nowrap text-xs">
                         {txn.runningBalance.toFixed(3)} {ledgerData.yarnItem?.uom ?? txn.uom}
                       </td>
                     </tr>
@@ -836,4 +917,3 @@ export default function YarnLedgerPage() {
     </div>
   );
 }
-

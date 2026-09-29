@@ -37,7 +37,14 @@ export default function YarnStockPage() {
   useEffect(() => {
     async function fetchStock() {
       try {
-        const [stockResult, issuedResult, deptAllocResult, beamsResult, weftResult] = await Promise.all([
+        const [
+          stockResult,
+          issuedResult,
+          deptAllocResult,
+          beamsResult,
+          weftResult,
+          bfoResult,
+        ] = await Promise.all([
           supabaseBrowserClient
             .from("yarn_stock")
             .select(
@@ -55,9 +62,10 @@ export default function YarnStockPage() {
             .from("yarn_transactions")
             .select("yarn_item_id, quantity")
             .eq("transaction_type", "ISSUE"),
+          // Fetch dept allocations along with their base fabric order status
           supabaseBrowserClient
             .from("yarn_transactions")
-            .select("yarn_item_id, quantity")
+            .select("yarn_item_id, quantity, base_fabric_order_id, base_fabric_orders(status)")
             .eq("transaction_type", "DEPT_TO_ORDER"),
           supabaseBrowserClient
             .from("base_fabric_order_beams")
@@ -66,6 +74,9 @@ export default function YarnStockPage() {
             .from("base_fabric_order_weft")
             .select("yarn_item_id, kg_start, kg_end")
             .not("kg_end", "is", null),
+          supabaseBrowserClient
+            .from("base_fabric_orders")
+            .select("id, status"),
         ]);
 
         const { data, error } = stockResult;
@@ -76,6 +87,12 @@ export default function YarnStockPage() {
 
         if (error) throw error;
 
+        // Map BFO statuses for fast lookup
+        const bfoStatusMap = new Map<string, string>();
+        (bfoResult.data || []).forEach((bfo: any) => {
+          if (bfo?.id) bfoStatusMap.set(bfo.id, bfo.status);
+        });
+
         const issuedByItem: Record<string, number> = {};
         (issuedData || []).forEach((row: { yarn_item_id: string; quantity: number }) => {
           const id = row.yarn_item_id;
@@ -83,11 +100,20 @@ export default function YarnStockPage() {
           issuedByItem[id] = (issuedByItem[id] || 0) + qty;
         });
 
+        // ONLY count allocations belonging to active/running/planned orders (ignore completed/closed)
         const allocatedByItem: Record<string, number> = {};
-        (deptAllocData || []).forEach((row: { yarn_item_id: string; quantity: number }) => {
+        (deptAllocData || []).forEach((row: any) => {
           const id = row.yarn_item_id;
           const qty = Number(row.quantity || 0);
-          allocatedByItem[id] = (allocatedByItem[id] || 0) + qty;
+          const bfoId = row.base_fabric_order_id;
+          
+          // Check order status if linked, default to active if missing
+          const status = bfoId ? bfoStatusMap.get(bfoId) : "RUNNING";
+          const isFinished = status === "COMPLETED" || status === "CLOSED" || status === "CANCELLED";
+
+          if (!isFinished && id) {
+            allocatedByItem[id] = (allocatedByItem[id] || 0) + qty;
+          }
         });
 
         const consumedByItem: Record<string, number> = {};
@@ -111,11 +137,13 @@ export default function YarnStockPage() {
           const issued = issuedByItem[item.yarn_item_id] ?? 0;
           const consumed = consumedByItem[item.yarn_item_id] ?? 0;
           const withDept = Math.max(0, issued - consumed);
-          const allocatedTotal = allocatedByItem[item.yarn_item_id] ?? 0;
-          // Yarn currently allocated from department to orders but not yet consumed
-          const allocatedInDept = Math.max(0, allocatedTotal - consumed);
-          // Yarn physically in department that is not yet allocated to any order
+          const activeAllocatedTotal = allocatedByItem[item.yarn_item_id] ?? 0;
+          
+          // Yarn currently locked by active orders
+          const allocatedInDept = Math.min(withDept, Math.max(0, activeAllocatedTotal));
+          // Yarn physically in department that is free to use / re-allocate
           const unallocatedInDept = Math.max(0, withDept - allocatedInDept);
+
           return {
             ...item,
             stock_qty: Number(item.stock_qty || 0),
@@ -139,7 +167,6 @@ export default function YarnStockPage() {
         const itemsWithPricing = await Promise.all(
           processedData.map(async (item) => {
             try {
-              // Get RECEIPT and RETURN transactions with pricing
               const { data: receiptData } = await supabaseBrowserClient
                 .from("yarn_transactions")
                 .select("quantity, unit_price_zar")
@@ -148,7 +175,6 @@ export default function YarnStockPage() {
                 .not("unit_price_zar", "is", null);
 
               if (receiptData && receiptData.length > 0) {
-                // Calculate weighted average price
                 let totalQty = 0;
                 let totalCost = 0;
                 receiptData.forEach((txn: any) => {
@@ -225,7 +251,6 @@ export default function YarnStockPage() {
       const templateName = "Yarn Stock Report";
       let pageNumber = 1;
 
-      // ===== COVER PAGE =====
       let logoLoaded = false;
       try {
         const logoImg = new Image();
@@ -276,7 +301,6 @@ export default function YarnStockPage() {
       const totalUnallocatedInDept = stockItems.reduce((sum, item) => sum + (item.available_in_dept_qty ?? 0), 0);
       const totalValuation = stockItems.reduce((sum, item) => sum + (item.valuation_zar || 0), 0);
 
-      // Cover page: 2-column summary table spanning the page
       const summaryTableWidth = pageWidth - 2 * margin;
       const summaryStartY = titleY + 28;
       autoTable(doc, {
@@ -302,7 +326,6 @@ export default function YarnStockPage() {
       const confidentialY = Math.min((doc as any).lastAutoTable?.finalY ?? summaryStartY + 80, pageHeight - 25);
       doc.text("Confidential - For Internal Use Only", pageWidth / 2, confidentialY + 12, { align: "center" });
 
-      // ===== STOCK TABLE (landscape, full width) =====
       doc.addPage("a4", "landscape");
       pageNumber++;
       doc.setFontSize(16);
@@ -323,7 +346,6 @@ export default function YarnStockPage() {
       ]);
 
       const availableWidth = pageWidth - 2 * margin;
-      // Column width distribution (10 cols) so table fits page width without overflow
       const colWidths: Record<number, number> = {
         0: 38,
         1: 14,
@@ -367,11 +389,9 @@ export default function YarnStockPage() {
         alternateRowStyles: {
           fillColor: [249, 250, 251],
         },
-        // Quantities left-aligned to line up with headings
         columnStyles,
       });
 
-      // ===== VALUATION SUMMARY (landscape) =====
       doc.addPage("a4", "landscape");
       pageNumber++;
       doc.setFontSize(16);
@@ -391,7 +411,7 @@ export default function YarnStockPage() {
         .sort((a, b) => {
           const valA = parseFloat(a[4].replace("R ", "").replace(",", ""));
           const valB = parseFloat(b[4].replace("R ", "").replace(",", ""));
-          return valB - valA; // Sort descending by valuation
+          return valB - valA;
         });
 
       if (valuationData.length > 0) {
@@ -427,7 +447,6 @@ export default function YarnStockPage() {
           },
         });
 
-        // Add total at the end
         const finalY = (doc as any).lastAutoTable.finalY || 30;
         doc.setFontSize(10);
         doc.setFont("helvetica", "bold");
@@ -443,7 +462,6 @@ export default function YarnStockPage() {
         doc.text("No valuation data available (no pricing information found)", margin, 40);
       }
 
-      // Add footer to every page (template name left, Page X of Y right)
       const totalPages = (doc as any).getNumberOfPages?.() ?? (doc as any).internal?.getNumberOfPages?.() ?? 1;
       const templateLabel = `1. ${templateName}`;
       for (let i = 1; i <= totalPages; i++) {
@@ -465,7 +483,6 @@ export default function YarnStockPage() {
 
   return (
     <div className="grid gap-8">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Yarn Stock</h1>
@@ -490,7 +507,6 @@ export default function YarnStockPage() {
         </div>
       </div>
 
-      {/* Search */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -509,7 +525,6 @@ export default function YarnStockPage() {
         />
       </motion.section>
 
-      {/* Stock Table */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -616,4 +631,3 @@ export default function YarnStockPage() {
     </div>
   );
 }
-
