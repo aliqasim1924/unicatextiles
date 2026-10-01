@@ -10,6 +10,7 @@ import { filterBaseFabricRolls } from "@/lib/coating/filterBaseFabricRolls";
 
 const LOCATION_COATING = "COATING";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
+const STATUS_COATING_IN_PROGRESS = "COATING_IN_PROGRESS";
 
 interface AvailableRoll {
   id: string;
@@ -54,7 +55,6 @@ export default function NewCoatingBatchPage() {
 
   async function fetchCatalogData() {
     try {
-      // Fetch fabric types
       const { data: typesData, error: typesError } = await supabaseBrowserClient
         .from("fabric_types")
         .select("id, code, name")
@@ -63,7 +63,6 @@ export default function NewCoatingBatchPage() {
       if (typesError) throw typesError;
       setFabricTypes((typesData || []) as Array<{ id: string; code: string; name: string }>);
 
-      // Fetch all GSM options grouped by fabric_type_id
       const { data: gsmData, error: gsmError } = await supabaseBrowserClient
         .from("fabric_type_gsm_options")
         .select("id, fabric_type_id, gsm")
@@ -78,7 +77,6 @@ export default function NewCoatingBatchPage() {
       });
       setGsmOptions(gsmMap);
 
-      // Fetch all color options grouped by fabric_type_id
       const { data: colorData, error: colorError } = await supabaseBrowserClient
         .from("fabric_type_color_options")
         .select("id, fabric_type_id, color_name")
@@ -93,7 +91,6 @@ export default function NewCoatingBatchPage() {
       });
       setColorOptions(colorMap);
 
-      // Fetch all width options grouped by fabric_type_id
       const { data: widthData, error: widthError } = await supabaseBrowserClient
         .from("fabric_type_width_options")
         .select("id, fabric_type_id, width_mm")
@@ -187,7 +184,7 @@ export default function NewCoatingBatchPage() {
 
   const filteredRolls = useMemo(
     () => filterBaseFabricRolls(availableRolls, rollSearchQuery),
-    [availableRolls, rollSearchQuery],
+    [availableRolls, rollSearchQuery]
   );
 
   const allFilteredSelected =
@@ -236,7 +233,6 @@ export default function NewCoatingBatchPage() {
     setError(null);
     setSuccess(null);
 
-    // Validation
     if (!formData.fabric_type_id) {
       setError("Please select a fabric type");
       return;
@@ -254,18 +250,15 @@ export default function NewCoatingBatchPage() {
     setIsSubmitting(true);
 
     try {
-      // Get current user
       const {
         data: { user },
       } = await supabaseBrowserClient.auth.getUser();
 
-      // Resolve text values from catalog for backward compatibility
       const fabricType = fabricTypes.find((ft) => ft.id === formData.fabric_type_id);
       const colorOpt = colorOptions[formData.fabric_type_id]?.find((c) => c.id === formData.color_option_id);
       const gsmOpt = gsmOptions[formData.fabric_type_id]?.find((g) => g.id === formData.gsm_option_id);
       const widthOpt = widthOptions[formData.fabric_type_id]?.find((w) => w.id === formData.width_option_id);
 
-      // Create coating batch
       const { data: batch, error: batchError } = await supabaseBrowserClient
         .from("coating_batches")
         .insert({
@@ -273,7 +266,6 @@ export default function NewCoatingBatchPage() {
           gsm_option_id: formData.gsm_option_id || null,
           color_option_id: formData.color_option_id || null,
           width_option_id: formData.width_option_id || null,
-          // Backward compatibility: still store text fields
           coating_type: fabricType?.code || null,
           color: colorOpt?.color_name || null,
           gsm: gsmOpt?.gsm || null,
@@ -288,7 +280,6 @@ export default function NewCoatingBatchPage() {
       if (batchError) throw batchError;
       if (!batch) throw new Error("Failed to create batch");
 
-      // Create batch base rolls entries with allocated lengths
       const selectedRolls = availableRolls.filter((r) => selectedRollIds.has(r.id));
 
       if (selectedRolls.length === 0) {
@@ -324,6 +315,19 @@ export default function NewCoatingBatchPage() {
         .insert(batchBaseRolls);
 
       if (baseRollsError) throw baseRollsError;
+
+      // ----------------------------------------------------------------------
+      // FIX: Update base fabric roll statuses to COATING_IN_PROGRESS so they
+      // leave the available ready stock pool.
+      // ----------------------------------------------------------------------
+      const baseFabricRollIds = selectedRolls.map((r) => r.id);
+      const { error: rollStatusError } = await supabaseBrowserClient
+        .from("base_fabric_rolls")
+        .update({ status: STATUS_COATING_IN_PROGRESS })
+        .in("id", baseFabricRollIds);
+
+      if (rollStatusError) throw rollStatusError;
+      // ----------------------------------------------------------------------
 
       setSuccess(`Batch ${batch.batch_no} created successfully`);
       setTimeout(() => {
@@ -365,7 +369,6 @@ export default function NewCoatingBatchPage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Batch Header Form */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -484,7 +487,6 @@ export default function NewCoatingBatchPage() {
           </div>
         </motion.div>
 
-        {/* Available Rolls Table */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -625,7 +627,6 @@ export default function NewCoatingBatchPage() {
           )}
         </motion.div>
 
-        {/* Submit Button */}
         <div className="flex justify-end gap-4">
           <Button
             type="button"
@@ -643,4 +644,3 @@ export default function NewCoatingBatchPage() {
     </div>
   );
 }
-

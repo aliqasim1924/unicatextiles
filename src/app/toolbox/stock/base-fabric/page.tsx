@@ -9,18 +9,17 @@ import { Button } from "@/components/ui/Button";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const LOCATION_WEAVING = "WEAVING";
-const STATUS_AVAILABLE = "AVAILABLE";
-const STATUS_ISSUED = "ISSUED";
+const LOCATION_COATING = "COATING";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
-const STATUS_IN_TRANSIT = "IN_TRANSIT";
+const STATUS_ISSUED = "ISSUED";
 const STATUS_COATING_IN_PROGRESS = "COATING_IN_PROGRESS";
 
 interface BaseFabricRoll {
   id: string;
   qr_code: string | null;
   roll_no: string | null;
-  length_m: number;
+  length_m: number; // Raw length (used for history)
+  remaining_for_batches: number; // Effective stock length for in-stock view
   status: string;
   current_location: string;
   cut_at: string | null;
@@ -57,72 +56,78 @@ export default function BaseFabricStockPage() {
       setIsLoading(true);
       setError(null);
 
-      // Fetch in-stock rolls:
-      // - Manufactured at weaving (AVAILABLE)
-      // - Issued / in transit to coating (IN_TRANSIT)
-      // - Received at coating, ready to coat (READY_FOR_COATING)
-      // Rolls in coating batches (COATING_IN_PROGRESS) are excluded.
+      // 1. Fetch available in-stock rolls via the availability view
       const { data: inStockData, error: inStockError } = await supabaseBrowserClient
-        .from("base_fabric_rolls")
-        .select(
-          `
+        .from("base_fabric_rolls_available_for_coating")
+        .select(`
           id,
           qr_code,
           roll_no,
           length_m,
-          status,
-          current_location,
           cut_at,
-          actual_gsm,
-          gsm_change_reason,
-          base_fabric_orders:base_fabric_order_id (
-            order_no,
-            loom_no,
-            is_outsourced,
-            purchased_cost_per_m_zar,
-            base_fabric_items:base_fabric_item_id (
-              name,
-              gsm
-            )
-          )
-        `
-        )
-        .in("status", [STATUS_AVAILABLE, STATUS_IN_TRANSIT, STATUS_READY_FOR_COATING])
+          order_no,
+          loom_no,
+          fabric_name,
+          current_location,
+          status,
+          total_allocated_to_batches,
+          remaining_for_batches,
+          base_fabric_order_id
+        `)
+        .gt("remaining_for_batches", 0)
         .order("cut_at", { ascending: false });
 
       if (inStockError) throw inStockError;
 
-      // Fetch history rolls (consumed, dispatched, or in coating batches)
+      // Fetch history rolls (everything that is not a standard active coating roll)
       const { data: historyData, error: historyError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
-        .select(
-          `
-          id,
-          qr_code,
-          roll_no,
-          length_m,
-          status,
-          current_location,
-          cut_at,
-          actual_gsm,
-          gsm_change_reason,
-          base_fabric_orders:base_fabric_order_id (
-            order_no,
-            loom_no,
-            base_fabric_items:base_fabric_item_id (
-              name,
-              gsm
-            )
-          )
-        `
-        )
-        .in("status", [STATUS_ISSUED, STATUS_COATING_IN_PROGRESS])
+        .select(`
+  id,
+  qr_code,
+  roll_no,
+  length_m,
+  status,
+  current_location,
+  cut_at,
+  actual_gsm,
+  gsm_change_reason,
+  base_fabric_order_id,
+  base_fabric_orders:base_fabric_order_id (
+    order_no,
+    loom_no,
+    base_fabric_items:base_fabric_item_id (
+      name,
+      gsm
+    )
+  )
+`)
+        .not("status", "eq", STATUS_READY_FOR_COATING) // Exclude ready rolls that belong in stock
         .order("cut_at", { ascending: false })
-        .limit(500); // Limit history to recent 500 rolls
+        .limit(200);
 
       if (historyError) throw historyError;
 
-      const mapRolls = (data: any[]): BaseFabricRoll[] =>
+      const mapInStockRolls = (data: any[]): BaseFabricRoll[] =>
+        (data || []).map((row: any) => ({
+          id: row.id,
+          qr_code: row.qr_code,
+          roll_no: row.roll_no,
+          length_m: Number(row.length_m || 0),
+          remaining_for_batches: Number(row.remaining_for_batches ?? 0),
+          status: row.status || STATUS_READY_FOR_COATING,
+          current_location: row.current_location || LOCATION_COATING,
+          cut_at: row.cut_at,
+          order_no: row.order_no || null,
+          fabric_name: row.fabric_name || null,
+          effective_gsm: null,
+          gsm_change_reason: null,
+          loom_no: row.loom_no ? Number(row.loom_no) : null,
+          base_fabric_order_id: row.base_fabric_order_id || null,
+          is_outsourced: false,
+        }));
+
+      const mapHistoryRolls = (data: any[]): BaseFabricRoll[] =>
         (data || []).map((row: any) => {
           const order = Array.isArray(row.base_fabric_orders)
             ? row.base_fabric_orders[0]
@@ -133,52 +138,51 @@ export default function BaseFabricStockPage() {
               : order.base_fabric_items
             : null;
 
+          const len = Number(row.length_m || 0);
           return {
             id: row.id,
             qr_code: row.qr_code,
             roll_no: row.roll_no,
-            length_m: Number(row.length_m || 0),
+            length_m: len,
+            remaining_for_batches: len,
             status: row.status,
             current_location: row.current_location,
             cut_at: row.cut_at,
             order_no: order?.order_no || null,
             fabric_name: item?.name || null,
-            effective_gsm:
-              row.actual_gsm !== null && row.actual_gsm !== undefined
-                ? Number(row.actual_gsm)
-                : item?.gsm !== null && item?.gsm !== undefined
-                  ? Number(item.gsm)
-                  : null,
+            effective_gsm: row.actual_gsm ?? item?.gsm ?? null,
             gsm_change_reason: row.gsm_change_reason ?? null,
             loom_no: order?.loom_no || null,
             base_fabric_order_id: row.base_fabric_order_id || null,
-            is_outsourced: order?.is_outsourced ?? false,
-            purchased_cost_per_m_zar: order?.purchased_cost_per_m_zar ?? null,
           };
         });
 
-      const mappedInStock = mapRolls(inStockData || []);
-      
-      // Calculate cost per meter and valuation for each roll (outsourced = purchased cost; else yarn-based)
+      const mappedInStock = mapInStockRolls(inStockData || []);
+
+      // 3. Calculate valuations for in-stock rolls using remaining meters
       const rollsWithValuation = await Promise.all(
         mappedInStock.map(async (roll) => {
-          // Outsourced (purchased) base fabric: use purchased_cost_per_m_zar
-          if (roll.is_outsourced && roll.purchased_cost_per_m_zar != null && Number(roll.purchased_cost_per_m_zar) >= 0) {
-            const costPerM = Number(roll.purchased_cost_per_m_zar);
-            const valuation = roll.length_m * costPerM;
-            return {
-              ...roll,
-              yarn_cost_per_m: costPerM,
-              valuation_zar: valuation,
-            };
-          }
-
           if (!roll.base_fabric_order_id) {
             return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
           }
 
           try {
-            // Get yarn issues for this order (in-house production)
+            const { data: orderData } = await supabaseBrowserClient
+              .from("base_fabric_orders")
+              .select("is_outsourced, purchased_cost_per_m_zar")
+              .eq("id", roll.base_fabric_order_id)
+              .single();
+
+            if (orderData?.is_outsourced && orderData.purchased_cost_per_m_zar != null) {
+              const costPerM = Number(orderData.purchased_cost_per_m_zar);
+              return {
+                ...roll,
+                is_outsourced: true,
+                yarn_cost_per_m: costPerM,
+                valuation_zar: roll.remaining_for_batches * costPerM,
+              };
+            }
+
             const { data: yarnIssues } = await supabaseBrowserClient
               .from("yarn_transactions")
               .select("yarn_item_id, quantity")
@@ -189,8 +193,7 @@ export default function BaseFabricStockPage() {
               return { ...roll, yarn_cost_per_m: null, valuation_zar: 0 };
             }
 
-            // Get yarn receipt prices for weighted average
-            const yarnItemIds = [...new Set(yarnIssues.map((issue: any) => issue.yarn_item_id))];
+            const yarnItemIds = [...new Set(yarnIssues.map((i: any) => i.yarn_item_id))];
             const { data: yarnReceipts } = await supabaseBrowserClient
               .from("yarn_transactions")
               .select("yarn_item_id, quantity, unit_price_zar")
@@ -198,7 +201,6 @@ export default function BaseFabricStockPage() {
               .in("transaction_type", ["RECEIPT", "RETURN"])
               .not("unit_price_zar", "is", null);
 
-            // Calculate weighted average price per yarn item
             const avgPriceMap = new Map<string, { qty: number; cost: number }>();
             (yarnReceipts || []).forEach((txn: any) => {
               const existing = avgPriceMap.get(txn.yarn_item_id) || { qty: 0, cost: 0 };
@@ -212,19 +214,15 @@ export default function BaseFabricStockPage() {
 
             const avgUnitPriceByYarn = new Map<string, number>();
             avgPriceMap.forEach((val, key) => {
-              if (val.qty > 0) {
-                avgUnitPriceByYarn.set(key, val.cost / val.qty);
-              }
+              if (val.qty > 0) avgUnitPriceByYarn.set(key, val.cost / val.qty);
             });
 
-            // Calculate total yarn cost for the order
             let totalYarnCost = 0;
             yarnIssues.forEach((issue: any) => {
               const avgPrice = avgUnitPriceByYarn.get(issue.yarn_item_id) || 0;
               totalYarnCost += Number(issue.quantity || 0) * avgPrice;
             });
 
-            // Get total produced meters for the order
             const { data: orderRolls } = await supabaseBrowserClient
               .from("base_fabric_rolls")
               .select("length_m")
@@ -236,7 +234,7 @@ export default function BaseFabricStockPage() {
             );
 
             const yarnCostPerM = totalMeters > 0 ? totalYarnCost / totalMeters : null;
-            const valuation = yarnCostPerM ? roll.length_m * yarnCostPerM : 0;
+            const valuation = yarnCostPerM ? roll.remaining_for_batches * yarnCostPerM : 0;
 
             return {
               ...roll,
@@ -251,7 +249,7 @@ export default function BaseFabricStockPage() {
       );
 
       setInStockRolls(rollsWithValuation);
-      setHistoryRolls(mapRolls(historyData || []));
+      setHistoryRolls(mapHistoryRolls(historyData || []));
     } catch (err: any) {
       console.error("Error fetching base fabric stock:", err);
       setError(err.message || "Failed to load stock data.");
@@ -286,12 +284,11 @@ export default function BaseFabricStockPage() {
 
   const inStockTotals = useMemo(() => {
     const rollsCount = inStockRolls.length;
-    const metersTotal = inStockRolls.reduce((sum, roll) => sum + roll.length_m, 0);
+    const metersTotal = inStockRolls.reduce((sum, roll) => sum + roll.remaining_for_batches, 0);
     const totalValuation = inStockRolls.reduce((sum, roll) => sum + (roll.valuation_zar || 0), 0);
     return { rollsCount, metersTotal, totalValuation };
   }, [inStockRolls]);
 
-  // Group in-stock rolls by fabric name for summary view (uses filtered rolls so search applies)
   const summaryByFabric = useMemo(() => {
     const byFabric = new Map<
       string,
@@ -300,16 +297,17 @@ export default function BaseFabricStockPage() {
     filteredInStockRolls.forEach((roll) => {
       const name = roll.fabric_name || "Unknown";
       const existing = byFabric.get(name);
+      const rollMeters = roll.remaining_for_batches;
       const totalValuation = roll.valuation_zar ?? 0;
       if (existing) {
         existing.rolls.push(roll);
-        existing.totalMetres += roll.length_m;
+        existing.totalMetres += rollMeters;
         existing.totalValuation += totalValuation;
       } else {
         byFabric.set(name, {
           fabricName: name,
           rolls: [roll],
-          totalMetres: roll.length_m,
+          totalMetres: rollMeters,
           totalValuation,
         });
       }
@@ -332,45 +330,14 @@ export default function BaseFabricStockPage() {
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 20;
       const templateName = "Base Fabric Stock Report";
-      let pageNumber = 1;
 
-      // ===== COVER PAGE =====
-      let logoLoaded = false;
-      try {
-        const logoImg = new Image();
-        logoImg.crossOrigin = "anonymous";
-        logoImg.src = "/Logo.png";
-        
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            logoImg.onload = () => {
-              try {
-                const logoWidth = 60;
-                const logoHeight = (logoImg.height / logoImg.width) * logoWidth;
-                const logoX = (pageWidth - logoWidth) / 2;
-                doc.addImage(logoImg, "PNG", logoX, 30, logoWidth, logoHeight);
-                logoLoaded = true;
-                resolve();
-              } catch (err) {
-                resolve();
-              }
-            };
-            logoImg.onerror = () => resolve();
-          }),
-          new Promise<void>((resolve) => setTimeout(() => resolve(), 1500)),
-        ]);
-      } catch (err) {
-        console.warn("Logo loading error:", err);
-      }
-
-      const titleY = logoLoaded ? 100 : 60;
       doc.setFontSize(24);
       doc.setFont("helvetica", "bold");
-      doc.text("UNICA TEXTILES", pageWidth / 2, titleY, { align: "center" });
-      
+      doc.text("UNICA TEXTILES", pageWidth / 2, 60, { align: "center" });
+
       doc.setFontSize(16);
       doc.setFont("helvetica", "normal");
-      doc.text("Base Fabric Stock Report", pageWidth / 2, titleY + 15, { align: "center" });
+      doc.text("Base Fabric Stock Report", pageWidth / 2, 75, { align: "center" });
 
       doc.setFontSize(12);
       const reportDate = new Date().toLocaleDateString("en-ZA", {
@@ -378,12 +345,10 @@ export default function BaseFabricStockPage() {
         month: "long",
         day: "numeric",
       });
-      const metadataY = titleY + 35;
-      doc.text(`Generated: ${reportDate}`, pageWidth / 2, metadataY, { align: "center" });
-      
-      doc.text(`Total Rolls: ${inStockTotals.rollsCount}`, pageWidth / 2, metadataY + 15, { align: "center" });
-      doc.text(`Total Meters: ${inStockTotals.metersTotal.toFixed(3)} m`, pageWidth / 2, metadataY + 30, { align: "center" });
-      doc.text(`Total Valuation: R ${inStockTotals.totalValuation.toFixed(2)}`, pageWidth / 2, metadataY + 45, { align: "center" });
+      doc.text(`Generated: ${reportDate}`, pageWidth / 2, 95, { align: "center" });
+      doc.text(`Total Available Rolls: ${inStockTotals.rollsCount}`, pageWidth / 2, 110, { align: "center" });
+      doc.text(`Total Remaining Meters: ${inStockTotals.metersTotal.toFixed(3)} m`, pageWidth / 2, 125, { align: "center" });
+      doc.text(`Total Valuation: R ${inStockTotals.totalValuation.toFixed(2)}`, pageWidth / 2, 140, { align: "center" });
 
       doc.setFontSize(10);
       doc.setTextColor(128, 128, 128);
@@ -391,7 +356,6 @@ export default function BaseFabricStockPage() {
 
       // ===== SUMMARY BY FABRIC =====
       doc.addPage();
-      pageNumber++;
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(0, 0, 0);
@@ -423,140 +387,7 @@ export default function BaseFabricStockPage() {
           2: { halign: "right" },
           3: { halign: "right" },
         },
-        didDrawPage: function (data: any) {
-          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
-          if (currentPage > 1) {
-            doc.setFontSize(8);
-            doc.setTextColor(100, 100, 100);
-            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
-            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
-          }
-        },
       });
-
-      // ===== STOCK TABLE (ROLL DETAIL) =====
-      doc.addPage();
-      pageNumber++;
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(0, 0, 0);
-      doc.text("Stock Overview (Roll Detail)", margin, 20);
-
-      const tableData = inStockRolls.map((roll) => [
-        roll.roll_no || roll.qr_code || "N/A",
-        roll.fabric_name || "-",
-        roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "-",
-        roll.order_no || "-",
-        roll.loom_no?.toString() || "-",
-        roll.length_m.toFixed(3),
-        roll.yarn_cost_per_m && roll.yarn_cost_per_m > 0 ? `R ${roll.yarn_cost_per_m.toFixed(4)}` : "-",
-        roll.valuation_zar && roll.valuation_zar > 0 ? `R ${roll.valuation_zar.toFixed(2)}` : "-",
-      ]);
-
-      const availableWidth = pageWidth - 2 * margin;
-      autoTable(doc, {
-        head: [[
-          "Roll No",
-          "Fabric Name",
-          "GSM",
-          "Order No",
-          "Loom",
-          "Length (m)",
-          "Cost/m (ZAR)",
-          "Valuation (ZAR)",
-        ]],
-        body: tableData,
-        startY: 30,
-        margin: { left: margin, right: margin },
-        styles: { fontSize: 8 },
-        headStyles: {
-          fillColor: [16, 185, 129],
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-        },
-        alternateRowStyles: {
-          fillColor: [249, 250, 251],
-        },
-        columnStyles: {
-          5: { halign: "right" },
-          6: { halign: "right" },
-          7: { halign: "right" },
-        },
-        didDrawPage: function (data: any) {
-          const currentPage = data.pageNumber || doc.internal.pages.length - 1;
-          if (currentPage > 1) {
-            doc.setFontSize(8);
-            doc.setTextColor(100, 100, 100);
-            doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
-            doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
-          }
-        },
-      });
-
-      // ===== VALUATION SUMMARY =====
-      const rollsWithValuation = inStockRolls.filter((r) => r.valuation_zar && r.valuation_zar > 0);
-      if (rollsWithValuation.length > 0) {
-        doc.addPage();
-        pageNumber++;
-        doc.setFontSize(16);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0, 0, 0);
-        doc.text("Valuation Summary", margin, 20);
-
-        const valuationData = rollsWithValuation
-          .map((roll) => [
-            roll.roll_no || roll.qr_code || "N/A",
-            roll.fabric_name || "-",
-            roll.length_m.toFixed(3),
-            `R ${(roll.yarn_cost_per_m || 0).toFixed(4)}`,
-            `R ${(roll.valuation_zar || 0).toFixed(2)}`,
-          ])
-          .sort((a, b) => {
-            const valA = parseFloat(a[4].replace("R ", "").replace(",", ""));
-            const valB = parseFloat(b[4].replace("R ", "").replace(",", ""));
-            return valB - valA;
-          });
-
-        autoTable(doc, {
-          head: [["Roll No", "Fabric Name", "Length (m)", "Cost/m (ZAR)", "Total Valuation (ZAR)"]],
-          body: valuationData,
-          startY: 30,
-          margin: { left: margin, right: margin },
-          styles: { fontSize: 8 },
-          headStyles: {
-            fillColor: [16, 185, 129],
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-          },
-          alternateRowStyles: {
-            fillColor: [249, 250, 251],
-          },
-          columnStyles: {
-            2: { halign: "right" },
-            3: { halign: "right" },
-            4: { halign: "right" },
-          },
-          didDrawPage: function (data: any) {
-            const currentPage = data.pageNumber || doc.internal.pages.length - 1;
-            if (currentPage > 1) {
-              doc.setFontSize(8);
-              doc.setTextColor(100, 100, 100);
-              doc.text(`Page ${currentPage}`, margin, pageHeight - 10);
-              doc.text(templateName, pageWidth - margin, pageHeight - 10, { align: "right" });
-            }
-          },
-        });
-
-        const finalY = (doc as any).lastAutoTable.finalY || 30;
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.text(
-          `Grand Total Valuation: R ${inStockTotals.totalValuation.toFixed(2)}`,
-          pageWidth - margin,
-          finalY + 10,
-          { align: "right" }
-        );
-      }
 
       doc.save(`base-fabric-stock-report-${new Date().toISOString().split("T")[0]}.pdf`);
     } catch (err: any) {
@@ -574,7 +405,7 @@ export default function BaseFabricStockPage() {
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Base Fabric Stock</h1>
           <p className="mt-1 text-slate-600">
-            View available rolls and access QR codes. History shows consumed/dispatched rolls.
+            View available inventory based on remaining batch quantities.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -596,7 +427,7 @@ export default function BaseFabricStockPage() {
         </div>
       </div>
 
-      {/* Summary Card */}
+      {/* Summary Cards */}
       {activeTab === "inStock" && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
@@ -604,13 +435,13 @@ export default function BaseFabricStockPage() {
           transition={{ duration: 0.3 }}
           className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
         >
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-medium text-slate-500">Total Rolls in Stock</p>
+              <p className="text-xs font-medium text-slate-500">Available Rolls</p>
               <p className="text-2xl font-semibold text-slate-900">{inStockTotals.rollsCount}</p>
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-medium text-slate-500">Total Meters</p>
+              <p className="text-xs font-medium text-slate-500">Total Remaining Meters</p>
               <p className="text-2xl font-semibold text-slate-900">
                 {inStockTotals.metersTotal.toFixed(3)} m
               </p>
@@ -639,11 +470,10 @@ export default function BaseFabricStockPage() {
                 setActiveTab("inStock");
                 setSelectedRoll(null);
               }}
-              className={`px-4 py-2 text-sm font-semibold transition-colors ${
-                activeTab === "inStock"
-                  ? "border-b-2 border-teal-700 text-teal-700"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
+              className={`px-4 py-2 text-sm font-semibold transition-colors ${activeTab === "inStock"
+                ? "border-b-2 border-teal-700 text-teal-700"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
             >
               In Stock ({inStockRolls.length})
             </button>
@@ -652,11 +482,10 @@ export default function BaseFabricStockPage() {
                 setActiveTab("history");
                 setSelectedRoll(null);
               }}
-              className={`px-4 py-2 text-sm font-semibold transition-colors ${
-                activeTab === "history"
-                  ? "border-b-2 border-teal-700 text-teal-700"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
+              className={`px-4 py-2 text-sm font-semibold transition-colors ${activeTab === "history"
+                ? "border-b-2 border-teal-700 text-teal-700"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
             >
               History ({historyRolls.length})
             </button>
@@ -705,22 +534,20 @@ export default function BaseFabricStockPage() {
                       <button
                         type="button"
                         onClick={() => setViewMode("summary")}
-                        className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                          viewMode === "summary"
-                            ? "bg-teal-700 text-white"
-                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                        }`}
+                        className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${viewMode === "summary"
+                          ? "bg-teal-700 text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          }`}
                       >
                         Summary by fabric
                       </button>
                       <button
                         type="button"
                         onClick={() => setViewMode("detail")}
-                        className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                          viewMode === "detail"
-                            ? "bg-teal-700 text-white"
-                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                        }`}
+                        className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${viewMode === "detail"
+                          ? "bg-teal-700 text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          }`}
                       >
                         All rolls
                       </button>
@@ -734,7 +561,7 @@ export default function BaseFabricStockPage() {
                               <th className="px-4 py-3 w-8"></th>
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric name</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Rolls</th>
-                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Total (m)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Remaining (m)</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Valuation (ZAR)</th>
                             </tr>
                           </thead>
@@ -764,8 +591,7 @@ export default function BaseFabricStockPage() {
                                             <tr className="border-b border-slate-200">
                                               <th className="px-3 py-2 text-left font-semibold text-slate-700">Roll No</th>
                                               <th className="px-3 py-2 text-left font-semibold text-slate-700">Order No</th>
-                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">GSM</th>
-                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">Length (m)</th>
+                                              <th className="px-3 py-2 text-right font-semibold text-slate-700">Remaining (m)</th>
                                               <th className="px-3 py-2 text-right font-semibold text-slate-700">Cost/m (ZAR)</th>
                                               <th className="px-3 py-2 text-right font-semibold text-slate-700">Valuation (ZAR)</th>
                                               <th className="px-3 py-2 text-left font-semibold text-slate-700">Actions</th>
@@ -776,10 +602,7 @@ export default function BaseFabricStockPage() {
                                               <tr key={roll.id} className="border-b border-slate-100">
                                                 <td className="px-3 py-2 font-medium text-slate-900">{roll.roll_no || "—"}</td>
                                                 <td className="px-3 py-2 text-slate-600">{roll.order_no || "—"}</td>
-                                                <td className="px-3 py-2 text-right text-slate-900">
-                                                  {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
-                                                </td>
-                                                <td className="px-3 py-2 text-right text-slate-900">{roll.length_m.toFixed(3)}</td>
+                                                <td className="px-3 py-2 text-right text-slate-900">{roll.remaining_for_batches.toFixed(3)}</td>
                                                 <td className="px-3 py-2 text-right text-slate-900">
                                                   {roll.yarn_cost_per_m != null ? `R ${Number(roll.yarn_cost_per_m).toFixed(2)}` : "—"}
                                                 </td>
@@ -820,8 +643,7 @@ export default function BaseFabricStockPage() {
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric Name</th>
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Order No</th>
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Loom</th>
-                              <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
-                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
+                              <th className="px-4 py-3 text-right font-semibold text-slate-900">Remaining (m)</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Cost/m (ZAR)</th>
                               <th className="px-4 py-3 text-right font-semibold text-slate-900">Valuation (ZAR)</th>
                               <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
@@ -835,10 +657,7 @@ export default function BaseFabricStockPage() {
                                 <td className="px-4 py-3 text-slate-600">{roll.fabric_name || "—"}</td>
                                 <td className="px-4 py-3 text-slate-600">{roll.order_no || "—"}</td>
                                 <td className="px-4 py-3 text-slate-600">{roll.loom_no ? `Loom ${roll.loom_no}` : "—"}</td>
-                                <td className="px-4 py-3 text-right text-slate-900">
-                                  {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
-                                </td>
-                                <td className="px-4 py-3 text-right font-medium text-slate-900">{roll.length_m.toFixed(3)}</td>
+                                <td className="px-4 py-3 text-right font-medium text-slate-900">{roll.remaining_for_batches.toFixed(3)}</td>
                                 <td className="px-4 py-3 text-right text-slate-900">
                                   {roll.yarn_cost_per_m != null ? `R ${Number(roll.yarn_cost_per_m).toFixed(2)}` : "—"}
                                 </td>
@@ -872,9 +691,7 @@ export default function BaseFabricStockPage() {
                 {filteredHistoryRolls.length === 0 ? (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-8 text-center">
                     <p className="text-slate-600">
-                      {searchQuery
-                        ? "No rolls match your search."
-                        : "No history records found."}
+                      {searchQuery ? "No rolls match your search." : "No history records found."}
                     </p>
                   </div>
                 ) : (
@@ -882,75 +699,35 @@ export default function BaseFabricStockPage() {
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50">
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Roll No
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            QR Code
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Fabric Name
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Order No
-                          </th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                            GSM
-                          </th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-900">
-                            Length (m)
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Status
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Location
-                          </th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-900">
-                            Actions
-                          </th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Roll No</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">QR Code</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Fabric Name</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Order No</th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">GSM</th>
+                          <th className="px-4 py-3 text-right font-semibold text-slate-900">Length (m)</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Status</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Location</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-900">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredHistoryRolls.map((roll) => (
-                          <tr
-                            key={roll.id}
-                            className="border-b border-slate-100 hover:bg-slate-50"
-                          >
-                            <td className="px-4 py-3 font-medium text-slate-900">
-                              {roll.roll_no || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.qr_code || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.fabric_name || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.order_no || "—"}
-                            </td>
+                          <tr key={roll.id} className="border-b border-slate-100 hover:bg-slate-50">
+                            <td className="px-4 py-3 font-medium text-slate-900">{roll.roll_no || "—"}</td>
+                            <td className="px-4 py-3 text-slate-600">{roll.qr_code || "—"}</td>
+                            <td className="px-4 py-3 text-slate-600">{roll.fabric_name || "—"}</td>
+                            <td className="px-4 py-3 text-slate-600">{roll.order_no || "—"}</td>
                             <td className="px-4 py-3 text-right text-slate-900">
                               {roll.effective_gsm != null ? roll.effective_gsm.toFixed(2) : "—"}
                             </td>
-                            <td className="px-4 py-3 text-right font-medium text-slate-900">
-                              {roll.length_m.toFixed(3)}
-                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-900">{roll.length_m.toFixed(3)}</td>
                             <td className="px-4 py-3 text-slate-600">
-                              <span
-                                className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${
-                                  roll.status === STATUS_ISSUED
-                                    ? "bg-orange-100 text-orange-700"
-                                    : roll.status === STATUS_READY_FOR_COATING
-                                    ? "bg-blue-100 text-blue-700"
-                                    : "bg-slate-100 text-slate-700"
-                                }`}
-                              >
+                              <span className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${roll.status === STATUS_ISSUED ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700"
+                                }`}>
                                 {roll.status.replace(/_/g, " ")}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {roll.current_location.replace(/_/g, " ")}
-                            </td>
+                            <td className="px-4 py-3 text-slate-600">{roll.current_location.replace(/_/g, " ")}</td>
                             <td className="px-4 py-3">
                               {roll.qr_code && (
                                 <button
@@ -989,12 +766,7 @@ export default function BaseFabricStockPage() {
           >
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-slate-900">QR Code</h3>
-              <button
-                onClick={() => setSelectedRoll(null)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                ✕
-              </button>
+              <button onClick={() => setSelectedRoll(null)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <div className="mb-4 text-center">
               {selectedRoll.qr_code && (
@@ -1002,30 +774,17 @@ export default function BaseFabricStockPage() {
                   <QRCode value={selectedRoll.qr_code} size={200} />
                 </div>
               )}
-              <div className="space-y-2 text-sm">
-                <p className="font-medium text-slate-900">
-                  Roll No: {selectedRoll.roll_no || "—"}
-                </p>
-                <b><p className="text-slate-600">Loom Number: {selectedRoll.loom_no || "—"}</p></b>
+              <div className="space-y-2 text-sm text-left">
+                <p className="font-medium text-slate-900">Roll No: {selectedRoll.roll_no || "—"}</p>
                 <p className="text-slate-600">Fabric: {selectedRoll.fabric_name || "—"}</p>
-                <p className="text-slate-600">
-                  GSM: {selectedRoll.effective_gsm != null ? selectedRoll.effective_gsm.toFixed(2) : "—"}
-                </p>
-                <p className="text-slate-600">Length: {selectedRoll.length_m.toFixed(3)} m</p>
+                <p className="text-slate-600">Remaining Length: {selectedRoll.remaining_for_batches.toFixed(3)} m</p>
               </div>
             </div>
             <div className="flex gap-2">
-              <Link
-                href={`/toolbox/qr/print?rollIds=${selectedRoll.id}&type=base_fabric`}
-                className="flex-1"
-              >
-                <Button variant="primary" className="w-full">
-                  Print QR Code
-                </Button>
+              <Link href={`/toolbox/qr/print?rollIds=${selectedRoll.id}&type=base_fabric`} className="flex-1">
+                <Button variant="primary" className="w-full">Print QR Code</Button>
               </Link>
-              <Button variant="secondary" onClick={() => setSelectedRoll(null)} className="flex-1">
-                Close
-              </Button>
+              <Button variant="secondary" onClick={() => setSelectedRoll(null)} className="flex-1">Close</Button>
             </div>
           </motion.div>
         </motion.div>
