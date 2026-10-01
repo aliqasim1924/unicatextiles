@@ -186,14 +186,14 @@ export default function BaseFabricStocktakeDetailPage() {
           ...row,
           base_fabric_rolls: roll
             ? {
-                ...roll,
-                base_fabric_orders: order
-                  ? {
-                      ...order,
-                      base_fabric_items: item,
-                    }
-                  : null,
-              }
+              ...roll,
+              base_fabric_orders: order
+                ? {
+                  ...order,
+                  base_fabric_items: item,
+                }
+                : null,
+            }
             : null,
         };
       }) as Line[];
@@ -212,14 +212,25 @@ export default function BaseFabricStocktakeDetailPage() {
 
   async function generateLinesFromCurrentStock(currentSession: Session | null) {
     try {
-      const { data: stockData, error: stockError } = await supabaseBrowserClient
+      // 1. Fetch IDs of base fabric rolls that are already allocated to any coating batch
+      const { data: allocatedRolls, error: allocatedError } = await supabaseBrowserClient
+        .from("coating_batch_base_rolls")
+        .select("base_fabric_roll_id");
+
+      if (allocatedError) throw allocatedError;
+
+      const allocatedIds = (allocatedRolls as any[])?.map((r) => r.base_fabric_roll_id) || [];
+
+      // 2. Fetch rolls physically in WEAVING or COATING, excluding those already allocated
+      let query = supabaseBrowserClient
         .from("base_fabric_rolls")
-        .select(
-          `
+        .select(`
           id,
           roll_no,
           qr_code,
           length_m,
+          current_location,
+          status,
           base_fabric_orders:base_fabric_order_id (
             order_no,
             loom_no,
@@ -227,48 +238,40 @@ export default function BaseFabricStocktakeDetailPage() {
               name
             )
           )
-        `
-        )
-        // Base fabric stock on hand:
-        // - Manufactured at weaving (AVAILABLE at WEAVING)
-        // - Issued / in transit to coating (IN_TRANSIT at COATING)
-        // - Received at coating, ready to coat (READY_FOR_COATING at COATING)
-        .or(
-          `and(current_location.eq.${LOCATION_WEAVING},status.eq.${STATUS_AVAILABLE}),` +
-            `and(current_location.eq.${LOCATION_COATING},status.eq.${STATUS_IN_TRANSIT}),` +
-            `and(current_location.eq.${LOCATION_COATING},status.eq.${STATUS_READY_FOR_COATING})`
-        )
+        `)
+        .in("current_location", ["WEAVING", "COATING"])
+        .gt("length_m", 0)
         .order("cut_at", { ascending: false });
 
+      // If there are allocated rolls, exclude them dynamically
+      if (allocatedIds.length > 0) {
+        query = query.not("id", "in", `(${allocatedIds.join(",")})`);
+      }
+
+      const { data: stockData, error: stockError } = await query;
       if (stockError) throw stockError;
 
-      const rollRows: RollRow[] =
-        (stockData as any[])?.map((row) => {
-          const order = Array.isArray(row.base_fabric_orders)
-            ? row.base_fabric_orders[0]
-            : row.base_fabric_orders;
-          const item = order?.base_fabric_items
-            ? Array.isArray(order.base_fabric_items)
-              ? order.base_fabric_items[0]
-              : order.base_fabric_items
-            : null;
+      const rollRows: RollRow[] = (stockData as any[])?.map((row) => {
+        const order = Array.isArray(row.base_fabric_orders) ? row.base_fabric_orders[0] : row.base_fabric_orders;
+        const item = order?.base_fabric_items 
+          ? (Array.isArray(order.base_fabric_items) ? order.base_fabric_items[0] : order.base_fabric_items) 
+          : null;
 
-          return {
-            id: row.id,
-            roll_no: row.roll_no,
-            qr_code: row.qr_code,
-            length_m: Number(row.length_m || 0),
-            base_fabric_orders: order
-              ? {
-                  order_no: order.order_no || null,
-                  loom_no: order.loom_no || null,
-                  base_fabric_items: item || null,
-                }
-              : null,
-          };
-        }) || [];
+        return {
+          id: row.id,
+          roll_no: row.roll_no,
+          qr_code: row.qr_code,
+          length_m: Number(row.length_m || 0),
+          base_fabric_orders: order ? {
+            order_no: order.order_no || null,
+            loom_no: order.loom_no || null,
+            base_fabric_items: item || null
+          } : null
+        };
+      }) || [];
 
       if (rollRows.length === 0) {
+        setLines([]);
         return;
       }
 
@@ -285,10 +288,10 @@ export default function BaseFabricStocktakeDetailPage() {
         .upsert(payload, { onConflict: "session_id,base_fabric_roll_id" });
       if (upsertError) throw upsertError;
 
+      // Fetch lines with relations to render table view correctly
       const { data: linesData, error: linesError } = await supabaseBrowserClient
         .from("base_fabric_stocktake_lines")
-        .select(
-          `
+        .select(`
           id,
           base_fabric_roll_id,
           system_qty,
@@ -308,52 +311,37 @@ export default function BaseFabricStocktakeDetailPage() {
               )
             )
           )
-        `,
-        )
+        `)
         .eq("session_id", currentSession?.id || sessionId)
         .order("id");
 
       if (linesError) throw linesError;
 
       const processed = (linesData as any[])?.map((row) => {
-        const roll = Array.isArray(row.base_fabric_rolls)
-          ? row.base_fabric_rolls[0]
-          : row.base_fabric_rolls;
-        const order = roll?.base_fabric_orders
-          ? Array.isArray(roll.base_fabric_orders)
-            ? roll.base_fabric_orders[0]
-            : roll.base_fabric_orders
-          : null;
-        const item = order?.base_fabric_items
-          ? Array.isArray(order.base_fabric_items)
-            ? order.base_fabric_items[0]
-            : order.base_fabric_items
-          : null;
+        const roll = Array.isArray(row.base_fabric_rolls) ? row.base_fabric_rolls[0] : row.base_fabric_rolls;
+        const order = roll?.base_fabric_orders ? (Array.isArray(roll.base_fabric_orders) ? roll.base_fabric_orders[0] : roll.base_fabric_orders) : null;
+        const item = order?.base_fabric_items ? (Array.isArray(order.base_fabric_items) ? order.base_fabric_items[0] : order.base_fabric_items) : null;
 
         return {
           ...row,
-          base_fabric_rolls: roll
-            ? {
-                ...roll,
-                base_fabric_orders: order
-                  ? {
-                      ...order,
-                      base_fabric_items: item,
-                    }
-                  : null,
-              }
-            : null,
+          base_fabric_rolls: roll ? {
+            ...roll,
+            base_fabric_orders: order ? {
+              ...order,
+              base_fabric_items: item
+            } : null
+          } : null
         };
       }) as Line[];
       setLines(processed || []);
+
     } catch (err: any) {
       console.error("Failed to generate stocktake lines", err);
-      setError(
-        err.message || "Failed to generate stocktake lines from current stock.",
-      );
+      setError(err.message || "Failed to generate stocktake lines from current stock.");
     }
   }
 
+  
   function updateLineLocal(id: string, updates: Partial<Line>) {
     setLines((prev) =>
       prev.map((line) => {
@@ -472,7 +460,6 @@ export default function BaseFabricStocktakeDetailPage() {
           length_m: lengthM,
           qr_code: qrCode,
           cut_at: new Date().toISOString(),
-          // Do not treat as in-stock until stocktake is posted
           current_location: LOCATION_WEAVING,
           status: "PENDING_STOCKTAKE",
         })
@@ -540,9 +527,6 @@ export default function BaseFabricStocktakeDetailPage() {
         data: { user },
       } = await supabaseBrowserClient.auth.getUser();
 
-      // For base fabric rolls, we handle variances differently:
-      // - If counted_qty < system_qty (or 0), mark roll as missing/lost
-      // - If counted_qty > system_qty, it's an extra roll found (less common)
       const rollUpdates: Array<{
         id: string;
         status?: string;
@@ -560,7 +544,6 @@ export default function BaseFabricStocktakeDetailPage() {
             ? `${baseNotes} - Reason: ${reasonText}`
             : baseNotes;
 
-          // New extra roll (unrecorded roll added during stocktake: system = 0, counted > 0)
           if ((line.system_qty ?? 0) === 0 && (line.counted_qty ?? 0) > 0) {
             rollUpdates.push({
               id: line.base_fabric_roll_id,
@@ -568,20 +551,14 @@ export default function BaseFabricStocktakeDetailPage() {
               current_location: LOCATION_WEAVING,
               notes: fullNotes,
             });
-          }
-          // If counted is 0 or significantly less, mark as missing/lost
-          else if (line.counted_qty === 0 || (line.counted_qty ?? 0) < line.system_qty * 0.5) {
+          } else if (line.counted_qty === 0 || (line.counted_qty ?? 0) < line.system_qty * 0.5) {
             rollUpdates.push({
               id: line.base_fabric_roll_id,
               status: "LOST",
               current_location: "UNKNOWN",
               notes: fullNotes,
             });
-          }
-          // If counted is more than system, it's an extra roll (shouldn't happen often)
-          // Could update length if it's a measurement difference
-          else if (variance > 0) {
-            // For now, just update the length if there's a variance
+          } else if (variance > 0) {
             rollUpdates.push({
               id: line.base_fabric_roll_id,
               notes: fullNotes,
@@ -589,7 +566,6 @@ export default function BaseFabricStocktakeDetailPage() {
           }
         });
 
-      // Update rolls
       for (const update of rollUpdates) {
         const { id, ...updateData } = update;
         const { error: updateError } = await supabaseBrowserClient
@@ -636,7 +612,6 @@ export default function BaseFabricStocktakeDetailPage() {
 
       const templateName = "Base Fabric Stocktake Report";
 
-      // Try to load company logo
       let logoLoaded = false;
       const logoMaxWidth = 40;
       let headerTopOffset = marginTop;
@@ -671,7 +646,6 @@ export default function BaseFabricStocktakeDetailPage() {
         // ignore logo load failures
       }
 
-      // Header with details (only drawn on first page). Returns bottom Y position.
       const addHeader = () => {
         let y = headerTopOffset;
 
@@ -689,7 +663,6 @@ export default function BaseFabricStocktakeDetailPage() {
         });
         y += 8;
 
-        // 2x2 details layout to save vertical space
         doc.setFontSize(9);
         const generatedAt = new Date().toLocaleString("en-ZA", {
           year: "numeric",
@@ -713,13 +686,11 @@ export default function BaseFabricStocktakeDetailPage() {
         const rowY1 = y;
         const rowY2 = y + 6;
 
-        // Row 1
         doc.text(`Stocktake Date: ${stocktakeDate}`, leftX, rowY1);
         doc.text(`Generated: ${generatedAt}`, rightX, rowY1, {
           maxWidth: colWidth - 4,
         });
 
-        // Row 2
         doc.text(`Performed By: ${session.performed_by}`, leftX, rowY2);
         if (session.notes) {
           doc.text(`Notes: ${session.notes}`, rightX, rowY2, {
@@ -727,7 +698,6 @@ export default function BaseFabricStocktakeDetailPage() {
           });
         }
 
-        // Return bottom Y of the header/details block
         return rowY2 + (session.notes ? 8 : 6);
       };
 
@@ -741,7 +711,6 @@ export default function BaseFabricStocktakeDetailPage() {
       };
 
       const addSignatures = () => {
-        // Signature area on last page only
         doc.setTextColor(0, 0, 0);
         const sigTop = pageHeight - 35;
         const colWidth = (pageWidth - marginLeft - marginRight) / 4;
@@ -818,7 +787,6 @@ export default function BaseFabricStocktakeDetailPage() {
         },
       });
 
-      // Add signatures only on the last page
       const lastPageNumber = (doc as any).internal.getNumberOfPages?.() ?? 1;
       (doc as any).setPage(lastPageNumber);
       addSignatures();
@@ -948,8 +916,8 @@ export default function BaseFabricStocktakeDetailPage() {
               {session && session.status === "posted"
                 ? "Already Posted"
                 : isPosting
-                ? "Posting..."
-                : "Post Adjustments"}
+                  ? "Posting..."
+                  : "Post Adjustments"}
             </Button>
           </div>
         </div>
@@ -1005,9 +973,8 @@ export default function BaseFabricStocktakeDetailPage() {
                   return (
                     <tr
                       key={line.id}
-                      className={`border-b border-slate-100 ${
-                        hasVariance ? "bg-amber-50" : ""
-                      }`}
+                      className={`border-b border-slate-100 ${hasVariance ? "bg-amber-50" : ""
+                        }`}
                     >
                       <td className="px-3 py-2 font-medium text-slate-900">
                         {roll?.roll_no || "-"}
@@ -1034,7 +1001,7 @@ export default function BaseFabricStocktakeDetailPage() {
                           step="0.001"
                           value={
                             line.counted_qty !== null &&
-                            line.counted_qty !== undefined
+                              line.counted_qty !== undefined
                               ? line.counted_qty
                               : ""
                           }
@@ -1088,9 +1055,8 @@ export default function BaseFabricStocktakeDetailPage() {
                                 reason: e.target.value || null,
                               })
                             }
-                            className={`w-full rounded-lg border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent ${
-                              missingReason ? "border-red-400" : "border-slate-200"
-                            }`}
+                            className={`w-full rounded-lg border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:border-transparent ${missingReason ? "border-red-400" : "border-slate-200"
+                              }`}
                             placeholder={
                               hasVariance ? "Or type reason" : "Optional"
                             }
