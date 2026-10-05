@@ -119,18 +119,19 @@ export default function DyesIssueSlipPage() {
     if (!slipData) return;
     setIsGeneratingPdf(true);
     try {
+      // Configure for A5 Portrait format (148 x 210 mm)
       const doc = new jsPDF({
         orientation: "portrait",
         unit: "mm",
-        format: "a4",
+        format: "a5",
       });
 
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const marginLeft = 14;
-      const marginRight = 14;
-      const marginTop = 14;
-      const marginBottom = 22;
+      const marginLeft = 10;
+      const marginRight = 10;
+      const marginTop = 10;
+      const marginBottom = 16;
       const slipNoLabel = slipData.slip_no || "DIS-SLIP";
       const documentNo = "UTM-DYES-FT-001";
 
@@ -145,7 +146,7 @@ export default function DyesIssueSlipPage() {
           new Promise<void>((resolve) => {
             logoImg.onload = () => {
               try {
-                const logoWidth = 28;
+                const logoWidth = 22;
                 const logoHeight = (logoImg.height / logoImg.width || 1) * logoWidth;
                 doc.addImage(
                   logoImg,
@@ -155,7 +156,7 @@ export default function DyesIssueSlipPage() {
                   logoWidth,
                   logoHeight
                 );
-                headerTopOffset = Math.max(headerTopOffset, marginTop + 4);
+                headerTopOffset = Math.max(headerTopOffset, marginTop + 2);
               } catch {
                 // ignore draw errors
               }
@@ -174,16 +175,16 @@ export default function DyesIssueSlipPage() {
 
         doc.setTextColor(0, 0, 0);
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(14);
+        doc.setFontSize(12);
         doc.text("UNICA TEXTILE MILLS", marginLeft, y);
+        y += 5;
+
+        doc.setFontSize(10);
+        doc.text("Dyes & Chemicals Issue Slip", marginLeft, y);
         y += 6;
 
-        doc.setFontSize(12);
-        doc.text("Dyes & Chemicals Issue Slip", marginLeft, y);
-        y += 7;
-
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
+        doc.setFontSize(8);
 
         const leftCol = [
           `Slip No: ${slipData.slip_no || "—"}`,
@@ -199,7 +200,7 @@ export default function DyesIssueSlipPage() {
         for (let i = 0; i < maxRows; i++) {
           if (leftCol[i]) doc.text(leftCol[i], marginLeft, y);
           if (rightCol[i]) doc.text(rightCol[i], marginLeft + colWidth, y);
-          y += 5;
+          y += 4.5;
         }
 
         if (slipData.notes) {
@@ -207,14 +208,14 @@ export default function DyesIssueSlipPage() {
           doc.text(`Notes: ${slipData.notes}`, marginLeft, y, {
             maxWidth: pageWidth - marginLeft - marginRight,
           });
-          y += 6;
+          y += 5;
         }
 
         y += 2;
         doc.setDrawColor(180, 180, 180);
         doc.setLineWidth(0.3);
         doc.line(marginLeft, y, pageWidth - marginRight, y);
-        y += 4;
+        y += 3;
 
         return y;
       };
@@ -222,39 +223,39 @@ export default function DyesIssueSlipPage() {
       const addFooter = (pageNumber: number, pageCount: number) => {
         doc.setDrawColor(200, 200, 200);
         doc.setLineWidth(0.2);
-        doc.line(marginLeft, pageHeight - 14, pageWidth - marginRight, pageHeight - 14);
+        doc.line(marginLeft, pageHeight - 12, pageWidth - marginRight, pageHeight - 12);
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
+        doc.setFontSize(7);
         doc.setTextColor(90, 90, 90);
-        doc.text(`Document Number: ${documentNo}`, marginLeft, pageHeight - 8);
+        doc.text(`Document Number: ${documentNo}`, marginLeft, pageHeight - 7);
         doc.text(
           `Page ${pageNumber} of ${pageCount}`,
           pageWidth - marginRight,
-          pageHeight - 8,
+          pageHeight - 7,
           { align: "right" }
         );
         doc.setTextColor(0, 0, 0);
       };
 
       const addSignatures = (startY: number) => {
-        const y = Math.min(startY + 10, pageHeight - 40);
+        const y = Math.min(startY + 10, pageHeight - 32);
         const colWidth = (pageWidth - marginLeft - marginRight) / 2;
         const roles = ["Issued By", "Received By"];
 
         doc.setTextColor(0, 0, 0);
         roles.forEach((role, index) => {
           const x = marginLeft + index * colWidth;
-          const lineY = y + 12;
+          const lineY = y + 10;
           doc.setLineWidth(0.3);
           doc.setDrawColor(80, 80, 80);
-          doc.line(x, lineY, x + colWidth - 12, lineY);
-          doc.setFontSize(8);
-          doc.setFont("helvetica", "bold");
-          doc.text(`${role}:`, x, lineY + 4);
-          doc.setFont("helvetica", "normal");
+          doc.line(x, lineY, x + colWidth - 10, lineY);
           doc.setFontSize(7);
+          doc.setFont("helvetica", "bold");
+          doc.text(`${role}:`, x, lineY + 3.5);
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6);
           doc.setTextColor(120, 120, 120);
-          doc.text("Name / Signature / Date", x, lineY + 8);
+          doc.text("Name / Signature / Date", x, lineY + 7);
           doc.setTextColor(0, 0, 0);
         });
       };
@@ -270,21 +271,22 @@ export default function DyesIssueSlipPage() {
         line.uom || "—",
       ]);
 
+      // Total available width for A5 portrait with 10mm margins is 148 - 20 = 128mm
       autoTable(doc, {
-        head: [["Item", "Type", "Code", "Batch No", "Quantity", "UoM"]],
+        head: [["Item", "Type", "Code", "Batch No", "Qty", "UoM"]],
         body: body.length > 0 ? body : [["—", "—", "—", "—", "—", "No items recorded"]],
         startY: headerBottomY + 2,
         rowPageBreak: "avoid",
         margin: {
           left: marginLeft,
           right: marginRight,
-          top: marginTop + 12,
+          top: marginTop + 10,
           bottom: marginBottom + 4,
         },
         theme: "grid",
         styles: {
-          fontSize: 8,
-          cellPadding: 1.6,
+          fontSize: 7,
+          cellPadding: 1.5,
           lineColor: [180, 180, 180],
           lineWidth: 0.2,
           textColor: [30, 30, 30],
@@ -296,27 +298,27 @@ export default function DyesIssueSlipPage() {
           halign: "left",
         },
         columnStyles: {
-          0: { cellWidth: 55 },
-          1: { cellWidth: 30 },
-          2: { cellWidth: 25 },
-          3: { cellWidth: 30 },
-          4: { cellWidth: 25, halign: "right", fontStyle: "bold" },
-          5: { cellWidth: 17 },
+          0: { cellWidth: 38 }, // Item
+          1: { cellWidth: 20 }, // Type
+          2: { cellWidth: 18 }, // Code
+          3: { cellWidth: 22 }, // Batch No
+          4: { cellWidth: 18, halign: "right", fontStyle: "bold" }, // Quantity
+          5: { cellWidth: 12 }, // UoM
         },
         showHead: "everyPage",
         didDrawPage: (data: any) => {
           if (data.pageNumber > 1) {
             doc.setFont("helvetica", "bold");
-            doc.setFontSize(10);
-            doc.setTextColor(0, 0, 0);
-            doc.text("UNICA TEXTILE MILLS — Dyes & Chemicals Issue Slip", marginLeft, marginTop + 4);
-            doc.setFont("helvetica", "normal");
             doc.setFontSize(8);
+            doc.setTextColor(0, 0, 0);
+            doc.text("UNICA TEXTILE MILLS — Dyes & Chemicals Issue Slip", marginLeft, marginTop + 3);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7);
             doc.setTextColor(80, 80, 80);
             doc.text(
               `${slipData.slip_no || "Slip"} · ${formatDepartment(slipData.issued_to_department)}`,
               pageWidth - marginRight,
-              marginTop + 4,
+              marginTop + 3,
               { align: "right" }
             );
             doc.setTextColor(0, 0, 0);
@@ -324,8 +326,8 @@ export default function DyesIssueSlipPage() {
         },
       });
 
-      let lastTableY = (doc as any).lastAutoTable?.finalY ?? pageHeight - 50;
-      if (lastTableY > pageHeight - 48) {
+      let lastTableY = (doc as any).lastAutoTable?.finalY ?? pageHeight - 40;
+      if (lastTableY > pageHeight - 38) {
         doc.addPage();
         lastTableY = marginTop;
       }

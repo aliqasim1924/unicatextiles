@@ -130,6 +130,36 @@ export default function BaseFabricIssueSlipPage() {
 
   return (
     <>
+      {/* Global Print Stylesheet targeting A5 paper dimensions */}
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A5 portrait;
+            margin: 8mm;
+          }
+          body {
+            background: white !important;
+            color: #000 !important;
+            font-size: 11px !important;
+          }
+          .print-page-shell {
+            background: white !important;
+            min-h-0 !important;
+          }
+          .print-slip-container {
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .print-slip-card {
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
+
       <div className="print-page-shell min-h-screen bg-slate-100 print:bg-white print:min-h-0">
         {/* Top actions (screen only) */}
         <div className="mx-auto max-w-[800px] px-4 py-6 print:hidden">
@@ -147,31 +177,31 @@ export default function BaseFabricIssueSlipPage() {
         </div>
 
         {/* Slip Content */}
-        <div className="print-slip-container">
-          <div className="print-slip-card flex flex-col min-h-[100vh]">
+        <div className="print-slip-container mx-auto max-w-[800px] px-4">
+          <div className="print-slip-card flex flex-col bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             {/* Header */}
-            <div className="print:flex print:justify-between print:items-start print:mb-6 print:pb-4 print:border-b print:border-slate-300">
+            <div className="flex justify-between items-start mb-4 pb-3 border-b border-slate-200">
               <div>
-                <h2 className="print:text-2xl print:font-bold print:text-slate-900">
+                <h2 className="text-xl font-bold text-slate-900">
                   UNICA TEXTILE MILLS
                 </h2>
-                <p className="print:text-sm print:text-slate-600">Base Fabric Issue Slip</p>
+                <p className="text-xs text-slate-600">Base Fabric Issue Slip</p>
               </div>
-              <div className="print:w-24 print:h-24 print:flex print:items-center print:justify-center print:overflow-hidden">
-                <img src="/Logo.png" alt="Company Logo" className="print:h-full print:w-full print:object-contain" />
+              <div className="w-16 h-16 flex items-center justify-center overflow-hidden">
+                <img src="/Logo.png" alt="Company Logo" className="h-full w-full object-contain" />
               </div>
             </div>
 
             {/* Title */}
-            <h1 className="text-center text-xl font-bold text-slate-900 print:mb-4">
+            <h1 className="text-center text-base font-bold text-slate-900 mb-3">
               Base Fabric Issue Slip – Weaving to Coating
             </h1>
 
             {/* Slip Info */}
-            <div className="grid gap-2 text-sm text-slate-800 print:text-slate-800 sm:grid-cols-2 print:mb-4">
+            <div className="grid gap-1.5 text-xs text-slate-800 sm:grid-cols-2 mb-4">
               <div>
                 <span className="font-semibold">Slip No:</span>{" "}
-                <span className="text-teal-700">{slip.slip_no || "N/A"}</span>
+                <span className="text-teal-700 font-medium">{slip.slip_no || "N/A"}</span>
               </div>
               <div>
                 <span className="font-semibold">Issue Date:</span>{" "}
@@ -194,16 +224,16 @@ export default function BaseFabricIssueSlipPage() {
             </div>
 
             {/* Lines Table */}
-            <div className="print:mb-4 overflow-x-auto">
-              <table className="min-w-full text-sm">
+            <div className="mb-4 overflow-x-auto">
+              <table className="w-full border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900">QR</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900">Order</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900">Fabric</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900">Loom</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-900">Length (m)</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-900">Notes</th>
+                  <tr className="border-b border-slate-300 bg-slate-50">
+                    <th className="px-2 py-1.5 text-left font-semibold text-slate-900">QR / Roll</th>
+                    <th className="px-2 py-1.5 text-left font-semibold text-slate-900">Order</th>
+                    <th className="px-2 py-1.5 text-left font-semibold text-slate-900">Fabric</th>
+                    <th className="px-2 py-1.5 text-left font-semibold text-slate-900">Loom</th>
+                    <th className="px-2 py-1.5 text-right font-semibold text-slate-900">Length (m)</th>
+                    <th className="px-2 py-1.5 text-left font-semibold text-slate-900">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -221,16 +251,16 @@ export default function BaseFabricIssueSlipPage() {
                       : null;
                     return (
                       <tr key={line.id} className="border-b border-slate-100">
-                        <td className="px-3 py-2 text-slate-800 font-medium">
+                        <td className="px-2 py-1.5 text-slate-800 font-medium">
                           {roll?.qr_code || roll?.roll_no || "-"}
                         </td>
-                        <td className="px-3 py-2 text-slate-700">{order?.order_no || "N/A"}</td>
-                        <td className="px-3 py-2 text-slate-700">{item?.name || "N/A"}</td>
-                        <td className="px-3 py-2 text-slate-700">{order?.loom_no || "-"}</td>
-                        <td className="px-3 py-2 text-right text-slate-900 font-semibold">
+                        <td className="px-2 py-1.5 text-slate-700">{order?.order_no || "N/A"}</td>
+                        <td className="px-2 py-1.5 text-slate-700">{item?.name || "N/A"}</td>
+                        <td className="px-2 py-1.5 text-slate-700">{order?.loom_no || "-"}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-900 font-semibold">
                           {line.length_m.toFixed(2)}
                         </td>
-                        <td className="px-3 py-2 text-slate-600">{line.notes || "-"}</td>
+                        <td className="px-2 py-1.5 text-slate-600">{line.notes || "-"}</td>
                       </tr>
                     );
                   })}
@@ -239,36 +269,34 @@ export default function BaseFabricIssueSlipPage() {
             </div>
 
             {/* Signatures (print only) */}
-            <div className="mt-6 hidden print:block print:mt-8">
-              <div className="grid grid-cols-2 gap-8 text-sm text-slate-800">
+            <div className="mt-4 hidden print:block">
+              <div className="grid grid-cols-2 gap-6 text-xs text-slate-800">
                 {/* Issued By */}
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <div className="font-semibold text-slate-900">Issued By</div>
-                  <div className="h-8 border-b border-slate-400" />
-                  <div className="flex items-center justify-between text-xs text-slate-600">
+                  <div className="h-6 border-b border-slate-400" />
+                  <div className="flex items-center justify-between text-[10px] text-slate-600">
                     <span>Name &amp; Signature</span>
-                    <span>Date: ____________</span>
+                    <span>Date: ______</span>
                   </div>
                 </div>
 
                 {/* Received By */}
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <div className="font-semibold text-slate-900">Received By</div>
-                  <div className="h-8 border-b border-slate-400" />
-                  <div className="flex items-center justify-between text-xs text-slate-600">
+                  <div className="h-6 border-b border-slate-400" />
+                  <div className="flex items-center justify-between text-[10px] text-slate-600">
                     <span>Name &amp; Signature</span>
-                    <span>Date: ____________</span>
+                    <span>Date: ______</span>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Footer */}
-            <footer className="mt-auto pt-4 text-xs text-slate-600 print:text-[10px] print:text-slate-600 print:border-t print:border-slate-200">
-              <div className="flex justify-between">
-                <span>Document Number: UTM-WEAV-ISSUE-FT-001</span>
-                <span>Page 1 of 1</span>
-              </div>
+            <footer className="mt-6 pt-3 text-[10px] text-slate-600 border-t border-slate-200 flex justify-between">
+              <span>Document Number: UTM-WEAV-ISSUE-FT-001</span>
+              <span>Page 1 of 1</span>
             </footer>
           </div>
         </div>
@@ -276,4 +304,3 @@ export default function BaseFabricIssueSlipPage() {
     </>
   );
 }
-

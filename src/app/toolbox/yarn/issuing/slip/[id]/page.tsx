@@ -107,18 +107,19 @@ export default function YarnIssueSlipPage() {
     if (!slipData) return;
     setIsGeneratingPdf(true);
     try {
+      // Configure for A5 Portrait format (148 x 210 mm)
       const doc = new jsPDF({
         orientation: "portrait",
         unit: "mm",
-        format: "a4",
+        format: "a5",
       });
 
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const marginLeft = 14;
-      const marginRight = 14;
-      const marginTop = 14;
-      const marginBottom = 22;
+      const marginLeft = 10;
+      const marginRight = 10;
+      const marginTop = 10;
+      const marginBottom = 16;
       const slipNoLabel = slipData.slip_no || "YARN-SLIP";
       const documentNo = "UTM-WEAV-FT-001";
 
@@ -133,7 +134,7 @@ export default function YarnIssueSlipPage() {
           new Promise<void>((resolve) => {
             logoImg.onload = () => {
               try {
-                const logoWidth = 28;
+                const logoWidth = 22;
                 const logoHeight = (logoImg.height / logoImg.width || 1) * logoWidth;
                 doc.addImage(
                   logoImg,
@@ -143,7 +144,7 @@ export default function YarnIssueSlipPage() {
                   logoWidth,
                   logoHeight
                 );
-                headerTopOffset = Math.max(headerTopOffset, marginTop + 4);
+                headerTopOffset = Math.max(headerTopOffset, marginTop + 2);
               } catch {
                 // ignore
               }
@@ -162,16 +163,16 @@ export default function YarnIssueSlipPage() {
 
         doc.setTextColor(0, 0, 0);
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(14);
+        doc.setFontSize(12);
         doc.text("UNICA TEXTILE MILLS", marginLeft, y);
+        y += 5;
+
+        doc.setFontSize(10);
+        doc.text("Yarn Issue Slip", marginLeft, y);
         y += 6;
 
-        doc.setFontSize(12);
-        doc.text("Yarn Issue Slip", marginLeft, y);
-        y += 7;
-
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
+        doc.setFontSize(8);
 
         const leftCol = [
           `Slip No: ${slipData.slip_no || "—"}`,
@@ -187,7 +188,7 @@ export default function YarnIssueSlipPage() {
         for (let i = 0; i < maxRows; i++) {
           if (leftCol[i]) doc.text(leftCol[i], marginLeft, y);
           if (rightCol[i]) doc.text(rightCol[i], marginLeft + colWidth, y);
-          y += 5;
+          y += 4.5;
         }
 
         if (slipData.notes) {
@@ -195,14 +196,14 @@ export default function YarnIssueSlipPage() {
           doc.text(`Notes: ${slipData.notes}`, marginLeft, y, {
             maxWidth: pageWidth - marginLeft - marginRight,
           });
-          y += 6;
+          y += 5;
         }
 
         y += 2;
         doc.setDrawColor(180, 180, 180);
         doc.setLineWidth(0.3);
         doc.line(marginLeft, y, pageWidth - marginRight, y);
-        y += 4;
+        y += 3;
 
         return y;
       };
@@ -210,39 +211,39 @@ export default function YarnIssueSlipPage() {
       const addFooter = (pageNumber: number, pageCount: number) => {
         doc.setDrawColor(200, 200, 200);
         doc.setLineWidth(0.2);
-        doc.line(marginLeft, pageHeight - 14, pageWidth - marginRight, pageHeight - 14);
+        doc.line(marginLeft, pageHeight - 12, pageWidth - marginRight, pageHeight - 12);
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
+        doc.setFontSize(7);
         doc.setTextColor(90, 90, 90);
-        doc.text(`Document Number: ${documentNo}`, marginLeft, pageHeight - 8);
+        doc.text(`Document Number: ${documentNo}`, marginLeft, pageHeight - 7);
         doc.text(
           `Page ${pageNumber} of ${pageCount}`,
           pageWidth - marginRight,
-          pageHeight - 8,
+          pageHeight - 7,
           { align: "right" }
         );
         doc.setTextColor(0, 0, 0);
       };
 
       const addSignatures = (startY: number) => {
-        const y = Math.min(startY + 15, pageHeight - 40);
+        const y = Math.min(startY + 10, pageHeight - 32);
         const colWidth = (pageWidth - marginLeft - marginRight) / 2;
         const roles = ["Issued By", "Received By"];
 
         doc.setTextColor(0, 0, 0);
         roles.forEach((role, index) => {
           const x = marginLeft + index * colWidth;
-          const lineY = y + 12;
+          const lineY = y + 10;
           doc.setLineWidth(0.3);
           doc.setDrawColor(80, 80, 80);
-          doc.line(x, lineY, x + colWidth - 12, lineY);
-          doc.setFontSize(8);
-          doc.setFont("helvetica", "bold");
-          doc.text(`${role}:`, x, lineY + 4);
-          doc.setFont("helvetica", "normal");
+          doc.line(x, lineY, x + colWidth - 10, lineY);
           doc.setFontSize(7);
+          doc.setFont("helvetica", "bold");
+          doc.text(`${role}:`, x, lineY + 3.5);
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6);
           doc.setTextColor(120, 120, 120);
-          doc.text("Name / Signature / Date", x, lineY + 8);
+          doc.text("Name / Signature / Date", x, lineY + 7);
           doc.setTextColor(0, 0, 0);
         });
       };
@@ -268,21 +269,22 @@ export default function YarnIssueSlipPage() {
         ],
       ];
 
+      // Total available width for A5 portrait with 10mm margins is 148 - 20 = 128mm
       autoTable(doc, {
-        head: [["Yarn Item", "Lot / Batch No", "Quantity", "UoM", "Source", "Destination"]],
+        head: [["Yarn Item", "Lot / Batch", "Qty", "UoM", "Source", "Destination"]],
         body: body,
         startY: headerBottomY + 2,
         rowPageBreak: "avoid",
         margin: {
           left: marginLeft,
           right: marginRight,
-          top: marginTop + 12,
+          top: marginTop + 10,
           bottom: marginBottom + 4,
         },
         theme: "grid",
         styles: {
-          fontSize: 8,
-          cellPadding: 2,
+          fontSize: 7,
+          cellPadding: 1.5,
           lineColor: [180, 180, 180],
           lineWidth: 0.2,
           textColor: [30, 30, 30],
@@ -294,18 +296,18 @@ export default function YarnIssueSlipPage() {
           halign: "left",
         },
         columnStyles: {
-          0: { cellWidth: 55 },
-          1: { cellWidth: 32 },
-          2: { cellWidth: 25, halign: "right", fontStyle: "bold" },
-          3: { cellWidth: 16 },
-          4: { cellWidth: 26 },
-          5: { cellWidth: 28 },
+          0: { cellWidth: 38 }, // Yarn Item
+          1: { cellWidth: 22 }, // Lot / Batch No
+          2: { cellWidth: 16, halign: "right", fontStyle: "bold" }, // Quantity
+          3: { cellWidth: 12 }, // UoM
+          4: { cellWidth: 20 }, // Source
+          5: { cellWidth: 20 }, // Destination
         },
         showHead: "everyPage",
       });
 
-      let lastTableY = (doc as any).lastAutoTable?.finalY ?? pageHeight - 50;
-      if (lastTableY > pageHeight - 48) {
+      let lastTableY = (doc as any).lastAutoTable?.finalY ?? pageHeight - 40;
+      if (lastTableY > pageHeight - 38) {
         doc.addPage();
         lastTableY = marginTop;
       }
