@@ -57,7 +57,7 @@ export default function YarnStockPage() {
             ),
           supabaseBrowserClient
             .from("yarn_transactions")
-            .select("yarn_item_id, transaction_type, quantity, base_fabric_order_id, base_fabric_orders(status)"),
+            .select("yarn_item_id, transaction_type, quantity, source, destination, base_fabric_order_id, base_fabric_orders(status)"),
           supabaseBrowserClient
             .from("base_fabric_orders")
             .select("id, status"),
@@ -92,8 +92,17 @@ export default function YarnStockPage() {
           const qty = Number(txn.quantity || 0);
           if (!id) return;
 
-          // Store Balance calculation
-          if (txn.transaction_type === "RECEIPT" || txn.transaction_type === "RETURN" || txn.transaction_type === "ADJUSTMENT") {
+          const isDeptOnlyAdjustment =
+            txn.transaction_type === "ADJUSTMENT" &&
+            txn.source === "DEPARTMENT" &&
+            txn.destination === "DEPARTMENT";
+
+          // Store Balance calculation: Exclude Department-only adjustments from affecting store stock
+          if (
+            txn.transaction_type === "RECEIPT" ||
+            txn.transaction_type === "RETURN" ||
+            (txn.transaction_type === "ADJUSTMENT" && !isDeptOnlyAdjustment)
+          ) {
             storeBalances[id] = (storeBalances[id] || 0) + qty;
           } else if (txn.transaction_type === "ISSUE" || txn.transaction_type === "SCRAP") {
             storeBalances[id] = (storeBalances[id] || 0) - qty;
@@ -112,6 +121,9 @@ export default function YarnStockPage() {
               allocatedBalances[id] = (allocatedBalances[id] || 0) + qty;
             }
           } else if (txn.transaction_type === "RETURN") {
+            deptBalances[id] = (deptBalances[id] || 0) + qty;
+          } else if (isDeptOnlyAdjustment) {
+            // Add Department-only adjustments with signed quantity exactly once
             deptBalances[id] = (deptBalances[id] || 0) + qty;
           }
         });

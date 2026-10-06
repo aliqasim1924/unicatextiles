@@ -43,11 +43,6 @@ interface LedgerData {
   transactions: YarnTransaction[];
 }
 
-interface BatchSummaryRow {
-  batch_no: string;
-  qty: number;
-}
-
 export default function YarnLedgerPage() {
   const params = useParams();
   const yarnItemId = params.id as string;
@@ -135,9 +130,17 @@ export default function YarnLedgerPage() {
   }
 
   function getSignedQuantity(txn: YarnTransaction): number {
+    const isDeptOnlyAdjustment =
+      txn.transaction_type === "ADJUSTMENT" &&
+      txn.source === "DEPARTMENT" &&
+      txn.destination === "DEPARTMENT";
+
     if (txn.transaction_type === "RECEIPT" || txn.transaction_type === "RETURN") return txn.quantity;
     if (txn.transaction_type === "ISSUE" || txn.transaction_type === "SCRAP") return -txn.quantity;
-    if (txn.transaction_type === "ADJUSTMENT") return txn.quantity;
+    if (txn.transaction_type === "ADJUSTMENT") {
+      // Exclude Department-only adjustments from store running balance calculation
+      return isDeptOnlyAdjustment ? 0 : txn.quantity;
+    }
     return 0;
   }
 
@@ -152,11 +155,18 @@ export default function YarnLedgerPage() {
       const signedQty = getSignedQuantity(txn);
       storeRunningBalance += signedQty;
 
+      const isDeptOnlyAdjustment =
+        txn.transaction_type === "ADJUSTMENT" &&
+        txn.source === "DEPARTMENT" &&
+        txn.destination === "DEPARTMENT";
+
       if (txn.transaction_type === "ISSUE") {
         deptRunningBalance += txn.quantity;
       } else if (txn.transaction_type === "DEPT_TO_ORDER") {
         deptRunningBalance -= txn.quantity;
       } else if (txn.transaction_type === "RETURN") {
+        deptRunningBalance += txn.quantity;
+      } else if (isDeptOnlyAdjustment) {
         deptRunningBalance += txn.quantity;
       }
 
@@ -580,7 +590,7 @@ export default function YarnLedgerPage() {
                       {txn.base_fabric_orders?.order_no || "-"}
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-900 whitespace-nowrap text-xs">
-                      {txn.deptRunningBalance.toFixed(3)} {ledgerData.yarnItem?.uom ?? txn.uom}
+                      {(txn as any).deptRunningBalance.toFixed(3)} {ledgerData.yarnItem?.uom ?? txn.uom}
                     </td>
                     <td className="px-3 py-2.5 text-right font-semibold text-slate-900 whitespace-nowrap text-xs">
                       {txn.runningBalance.toFixed(3)} {ledgerData.yarnItem?.uom ?? txn.uom}
