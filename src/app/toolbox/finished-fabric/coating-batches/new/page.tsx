@@ -11,6 +11,7 @@ import { filterBaseFabricRolls } from "@/lib/coating/filterBaseFabricRolls";
 const LOCATION_COATING = "COATING";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
 const STATUS_COATING_IN_PROGRESS = "COATING_IN_PROGRESS";
+const ALLOWED_ROLL_STATUSES = [STATUS_READY_FOR_COATING, STATUS_COATING_IN_PROGRESS];
 
 interface AvailableRoll {
   id: string;
@@ -132,7 +133,7 @@ export default function NewCoatingBatchPage() {
         `
         )
         .eq("current_location", LOCATION_COATING)
-        .eq("status", STATUS_READY_FOR_COATING)
+        .in("status", ALLOWED_ROLL_STATUSES)
         .gt("remaining_for_batches", 0)
         .order("cut_at", { ascending: true });
 
@@ -509,7 +510,7 @@ export default function NewCoatingBatchPage() {
               )}
             </div>
             <p className="mt-1 text-sm text-slate-600">
-              Select rolls with status: {STATUS_READY_FOR_COATING} at location: {LOCATION_COATING}
+              Select rolls at location: {LOCATION_COATING}
             </p>
             {availableRolls.length > 0 && (
               <div className="mt-3">
@@ -538,7 +539,7 @@ export default function NewCoatingBatchPage() {
             <div className="p-8 text-center text-slate-600">
               {rollSearchQuery.trim()
                 ? `No rolls match "${rollSearchQuery.trim()}".`
-                : "No rolls available. Rolls must be in COATING location with READY_FOR_COATING status."}
+                : "No rolls available. Rolls must be in COATING location with remaining length."}
             </div>
           ) : (
             <div className="overflow-x-auto">
