@@ -423,14 +423,6 @@ export default function CoatingBatchDetailPage() {
       setIsLoadingBaseRolls(true);
       setError(null);
 
-      // Get IDs of rolls already in this batch
-      const existingRollIds = baseRolls.map((br) => {
-        // Extract base_fabric_roll_id from the base roll
-        // We need to get it from the relation - but we don't have it directly
-        // So we'll fetch it from coating_batch_base_rolls
-        return null; // Will be handled differently
-      });
-
       // Fetch available rolls
       const { data, error: fetchError } = await supabaseBrowserClient
         .from("base_fabric_rolls_available_for_coating")
@@ -611,6 +603,15 @@ export default function CoatingBatchDetailPage() {
         .insert(batchBaseRolls);
 
       if (baseRollsError) throw baseRollsError;
+
+      // Update base fabric rolls status to COATING_IN_PROGRESS
+      const baseFabricRollIds = selectedRolls.map((r) => r.id);
+      const { error: rollUpdateError } = await supabaseBrowserClient
+        .from("base_fabric_rolls")
+        .update({ status: "COATING_IN_PROGRESS" })
+        .in("id", baseFabricRollIds);
+
+      if (rollUpdateError) throw rollUpdateError;
 
       setSuccess("Base fabric rolls added successfully.");
       setSelectedBaseRollIds(new Set());
@@ -890,11 +891,11 @@ export default function CoatingBatchDetailPage() {
       setError("Cannot complete production. Rolling quantity must match coated quantity.");
       return;
     }
-
+  
     const hasAnyChemicals = batchChemicals.length > 0;
     const hasDyes = batchChemicals.some((c) => c.kind === "DYE");
     const hasNonDyes = batchChemicals.some((c) => c.kind !== "DYE");
-
+  
     if (!hasAnyChemicals) {
       setError("Cannot complete production. At least one chemical or dye must be recorded for this batch.");
       return;
@@ -907,7 +908,7 @@ export default function CoatingBatchDetailPage() {
       setError("Cannot complete production. At least one non-dye chemical (binder/additive) must be recorded for this batch.");
       return;
     }
-
+  
     if (
       !confirm(
         "Are you sure you want to complete production? This will close the batch and make it read-only.",
@@ -915,22 +916,27 @@ export default function CoatingBatchDetailPage() {
     ) {
       return;
     }
-
+  
     setError(null);
     setSuccess(null);
-
+  
     try {
       const { error: updateError } = await supabaseBrowserClient
         .from("coating_batches")
         .update({ status: "COMPLETED" })
         .eq("id", batchId);
-
-      if (updateError) throw updateError;
-
+  
+      if (updateError) {
+        console.error("Supabase Error Message:", updateError.message);
+        console.error("Supabase Error Details:", updateError.details);
+        console.error("Supabase Error Hint:", updateError.hint);
+        throw new Error(updateError.message || updateError.details || "Failed to update batch status to COMPLETED.");
+      }
+  
       setSuccess("Production completed successfully. Batch is now read-only.");
       await fetchData();
     } catch (err: any) {
-      console.error("Failed to complete production", err);
+      console.error("Failed to complete production:", err);
       setError(err.message || "Failed to complete production.");
     }
   }
@@ -1032,8 +1038,6 @@ export default function CoatingBatchDetailPage() {
     setError(null);
     setSuccess(null);
 
-    // Block manual chemical entry. We only allow adding chemicals that come from
-    // `chemicals_available_for_coating` (issued to coating).
     if (!selectedChemicalItemId) {
       setError("Please select a chemical from the issued chemicals list.");
       return;
@@ -1077,7 +1081,6 @@ export default function CoatingBatchDetailPage() {
 
       if (insertError) throw insertError;
 
-      // Reload batch data so that chemicals and available stock (including dye/chemical kind) stay correct
       await fetchData();
 
       setSuccess("Chemical added successfully.");
@@ -1104,7 +1107,6 @@ export default function CoatingBatchDetailPage() {
     setShowChemicalSuggestions(false);
   }
 
-  // Filter available chemicals based on search query
   const filteredChemicals = availableChemicals.filter((chem) =>
     chem.item_name.toLowerCase().includes(chemicalSearchQuery.toLowerCase())
   );
@@ -1113,7 +1115,6 @@ export default function CoatingBatchDetailPage() {
     setNewChemicalName(value);
     setChemicalSearchQuery(value);
     setShowChemicalSuggestions(value.length > 0 && filteredChemicals.length > 0);
-    // Clear selected item ID if user is typing manually
     if (!filteredChemicals.some((c) => c.item_name === value)) {
       setSelectedChemicalItemId(null);
     }
@@ -1126,7 +1127,6 @@ export default function CoatingBatchDetailPage() {
   }
 
   function handleChemicalNameBlur() {
-    // Delay hiding suggestions to allow click events
     setTimeout(() => setShowChemicalSuggestions(false), 200);
   }
 
@@ -1137,7 +1137,6 @@ export default function CoatingBatchDetailPage() {
       return;
     }
 
-    // Check for shortage
     if (metersVal < totalInputLength) {
       const shortage = totalInputLength - metersVal;
       setPendingCoatedMeters(metersVal);
@@ -1193,7 +1192,6 @@ export default function CoatingBatchDetailPage() {
   }
 
   async function handleUpdateChemicalQuantity(chemicalId: string, newQuantity: number) {
-    // Allow zero for "delete" semantics, but disallow negatives
     if (isNaN(newQuantity) || newQuantity < 0) {
       setError("Please enter a valid quantity");
       return;
@@ -1203,7 +1201,6 @@ export default function CoatingBatchDetailPage() {
     setError(null);
     setSuccess(null);
 
-    // Find the chemical to get its details for updating available quantity
     const chemicalToUpdate = batchChemicals.find((c) => c.id === chemicalId);
     if (!chemicalToUpdate) {
       setIsUpdatingChemical(false);
@@ -1215,10 +1212,7 @@ export default function CoatingBatchDetailPage() {
     const oldQuantity = chemicalToUpdate.quantity ?? 0;
     const quantityDiff = newQuantity - oldQuantity;
 
-    // If increasing quantity, ensure there is enough available stock in coating
     if (!chemicalItemId && quantityDiff > 0) {
-      // Safety: if the chemical wasn’t added from the issued list, we cannot
-      // validate "remaining_for_batches" for it.
       setIsUpdatingChemical(false);
       setError(
         "Cannot increase quantity for a chemical that is not linked to an issued chemical item."
@@ -1251,14 +1245,12 @@ export default function CoatingBatchDetailPage() {
 
       if (updateError) throw updateError;
 
-      // If no rows were updated, treat as a failure (likely due to RLS or missing row)
       if (!data || data.length === 0) {
         throw new Error(
           "Chemical quantity could not be updated. The record may not exist or you might not have permission."
         );
       }
 
-      // Refresh data from the database to ensure consistency (including available chemicals)
       await fetchData();
 
       setSuccess("Chemical quantity updated successfully.");
@@ -1293,7 +1285,6 @@ export default function CoatingBatchDetailPage() {
     try {
       let affectedRows = 0;
 
-      // First try a real delete
       const { data, error: deleteError } = await supabaseBrowserClient
         .from("coating_batch_chemicals")
         .delete()
@@ -1304,7 +1295,6 @@ export default function CoatingBatchDetailPage() {
 
       affectedRows += data?.length ?? 0;
 
-      // If nothing was deleted (data is empty), fall back to setting quantity = 0
       if (affectedRows === 0) {
         const { data: updated, error: updateError } = await supabaseBrowserClient
           .from("coating_batch_chemicals")
@@ -1317,14 +1307,12 @@ export default function CoatingBatchDetailPage() {
         affectedRows += updated?.length ?? 0;
       }
 
-      // If still nothing was changed, surface a clear error instead of a misleading success
       if (affectedRows === 0) {
         throw new Error(
           "Chemical could not be removed. The record may not exist or you might not have permission."
         );
       }
 
-      // Refresh data to ensure consistency (including available chemicals)
       await fetchData();
 
       setSuccess("Chemical removed successfully.");
@@ -1392,7 +1380,6 @@ export default function CoatingBatchDetailPage() {
   const totalFinishedLength = finishedRolls.reduce((sum, r) => sum + r.length_m, 0);
   const actualCoated = batch.actual_coated_meters ?? null;
 
-  // Calculate grade quantities
   const gradeSum = (grade: string) =>
     finishedRolls.filter((r) => r.grade === grade).reduce((sum, r) => sum + r.length_m, 0);
   const aMeters = gradeSum("A");
@@ -1400,7 +1387,6 @@ export default function CoatingBatchDetailPage() {
   const cMeters = gradeSum("C");
   const scrapMeters = gradeSum("SCRAP");
 
-  // Calculate yield: A grade vs (B + C + Scrap)
   const nonAGradeTotal = bMeters + cMeters + scrapMeters;
   const yieldPercent =
     nonAGradeTotal > 0 && aMeters > 0
@@ -1409,7 +1395,6 @@ export default function CoatingBatchDetailPage() {
         ? 100
         : null;
 
-  // Calculate percentages of coated
   const percentOfCoated = (val: number) =>
     actualCoated !== null && actualCoated > 0 ? (val / actualCoated) * 100 : null;
   const aPercent = percentOfCoated(aMeters);
@@ -1417,7 +1402,6 @@ export default function CoatingBatchDetailPage() {
   const cPercent = percentOfCoated(cMeters);
   const scrapPercent = percentOfCoated(scrapMeters);
 
-  // Check if rolling is complete
   const isRollingComplete = actualCoated !== null && totalFinishedLength >= actualCoated;
   const canAddMoreRolls = !isRollingComplete && batch.status !== "COMPLETED";
   const canUnselectBaseRolls = batch.status !== "COMPLETED";
@@ -2536,7 +2520,7 @@ export default function CoatingBatchDetailPage() {
                         key={chem.chemical_item_id}
                         type="button"
                         onMouseDown={(e) => {
-                          e.preventDefault(); // Prevent input blur
+                          e.preventDefault();
                           handlePullFromIssued(chem);
                         }}
                         className="w-full border-b border-slate-200 p-3 text-left text-sm hover:bg-slate-50 last:border-b-0"
@@ -2805,4 +2789,3 @@ export default function CoatingBatchDetailPage() {
     </div>
   );
 }
-
