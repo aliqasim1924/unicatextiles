@@ -12,6 +12,8 @@ import { filterBaseFabricRolls } from "@/lib/coating/filterBaseFabricRolls";
 
 const LOCATION_COATING = "COATING";
 const STATUS_READY_FOR_COATING = "READY_FOR_COATING";
+const STATUS_COATING_IN_PROGRESS = "COATING_IN_PROGRESS";
+const ALLOWED_ROLL_STATUSES = [STATUS_READY_FOR_COATING, STATUS_COATING_IN_PROGRESS];
 
 interface CoatingBatch {
   id: string;
@@ -441,7 +443,7 @@ export default function CoatingBatchDetailPage() {
         `
         )
         .eq("current_location", LOCATION_COATING)
-        .eq("status", STATUS_READY_FOR_COATING)
+        .in("status", ALLOWED_ROLL_STATUSES)
         .gt("remaining_for_batches", 0)
         .order("cut_at", { ascending: true });
 
@@ -608,7 +610,7 @@ export default function CoatingBatchDetailPage() {
       const baseFabricRollIds = selectedRolls.map((r) => r.id);
       const { error: rollUpdateError } = await supabaseBrowserClient
         .from("base_fabric_rolls")
-        .update({ status: "COATING_IN_PROGRESS" })
+        .update({ status: STATUS_COATING_IN_PROGRESS })
         .in("id", baseFabricRollIds);
 
       if (rollUpdateError) throw rollUpdateError;
@@ -687,6 +689,26 @@ export default function CoatingBatchDetailPage() {
         throw new Error(
           `Unselect did not remove any linkage for ${rollNo || "the roll"}. Please refresh and try again.`
         );
+      }
+
+      if (baseFabricRollId) {
+        const { data: remainingAllocations, error: remainingError } = await supabaseBrowserClient
+          .from("coating_batch_base_rolls")
+          .select("id")
+          .eq("base_fabric_roll_id", baseFabricRollId)
+          .limit(1);
+        if (remainingError) throw remainingError;
+
+        if ((remainingAllocations || []).length === 0) {
+          const { error: restoreError } = await supabaseBrowserClient
+            .from("base_fabric_rolls")
+            .update({
+              current_location: LOCATION_COATING,
+              status: STATUS_READY_FOR_COATING,
+            })
+            .eq("id", baseFabricRollId);
+          if (restoreError) throw restoreError;
+        }
       }
 
       setSuccess(
@@ -964,28 +986,42 @@ export default function CoatingBatchDetailPage() {
 
         if (batchBaseRollsError) throw batchBaseRollsError;
 
-        const actualBaseRollIds = (batchBaseRollsData || []).map((r: any) => r.base_fabric_roll_id).filter(Boolean);
+        const actualBaseRollIds = (batchBaseRollsData || [])
+          .map((r: any) => r.base_fabric_roll_id)
+          .filter(Boolean);
 
-        if (actualBaseRollIds.length > 0) {
-          // Restore rolls to READY_FOR_COATING status
-          const { error: restoreError } = await supabaseBrowserClient
-            .from("base_fabric_rolls")
-            .update({
-              current_location: LOCATION_COATING,
-              status: STATUS_READY_FOR_COATING,
-            })
-            .in("id", actualBaseRollIds);
-
-          if (restoreError) throw restoreError;
-        }
-
-        // Delete coating_batch_base_rolls entries
+        // Delete this batch's allocations first so remaining length is freed.
         const { error: deleteBaseRollsError } = await supabaseBrowserClient
           .from("coating_batch_base_rolls")
           .delete()
           .eq("batch_id", batchId);
 
         if (deleteBaseRollsError) throw deleteBaseRollsError;
+
+        if (actualBaseRollIds.length > 0) {
+          const { data: stillAllocated, error: stillAllocatedError } = await supabaseBrowserClient
+            .from("coating_batch_base_rolls")
+            .select("base_fabric_roll_id")
+            .in("base_fabric_roll_id", actualBaseRollIds);
+          if (stillAllocatedError) throw stillAllocatedError;
+
+          const stillAllocatedIds = new Set(
+            (stillAllocated || []).map((r: any) => r.base_fabric_roll_id)
+          );
+          const rollsToRestore = actualBaseRollIds.filter((id: string) => !stillAllocatedIds.has(id));
+
+          if (rollsToRestore.length > 0) {
+            const { error: restoreError } = await supabaseBrowserClient
+              .from("base_fabric_rolls")
+              .update({
+                current_location: LOCATION_COATING,
+                status: STATUS_READY_FOR_COATING,
+              })
+              .in("id", rollsToRestore);
+
+            if (restoreError) throw restoreError;
+          }
+        }
       }
 
       // Step 2: Reverse chemical allocations (reduce allocated quantities)
