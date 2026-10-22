@@ -14,11 +14,12 @@ export function filterBaseFabricRolls<T extends BaseFabricRollSearchRow>(
   const q = query.trim().toLowerCase();
   if (!q) return rolls;
 
-  const numericPart = q.replace(/^bfr-?0*/i, "");
+  // Strip prefix 'bfr-' and all leading zeroes to extract pure numeric ID
+  const numericPart = q.replace(/^bfr-?/i, "").replace(/^0+/, "");
 
   return rolls.filter((roll) => {
     const rollNo = (roll.roll_no ?? "").toLowerCase();
-    const rollNoDigits = rollNo.replace(/^bfr-0*/i, "");
+    const rollNoDigits = rollNo.replace(/^bfr-?/i, "").replace(/^0+/, "");
 
     return (
       rollNo.includes(q) ||
