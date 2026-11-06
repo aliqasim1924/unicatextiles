@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { QRCodeCanvas } from "qrcode.react";
 import { createElement } from "react";
 import jsPDF from "jspdf";
+import { getRollQrValue } from "@/lib/qr/getRollQrValue";
 
 export const LABEL_SIZE_MM = 100;
 
@@ -229,7 +230,9 @@ export async function generateLabelPdf(
 
   for (let i = 0; i < rows.length; i++) {
     if (i > 0) doc.addPage([LABEL_SIZE_MM, LABEL_SIZE_MM], "portrait");
-    const qrDataUrl = await qrCodePngDataUrl(rows[i].qr_code);
+    const qrDataUrl = await qrCodePngDataUrl(
+      getRollQrValue(rows[i])
+    );
     drawLabel(doc, rows[i], logo, qrDataUrl);
   }
 

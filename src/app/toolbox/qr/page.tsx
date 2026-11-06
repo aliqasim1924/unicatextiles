@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { BackButton } from "@/components/navigation/BackButton";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { parseRollQrValue } from "@/lib/qr/parseRollQrValue";
+
 
 type ActionType =
   | "receive_base_at_coating"
@@ -80,13 +82,13 @@ export default function QRPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [slipPopup, setSlipPopup] = useState<SlipPopupData | null>(null);
   const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
-  
+
   // Customer order selection state
   const [customerOrders, setCustomerOrders] = useState<CustomerOrder[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [orderRequirements, setOrderRequirements] = useState<OrderRequirement[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  
+
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scanAreaRef = useRef<HTMLDivElement>(null);
   const lastScannedRef = useRef<Map<string, number>>(new Map()); // Track last scan time for each QR code
@@ -105,7 +107,7 @@ export default function QRPage() {
       // Configure beep sound (800Hz frequency, 0.1 second duration)
       oscillator.frequency.value = 800;
       oscillator.type = "sine";
-      
+
       gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
 
@@ -355,13 +357,13 @@ export default function QRPage() {
     const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     const isLocalNetwork = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(location.hostname);
     const isSecureContext = window.isSecureContext || location.protocol === "https:" || isLocalhost;
-    
+
     // For production, require HTTPS. For local network development, warn but allow
     if (!isSecureContext && !isLocalNetwork) {
       setError("Camera access requires HTTPS. Please access this page over HTTPS or use localhost.");
       return;
     }
-    
+
     // Warn about local network access (iOS Safari may still block)
     if (isLocalNetwork && location.protocol !== "https:") {
       console.warn("Using HTTP on local network. iOS Safari may require HTTPS for camera access.");
@@ -413,7 +415,7 @@ export default function QRPage() {
               setError("Camera permission denied. Please allow camera access in your browser settings.");
               setIsScanning(false);
               if (scannerRef.current) {
-                scannerRef.current.stop().catch(() => {});
+                scannerRef.current.stop().catch(() => { });
                 scannerRef.current = null;
               }
             }
@@ -422,22 +424,22 @@ export default function QRPage() {
         startSuccess = true;
       } catch (facingModeError: any) {
         console.log("facingMode failed, trying camera enumeration:", facingModeError);
-        
+
         // If facingMode fails, try enumerating cameras (especially for iOS)
         try {
           const devices = await Html5Qrcode.getCameras();
           console.log("Available cameras:", devices);
-          
+
           if (devices.length > 0) {
             if (isIOS) {
               // iOS: Usually the last camera is the back camera
               const backCamera = devices.find(
-                (device) => 
-                  device.label.toLowerCase().includes("back") || 
+                (device) =>
+                  device.label.toLowerCase().includes("back") ||
                   device.label.toLowerCase().includes("rear") ||
                   device.label.toLowerCase().includes("environment")
               );
-              
+
               if (backCamera) {
                 cameraConfig = backCamera.id;
                 console.log("Using back camera:", backCamera.label);
@@ -449,12 +451,12 @@ export default function QRPage() {
             } else {
               // For Android/other browsers, prefer back camera
               const backCamera = devices.find(
-                (device) => 
-                  device.label.toLowerCase().includes("back") || 
+                (device) =>
+                  device.label.toLowerCase().includes("back") ||
                   device.label.toLowerCase().includes("rear") ||
                   device.label.toLowerCase().includes("environment")
               );
-              
+
               if (backCamera) {
                 cameraConfig = backCamera.id;
               } else {
@@ -474,7 +476,7 @@ export default function QRPage() {
                   setError("Camera permission denied. Please allow camera access in your browser settings.");
                   setIsScanning(false);
                   if (scannerRef.current) {
-                    scannerRef.current.stop().catch(() => {});
+                    scannerRef.current.stop().catch(() => { });
                     scannerRef.current = null;
                   }
                 }
@@ -496,7 +498,7 @@ export default function QRPage() {
     } catch (err: any) {
       console.error("Camera start error:", err);
       let errorMessage = err.message || "Failed to start camera.";
-      
+
       // Provide more helpful error messages
       if (err.name === "NotAllowedError" || err.message?.includes("permission") || err.message?.includes("Permission")) {
         errorMessage = "Camera permission denied. Please:\n1. Go to Safari Settings > Privacy & Security > Camera\n2. Allow access for this website\n3. Refresh the page and try again";
@@ -507,7 +509,7 @@ export default function QRPage() {
       } else if (err.message?.includes("streaming not supported")) {
         errorMessage = "Camera streaming not supported. Please:\n1. Ensure you're using HTTPS (not HTTP)\n2. Try opening in standard Safari (not PWA/home screen mode)\n3. Check that camera permissions are granted";
       }
-      
+
       setError(errorMessage);
       setIsScanning(false);
       scannerRef.current = null;
@@ -566,17 +568,23 @@ export default function QRPage() {
   }
 
   async function handleScannedCode(qrCode: string) {
+    try {
+      qrCode = parseRollQrValue(qrCode);
+    } catch {
+      setError("Invalid QR code. Please scan a Unica fabric roll label.");
+      return;
+    }
     const now = Date.now();
     const lastScanTime = lastScannedRef.current.get(qrCode);
-    
+
     // Prevent rapid duplicate scans (debounce)
     if (lastScanTime && now - lastScanTime < SCAN_DEBOUNCE_MS) {
       return; // Ignore if scanned within the debounce window
     }
-    
+
     // Update last scan time
     lastScannedRef.current.set(qrCode, now);
-    
+
     // Prevent duplicate scans in the scanned rolls list
     if (scannedRolls.some((r) => r.qr_code === qrCode || r.roll_no === qrCode)) {
       // Show temporary message instead of error
@@ -641,7 +649,7 @@ export default function QRPage() {
           )
           .eq("roll_no", qrCode)
           .maybeSingle();
-        
+
         if (baseRollByRollNo && !baseErrorByRollNo) {
           baseRoll = baseRollByRollNo;
           baseError = null;
@@ -734,7 +742,7 @@ export default function QRPage() {
           )
           .eq("roll_no", qrCode)
           .maybeSingle();
-        
+
         if (finishedRollByRollNo && !finishedErrorByRollNo) {
           finishedRoll = finishedRollByRollNo;
           finishedError = null;
@@ -1133,8 +1141,8 @@ export default function QRPage() {
         animate={{ opacity: 1, y: 0 }}
         className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
       >
-      <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">Scan QR Code</h1>
-      <p className="mt-2 text-sm sm:text-base text-slate-600">
+        <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">Scan QR Code</h1>
+        <p className="mt-2 text-sm sm:text-base text-slate-600">
           Select an action, then scan QR codes to update roll statuses.
         </p>
       </motion.section>
@@ -1154,11 +1162,10 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
-              selectedAction === "receive_base_at_coating"
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${selectedAction === "receive_base_at_coating"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
+              }`}
           >
             <div className="font-semibold text-sm sm:text-base text-slate-900">Receive Base Fabric at Coating</div>
             <div className="mt-1 text-xs sm:text-sm text-slate-600">
@@ -1172,11 +1179,10 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
-              selectedAction === "issue_base_to_coating"
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${selectedAction === "issue_base_to_coating"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
+              }`}
           >
             <div className="font-semibold text-sm sm:text-base text-slate-900">Issue Base Fabric to Coating</div>
             <div className="mt-1 text-xs sm:text-sm text-slate-600">
@@ -1190,11 +1196,10 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
-              selectedAction === "receive_finished_at_store"
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${selectedAction === "receive_finished_at_store"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
+              }`}
           >
             <div className="font-semibold text-sm sm:text-base text-slate-900">Receive Finished Fabric at Store</div>
             <div className="mt-1 text-xs sm:text-sm text-slate-600">
@@ -1208,11 +1213,10 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
-              selectedAction === "issue_finished_to_customer"
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${selectedAction === "issue_finished_to_customer"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
+              }`}
           >
             <div className="font-semibold text-sm sm:text-base text-slate-900">Issue Finished Fabric to Customer</div>
             <div className="mt-1 text-xs sm:text-sm text-slate-600">
@@ -1226,11 +1230,10 @@ export default function QRPage() {
               setScannedRolls([]);
               lastScannedRef.current.clear();
             }}
-            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${
-              selectedAction === "view_roll_details"
+            className={`rounded-lg border-2 p-3 sm:p-4 text-left transition min-h-[60px] sm:min-h-[80px] ${selectedAction === "view_roll_details"
                 ? "border-teal-700 bg-teal-50"
                 : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
+              }`}
           >
             <div className="font-semibold text-sm sm:text-base text-slate-900">View Roll Details</div>
             <div className="mt-1 text-xs sm:text-sm text-slate-600">Scan to view roll information only</div>
@@ -1247,7 +1250,7 @@ export default function QRPage() {
           className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm"
         >
           <h2 className="mb-4 text-base sm:text-lg font-semibold text-slate-900">Select Customer Order</h2>
-          
+
           {isLoadingOrders ? (
             <p className="text-sm text-slate-600">Loading customer orders...</p>
           ) : customerOrders.length === 0 ? (
@@ -1285,20 +1288,19 @@ export default function QRPage() {
                           return key === req.key && rollMatchesRequirement(roll, req);
                         })
                         .reduce((sum, roll) => sum + (roll.length_m || 0), 0);
-                      
+
                       const remaining = req.ordered_m - req.issued_m - selectedMeters;
                       const isExceeding = remaining < 0;
 
                       return (
                         <div
                           key={req.key}
-                          className={`rounded border p-2.5 sm:p-3 text-xs sm:text-sm ${
-                            isExceeding
+                          className={`rounded border p-2.5 sm:p-3 text-xs sm:text-sm ${isExceeding
                               ? "border-red-300 bg-red-50"
                               : remaining < 1
-                              ? "border-yellow-300 bg-yellow-50"
-                              : "border-slate-200 bg-white"
-                          }`}
+                                ? "border-yellow-300 bg-yellow-50"
+                                : "border-slate-200 bg-white"
+                            }`}
                         >
                           <div className="font-medium text-slate-900 break-words">
                             {req.color} ({req.coating_type})
@@ -1361,11 +1363,11 @@ export default function QRPage() {
             )}
           </div>
 
-          <div 
-            id="qr-reader" 
-            ref={scanAreaRef} 
+          <div
+            id="qr-reader"
+            ref={scanAreaRef}
             className="mb-4 w-full overflow-hidden"
-            style={{ 
+            style={{
               minHeight: '250px',
               width: '100%'
             }}
@@ -1415,9 +1417,9 @@ export default function QRPage() {
               Scanned Rolls ({scannedRolls.length})
             </h2>
             {selectedAction !== "view_roll_details" && (
-              <Button 
-                variant="primary" 
-                onClick={processScannedRolls} 
+              <Button
+                variant="primary"
+                onClick={processScannedRolls}
                 disabled={isProcessing}
                 className="w-full sm:w-auto min-h-[44px]"
               >
@@ -1453,15 +1455,14 @@ export default function QRPage() {
               return (
                 <div
                   key={roll.qr_code}
-                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 gap-3 ${
-                    selectedAction === "issue_finished_to_customer" && selectedOrderId
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 gap-3 ${selectedAction === "issue_finished_to_customer" && selectedOrderId
                       ? matchesOrder
                         ? orderMatchInfo?.isExceeding
                           ? "border-red-300 bg-red-50"
                           : "border-green-300 bg-green-50"
                         : "border-yellow-300 bg-yellow-50"
                       : "border-slate-200 bg-slate-50"
-                  }`}
+                    }`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm sm:text-base text-slate-900 break-words">

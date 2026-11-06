@@ -5,6 +5,7 @@ import { QRCode } from "@/components/qr/QRCode";
 import { useEffect, useState, useRef } from "react";
 import { supabaseBrowserClient } from "@/lib/supabase/browserClient";
 import { generateLabelPdf, LABEL_SIZE_MM, type LabelPdfRow } from "@/lib/qr/generateLabelPdf";
+import { getRollQrValue } from "@/lib/qr/getRollQrValue";
 
 type QRData = LabelPdfRow;
 
@@ -24,7 +25,7 @@ export default function QRPrintPage() {
   const rollIdsParam = searchParams.get("rollIds");
   const rollIds = rollIdsParam?.split(",").filter(Boolean) || [];
   const type = (searchParams.get("type") || "base_fabric") as "base_fabric" | "finished_fabric";
-  
+
   // Extract issue/order reference params for the PDF naming and sequence calculation
   const issueNoParam = searchParams.get("issueNo");
   const orderRefParam = searchParams.get("orderRef");
@@ -176,7 +177,7 @@ export default function QRPrintPage() {
           if (fetchError) throw fetchError;
 
           const byId = new Map((data || []).map((row: any) => [row.id, row]));
-          
+
           // Sort items strictly by roll serial_no ASC if printing via issue
           const matchedRows = rollIds.map((id) => byId.get(id)).filter(Boolean);
           matchedRows.sort((a: any, b: any) => (a?.serial_no ?? 0) - (b?.serial_no ?? 0));
@@ -328,34 +329,34 @@ export default function QRPrintPage() {
         {qrData.map((data) => {
           const isCoating = data.type === "finished_fabric";
           const headerColorClass = isCoating ? getHeaderColorClass(data.gsm) : "bg-slate-700";
-          
-          const formattedSerial = data.serial_no != null 
-            ? String(data.serial_no).padStart(2, "0") 
+
+          const formattedSerial = data.serial_no != null
+            ? String(data.serial_no).padStart(2, "0")
             : "—";
 
           const internalRollNo = data.roll_no || data.qr_code || "—";
 
           const tableRows: [string, string][] = isCoating
             ? [
-                ["TYPE OF FABRIC", data.coating_type || data.fabric_name || "—"],
-                ["COLOUR", data.color || "—"],
-                ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
-                ["BATCH NUMBER", data.batch_no || "—"],
-                ["INTERNAL ROLL #", internalRollNo],
-                ["ROLL SERIAL #", formattedSerial],
-                ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
-                ["GRADE", data.grade || "A"],
-              ]
+              ["TYPE OF FABRIC", data.coating_type || data.fabric_name || "—"],
+              ["COLOUR", data.color || "—"],
+              ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
+              ["BATCH NUMBER", data.batch_no || "—"],
+              ["INTERNAL ROLL #", internalRollNo],
+              ["ROLL SERIAL #", formattedSerial],
+              ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
+              ["GRADE", data.grade || "A"],
+            ]
             : [
-                ["TYPE OF FABRIC", data.fabric_name || "BASE FABRIC"],
-                ["COLOUR", "NATURAL / GREY"],
-                ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
-                ["BFO NUMBER", data.order_no || "—"],
-                ["INTERNAL ROLL #", internalRollNo],
-                ["ROLL SERIAL #", formattedSerial],
-                ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
-                ["LOOM NUMBER", data.loom_no != null && data.loom_no !== "" ? `LOOM ${data.loom_no}` : "—"],
-              ];
+              ["TYPE OF FABRIC", data.fabric_name || "BASE FABRIC"],
+              ["COLOUR", "NATURAL / GREY"],
+              ["GSM", data.gsm != null ? `${Number(data.gsm).toFixed(0)} GSM` : "—"],
+              ["BFO NUMBER", data.order_no || "—"],
+              ["INTERNAL ROLL #", internalRollNo],
+              ["ROLL SERIAL #", formattedSerial],
+              ["ROLL LENGTH", data.length_m != null ? `${Number(data.length_m).toFixed(2)} MTR` : "—"],
+              ["LOOM NUMBER", data.loom_no != null && data.loom_no !== "" ? `LOOM ${data.loom_no}` : "—"],
+            ];
 
           return (
             <article
@@ -385,9 +386,8 @@ export default function QRPrintPage() {
                   {tableRows.map(([label, value], idx) => (
                     <div
                       key={label}
-                      className={`flex h-[7.5mm] border-b border-slate-300 last:border-b-0 ${
-                        label === "ROLL SERIAL #" ? "bg-emerald-50" : idx % 2 === 0 ? "bg-slate-50" : "bg-white"
-                      }`}
+                      className={`flex h-[7.5mm] border-b border-slate-300 last:border-b-0 ${label === "ROLL SERIAL #" ? "bg-emerald-50" : idx % 2 === 0 ? "bg-slate-50" : "bg-white"
+                        }`}
                     >
                       <div className="flex w-[24mm] items-center border-r border-slate-300 px-1 text-[6.5px] font-extrabold text-slate-500 uppercase">
                         {label}
@@ -401,7 +401,12 @@ export default function QRPrintPage() {
 
                 {/* QR Code */}
                 <div className="flex w-[38mm] justify-center items-center pl-1">
-                  <QRCode value={data.qr_code} size={115} level="M" includeMargin={false} />
+                  <QRCode
+                    value={getRollQrValue(data)}
+                    size={115}
+                    level="M"
+                    includeMargin={false}
+                  />
                 </div>
               </div>
 
